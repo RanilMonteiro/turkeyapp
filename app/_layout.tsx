@@ -4,6 +4,8 @@ import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { supabase } from '../lib/supabase';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import WebLayout from '../components/WebLayout';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -46,12 +48,16 @@ export default function RootLayout() {
   }, []);
 
   return (
+    <SafeAreaProvider>
     <RoleProvider>
+      <WebLayout>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(app)" />
       </Stack>
+      </WebLayout>
     </RoleProvider>
+    </SafeAreaProvider>
   );
 }
