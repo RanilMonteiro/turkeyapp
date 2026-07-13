@@ -4,18 +4,8 @@ import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { supabase } from '../lib/supabase';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebLayout from '../components/WebLayout';
 import { useColorScheme, Platform } from 'react-native';
-
-
-const colorScheme = useColorScheme();
-useEffect(() => {
-  if (Platform.OS === 'web') {
-    document.body.style.backgroundColor =
-      colorScheme === 'dark' ? '#121212' : '#ffffff';
-  }
-}, [colorScheme]);
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -42,7 +32,6 @@ async function registerForPushNotifications() {
 
   const token = (await Notifications.getExpoPushTokenAsync()).data;
 
-  // Save token to profile
   const { data: userData } = await supabase.auth.getUser();
   if (userData.user) {
     await supabase
@@ -53,21 +42,31 @@ async function registerForPushNotifications() {
 }
 
 export default function RootLayout() {
+  const colorScheme = useColorScheme();
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const backgroundColor =
+        colorScheme === 'dark' ? '#121212' : '#ffffff';
+
+      document.documentElement.style.backgroundColor = backgroundColor;
+      document.body.style.backgroundColor = backgroundColor;
+    }
+  }, [colorScheme]);
+
   useEffect(() => {
     registerForPushNotifications();
   }, []);
 
   return (
-    
     <RoleProvider>
       <WebLayout>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="index" />
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(app)" />
-      </Stack>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(app)" />
+        </Stack>
       </WebLayout>
     </RoleProvider>
-   
   );
 }
