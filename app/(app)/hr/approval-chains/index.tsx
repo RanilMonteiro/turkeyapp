@@ -445,11 +445,13 @@ export default function ApprovalChains() {
                 )}
               </View>
 
+              
               {selectedApprovers.map((approver, index) => (
                 <View key={index} style={styles.approverInputRow}>
                   <View style={[styles.orderBadge, { backgroundColor: `${colors.yellow}20` }]}>
                     <Text style={[styles.orderText, { color: colors.yellow }]}>{index + 1}</Text>
                   </View>
+                  
 
                   <TouchableOpacity
                     style={[styles.approverDropdownBtn, { backgroundColor: theme.input, borderColor: theme.border, flex: 1 }]}
@@ -645,15 +647,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   approverDropdown: {
-    position: 'absolute',
-    top: 52,
-    left: 38,
-    right: 30,
-    borderWidth: 1,
-    borderRadius: 12,
-    zIndex: 999,
-    overflow: 'hidden',
-  },
+  position: 'absolute',
+  top: 52,
+  left: 38,
+  right: 30,
+  borderWidth: 1,
+  borderRadius: 12,
+  zIndex: 9999,
+  elevation: 9999,
+  overflow: 'visible' as any,
+
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.2,
+  shadowRadius: 8,
+},
   saveBtn: {
     backgroundColor: colors.yellow,
     borderRadius: 14,

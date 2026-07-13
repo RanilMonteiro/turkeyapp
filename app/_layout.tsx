@@ -8,7 +8,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebLayout from '../components/WebLayout';
 import { Platform } from 'react-native';
 
-if (Platform.OS === 'web') {
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
   const style = document.createElement('style');
   style.textContent = `
     * { margin: 0; padding: 0; box-sizing: border-box; }
