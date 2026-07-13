@@ -6,6 +6,17 @@ import * as Device from 'expo-device';
 import { supabase } from '../lib/supabase';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebLayout from '../components/WebLayout';
+import { Platform } from 'react-native';
+
+if (Platform.OS === 'web') {
+  const style = document.createElement('style');
+  style.textContent = `
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { width: 100%; height: 100%; background: #000; }
+    body { padding: 0 !important; }
+  `;
+  document.head.appendChild(style);
+}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -48,7 +59,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <SafeAreaProvider>
+    
     <RoleProvider>
       <WebLayout>
       <Stack screenOptions={{ headerShown: false }}>
@@ -58,6 +69,6 @@ export default function RootLayout() {
       </Stack>
       </WebLayout>
     </RoleProvider>
-    </SafeAreaProvider>
+   
   );
 }
