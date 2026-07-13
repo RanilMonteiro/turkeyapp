@@ -6,17 +6,16 @@ import * as Device from 'expo-device';
 import { supabase } from '../lib/supabase';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebLayout from '../components/WebLayout';
-import { Platform } from 'react-native';
+import { useColorScheme, Platform } from 'react-native';
 
-if (Platform.OS === 'web' && typeof document !== 'undefined') {
-  const style = document.createElement('style');
-  style.textContent = `
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body, #root { width: 100%; height: 100%; background: #000; }
-    body { padding: 0 !important; }
-  `;
-  document.head.appendChild(style);
-}
+
+const colorScheme = useColorScheme();
+useEffect(() => {
+  if (Platform.OS === 'web') {
+    document.body.style.backgroundColor =
+      colorScheme === 'dark' ? '#121212' : '#ffffff';
+  }
+}, [colorScheme]);
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
