@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Alert, TextInput, Modal
+  TextInput, Modal
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, ChevronDown, Calendar } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { notify } from '../../../../lib/notify';
 import SignatureCanvas from 'react-native-signature-canvas';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Platform } from 'react-native';
@@ -129,7 +130,7 @@ export default function SubmitForm() {
     // Validate required fields
     for (const field of fields) {
       if (field.required && !formData[field.id]) {
-        Alert.alert('Missing field', `"${field.label}" is required.`);
+        notify('Missing field', `"${field.label}" is required.`);
         return;
       }
     }
@@ -149,7 +150,7 @@ export default function SubmitForm() {
       .single();
 
     if (subError || !submission) {
-      Alert.alert('Error', subError?.message ?? 'Failed to submit');
+      notify('Error', subError?.message ?? 'Failed to submit');
       setSubmitting(false);
       return;
     }
@@ -174,12 +175,12 @@ export default function SubmitForm() {
     }
 
     setSubmitting(false);
-    Alert.alert(
+    notify(
       'Submitted',
       template?.requires_approval
         ? 'Your request has been submitted and is awaiting approval.'
         : 'Your request has been submitted.',
-      [{ text: 'OK', onPress: () => router.back() }]
+      () => router.back()
     );
   }
 
@@ -406,7 +407,7 @@ export default function SubmitForm() {
                 setActiveSignatureField(null);
               }
             }}
-            onEmpty={() => Alert.alert('Empty', 'Please draw your signature first.')}
+            onEmpty={() => notify('Empty', 'Please draw your signature first.')}
             descriptionText=""
             clearText="Clear"
             confirmText="Save Signature"
