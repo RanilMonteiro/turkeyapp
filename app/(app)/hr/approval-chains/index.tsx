@@ -2,11 +2,12 @@ import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Alert, Modal
+  Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, GitBranch, Plus, Trash2, ChevronDown, X, User } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { notify, confirm } from '../../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
 
 const colors = {
@@ -160,7 +161,7 @@ export default function ApprovalChains() {
 
   function addApprover() {
     if (selectedApprovers.length >= 4) {
-      Alert.alert('Maximum reached', 'You can add a maximum of 4 approvers.');
+      notify('Maximum reached', 'You can add a maximum of 4 approvers.');
       return;
     }
     setSelectedApprovers(prev => [...prev, null]);
@@ -168,7 +169,7 @@ export default function ApprovalChains() {
 
   function removeApprover(index: number) {
     if (selectedApprovers.length === 1) {
-      Alert.alert('Minimum required', 'At least 1 approver is required.');
+      notify('Minimum required', 'At least 1 approver is required.');
       return;
     }
     setSelectedApprovers(prev => prev.filter((_, i) => i !== index));
@@ -181,11 +182,11 @@ export default function ApprovalChains() {
 
   async function handleSave() {
     if (!selectedEmployee) {
-      Alert.alert('Missing employee', 'Please select an employee.');
+      notify('Missing employee', 'Please select an employee.');
       return;
     }
     if (selectedApprovers.some(a => a === null)) {
-      Alert.alert('Missing approvers', 'Please select all approvers.');
+      notify('Missing approvers', 'Please select all approvers.');
       return;
     }
 
@@ -215,31 +216,29 @@ export default function ApprovalChains() {
     setSaving(false);
 
     if (error) {
-      Alert.alert('Error', error.message);
+      notify('Error', error.message);
     } else {
       setModalVisible(false);
       fetchData();
     }
   }
 
-  async function deleteChain(employeeId: string, employeeName: string) {
-    Alert.alert(
+  function deleteChain(employeeId: string, employeeName: string) {
+    confirm(
       'Delete Approval Chain',
       `Remove approval chain for ${employeeName}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            await supabase
-              .from('approval_chains')
-              .delete()
-              .eq('employee_id', employeeId);
-            fetchData();
-          }
+      async () => {
+        const { error } = await supabase
+          .from('approval_chains')
+          .delete()
+          .eq('employee_id', employeeId);
+
+        if (error) {
+          notify('Error', error.message);
+        } else {
+          fetchData();
         }
-      ]
+      }
     );
   }
 

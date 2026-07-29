@@ -26,3 +26,36 @@ export function notify(title: string, message?: string, onOk?: () => void) {
     onOk ? [{ text: 'OK', onPress: onOk }] : undefined
   );
 }
+
+/**
+ * Drop-in replacement for a destructive Alert.alert confirm dialog
+ * (Cancel / Delete-style buttons).
+ *
+ * Alert.alert with a multi-button array renders NOTHING on
+ * react-native-web — no dialog appears at all, which means the
+ * onConfirm callback (often containing the actual delete call)
+ * never runs. That's why "delete" buttons can look like they do
+ * nothing on web: the confirmation step itself silently fails to
+ * even display.
+ *
+ * Usage:
+ *   confirm('Delete Form', `Delete "${form.name}"?`, () => doDelete());
+ */
+export function confirm(
+  title: string,
+  message: string,
+  onConfirm: () => void,
+  confirmLabel: string = 'Delete'
+) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) {
+      onConfirm();
+    }
+    return;
+  }
+
+  Alert.alert(title, message, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: confirmLabel, style: 'destructive', onPress: onConfirm },
+  ]);
+}

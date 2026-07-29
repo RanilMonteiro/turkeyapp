@@ -1,12 +1,12 @@
 import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, useColorScheme, ActivityIndicator,
-  Alert
+  StyleSheet, useColorScheme, ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Plus, ClipboardList, Edit, Trash2 } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { notify, confirm } from '../../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
 
 const colors = {
@@ -70,31 +70,29 @@ export default function FormsManager() {
       .from('form_templates')
       .update({ is_active: !form.is_active })
       .eq('id', form.id);
-    if (!error) fetchForms();
+    if (error) {
+      notify('Error', error.message);
+      return;
+    }
+    fetchForms();
   }
 
-  async function deleteForm(form: FormTemplate) {
-    Alert.alert(
+  function deleteForm(form: FormTemplate) {
+    confirm(
       'Delete Form',
       `Are you sure you want to delete "${form.name}"? All submissions will also be deleted.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const { error } = await supabase
-              .from('form_templates')
-              .delete()
-              .eq('id', form.id);
-            if (error) {
-              Alert.alert('Error', error.message);
-            } else {
-              fetchForms();
-            }
-          }
+      async () => {
+        const { error } = await supabase
+          .from('form_templates')
+          .delete()
+          .eq('id', form.id);
+
+        if (error) {
+          notify('Error', error.message);
+        } else {
+          fetchForms();
         }
-      ]
+      }
     );
   }
 
