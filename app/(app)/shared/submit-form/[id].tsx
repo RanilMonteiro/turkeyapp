@@ -170,7 +170,21 @@ export default function SubmitForm() {
           approval_order: c.approval_order,
           status: 'pending',
         }));
-        await supabase.from('form_approvals').insert(approvalRows);
+        const { error: approvalError } = await supabase
+          .from('form_approvals')
+          .insert(approvalRows);
+
+        if (approvalError) {
+          notify(
+            'Warning',
+            'Your form was submitted, but the approval workflow could not be started. Please contact HR.'
+          );
+        }
+      } else {
+        notify(
+          'No approver assigned',
+          'This form requires approval but no approval chain has been set up for you yet. Your submission was saved — please contact HR so it can be reviewed.'
+        );
       }
     }
 
