@@ -2,12 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Alert, Modal, Image, TextInput
+  Modal, Image, TextInput
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, CheckCircle, XCircle, Clock, User } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
-import SignatureCanvas from 'react-native-signature-canvas';
+import { notify } from '../../../../lib/notify';
+import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
 
 const colors = {
   yellow: '#fbbf24',
@@ -55,7 +56,7 @@ export default function SubmissionDetail() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
-  const signatureRef = useRef<any>(null);
+  const signatureRef = useRef<SignaturePadHandle>(null);
 
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
@@ -155,7 +156,7 @@ export default function SubmissionDetail() {
 
   async function handleAction(type: 'approved' | 'declined') {
     if (!signature) {
-      Alert.alert('Signature required', 'Please sign before approving or declining.');
+      notify('Signature required', 'Please sign before approving or declining.');
       return;
     }
     if (!myApproval) return;
@@ -165,7 +166,7 @@ export default function SubmissionDetail() {
     const signatureUrl = await uploadSignature(signature);
 
     // Update this approval step
-    await supabase
+    const { error: approvalUpdateError } = await supabase
       .from('form_approvals')
       .update({
         status: type,
@@ -175,12 +176,21 @@ export default function SubmissionDetail() {
       })
       .eq('id', myApproval.id);
 
+    if (approvalUpdateError) {
+      setActioning(false);
+      notify('Error', approvalUpdateError.message);
+      return;
+    }
+
+    let submissionUpdateError = null;
+
     if (type === 'declined') {
       // Decline the whole submission
-      await supabase
+      const { error } = await supabase
         .from('form_submissions')
         .update({ status: 'declined' })
         .eq('id', id);
+      submissionUpdateError = error;
     } else {
       // Check if there are more approvers
       const nextApproval = approvals.find(
@@ -189,25 +199,33 @@ export default function SubmissionDetail() {
 
       if (nextApproval) {
         // Move to next approver
-        await supabase
+        const { error } = await supabase
           .from('form_submissions')
           .update({ status: 'in_review' })
           .eq('id', id);
+        submissionUpdateError = error;
       } else {
         // All approved
-        await supabase
+        const { error } = await supabase
           .from('form_submissions')
           .update({ status: 'approved' })
           .eq('id', id);
+        submissionUpdateError = error;
       }
     }
 
     setActioning(false);
     setShowSignatureModal(false);
-    Alert.alert(
+
+    if (submissionUpdateError) {
+      notify('Error', submissionUpdateError.message);
+      return;
+    }
+
+    notify(
       type === 'approved' ? 'Approved' : 'Declined',
       `You have ${type} this request.`,
-      [{ text: 'OK', onPress: () => fetchData() }]
+      () => fetchData()
     );
   }
 
@@ -253,24 +271,6 @@ export default function SubmissionDetail() {
       </View>
     );
   }
-
-  const signatureWebStyle = `
-    .m-signature-pad { box-shadow: none; border: none; width: 100%; height: 100%; }
-    .m-signature-pad--body { border: none; width: 100%; }
-    .m-signature-pad--footer {
-      display: flex; justify-content: space-between; padding: 16px;
-      background-color: ${isDark ? '#0f172a' : '#f8fafc'};
-    }
-    .m-signature-pad--footer .button {
-      font-size: 16px; font-weight: 600; padding: 14px 28px;
-      border-radius: 10px; border: none; cursor: pointer;
-    }
-    .m-signature-pad--footer .button.clear {
-      background-color: transparent; color: ${isDark ? '#94a3b8' : '#64748b'};
-    }
-    .m-signature-pad--footer .button.save { background-color: #fbbf24; color: #000000; }
-    body { background-color: ${isDark ? '#1e293b' : '#ffffff'}; margin: 0; }
-  `;
 
   return (
     <>
@@ -483,26 +483,27 @@ export default function SubmissionDetail() {
           <Text style={[styles.sigHint, { color: theme.subtext }]}>
             Draw your signature then tap Save Signature
           </Text>
-          <SignatureCanvas
+          <SignaturePad
             ref={signatureRef}
             onOK={(sig) => {
               setSignature(sig);
               setShowSignatureModal(false);
             }}
-            onEmpty={() => Alert.alert('Empty', 'Please draw your signature first.')}
-            descriptionText=""
-            clearText="Clear"
-            confirmText="Save Signature"
-            webStyle={signatureWebStyle}
+            onEmpty={() => notify('Empty', 'Please draw your signature first.')}
             style={{
-              flex: 1,
               borderWidth: 1,
               borderColor: theme.border,
               margin: 16,
               borderRadius: 12,
-              minHeight: 400,
+              minHeight: 300,
             }}
           />
+          <TouchableOpacity
+            style={styles.sigSaveBtn}
+            onPress={() => signatureRef.current?.readSignature()}
+          >
+            <Text style={styles.sigSaveBtnText}>Save Signature</Text>
+          </TouchableOpacity>
         </View>
       </Modal>
     </>
@@ -658,4 +659,14 @@ const styles = StyleSheet.create({
   sigCancel: { fontSize: 16 },
   sigTitle: { fontSize: 18, fontWeight: '700' },
   sigHint: { textAlign: 'center', fontSize: 14, padding: 12 },
+  sigSaveBtn: {
+    backgroundColor: colors.yellow,
+    borderRadius: 14,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 16,
+    marginBottom: 24,
+  },
+  sigSaveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
 });
