@@ -1,12 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Alert, TextInput, Modal
+  TextInput, Modal, Platform
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, User, MapPin, Phone, Briefcase, Hash, ChevronDown, X } from 'lucide-react-native';
+import {
+  ArrowLeft, User, MapPin, Phone, Briefcase, Hash, ChevronDown, X,
+  Plus, Trash2, GitBranch, FileText, Clock, CheckCircle, XCircle,
+  FolderOpen, Upload
+} from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { notify, confirm } from '../../../../lib/notify';
+import { useFocusEffect } from '@react-navigation/native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const colors = {
   yellow: '#fbbf24',
@@ -23,6 +31,28 @@ const colors = {
   }
 };
 
+const DOC_CATEGORIES = [
+  { value: 'personal', label: 'Personal Document' },
+  { value: 'policy', label: 'Policy' },
+  { value: 'procedure', label: 'Procedure' },
+  { value: 'contract', label: 'Contract' },
+  { value: 'form', label: 'Form' },
+  { value: 'other', label: 'Other' },
+];
+
+async function fileToUint8Array(uri: string): Promise<Uint8Array> {
+  if (Platform.OS === 'web') {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const buffer = await blob.arrayBuffer();
+    return new Uint8Array(buffer);
+  }
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+}
+
 type Employee = {
   id: string;
   full_name: string;
@@ -37,9 +67,23 @@ type Employee = {
   sites: { name: string } | null;
 };
 
-type Site = {
+type Site = { id: string; name: string };
+type Profile = { id: string; full_name: string; role: string };
+type CustomField = { id: string; field_name: string; field_value: string | null; field_order: number };
+type ApprovalChainRow = { id: string; approver_id: string; approval_order: number; approver: { full_name: string } | null };
+type Submission = {
+  id: string;
+  status: string;
+  submitted_at: string;
+  template: { name: string; category: string | null } | null;
+};
+type Document = {
   id: string;
   name: string;
+  category: string;
+  file_url: string;
+  created_at: string;
+  visible_to_employee: boolean;
 };
 
 export default function EmployeeProfile() {
@@ -63,6 +107,37 @@ export default function EmployeeProfile() {
   const [dateJoined, setDateJoined] = useState('');
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
 
+  // Custom fields
+  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [editableCustomFields, setEditableCustomFields] = useState<
+    { id?: string; field_name: string; field_value: string }[]
+  >([]);
+
+  // Approval chain (scoped to this employee)
+  const [chainApprovers, setChainApprovers] = useState<ApprovalChainRow[]>([]);
+  const [admins, setAdmins] = useState<Profile[]>([]);
+  const [chainModalVisible, setChainModalVisible] = useState(false);
+  const [editableApprovers, setEditableApprovers] = useState<(Profile | null)[]>([null]);
+  const [showApproverDropdown, setShowApproverDropdown] = useState<number | null>(null);
+  const [savingChain, setSavingChain] = useState(false);
+
+  // Submissions (search + filter)
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [submissionSearch, setSubmissionSearch] = useState('');
+  const [submissionFilter, setSubmissionFilter] = useState<
+    'all' | 'pending' | 'in_review' | 'approved' | 'declined'
+  >('all');
+
+  // Documents
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [docModalVisible, setDocModalVisible] = useState(false);
+  const [docName, setDocName] = useState('');
+  const [docCategory, setDocCategory] = useState('');
+  const [showDocCategoryDropdown, setShowDocCategoryDropdown] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<any>(null);
+  const [visibleToEmployee, setVisibleToEmployee] = useState(true);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
     card: isDark ? colors.gray[900] : colors.white,
@@ -74,21 +149,27 @@ export default function EmployeeProfile() {
     avatarBg: isDark ? colors.gray[800] : colors.gray[200],
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [id]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchAll();
+    }, [id])
+  );
 
-  async function fetchData() {
+  async function fetchAll() {
+    await Promise.all([
+      fetchProfile(),
+      fetchCustomFields(),
+      fetchChain(),
+      fetchSubmissions(),
+      fetchDocuments(),
+    ]);
+    setLoading(false);
+  }
+
+  async function fetchProfile() {
     const [{ data: emp }, { data: siteData }] = await Promise.all([
-      supabase
-        .from('profiles')
-        .select('*, sites(name)')
-        .eq('id', id)
-        .single(),
-      supabase
-        .from('sites')
-        .select('*')
-        .order('name', { ascending: true }),
+      supabase.from('profiles').select('*, sites(name)').eq('id', id).single(),
+      supabase.from('sites').select('*').order('name', { ascending: true }),
     ]);
 
     if (emp) {
@@ -102,7 +183,73 @@ export default function EmployeeProfile() {
       setSelectedSiteId(emp.site_id ?? null);
     }
     if (siteData) setSites(siteData);
-    setLoading(false);
+  }
+
+  async function fetchCustomFields() {
+    const { data } = await supabase
+      .from('employee_custom_fields')
+      .select('*')
+      .eq('employee_id', id)
+      .order('field_order');
+    if (data) setCustomFields(data);
+  }
+
+  async function fetchChain() {
+    const [{ data: chainData }, { data: adminData }] = await Promise.all([
+      supabase
+        .from('approval_chains')
+        .select('id, approver_id, approval_order, approver:approver_id(full_name)')
+        .eq('employee_id', id)
+        .order('approval_order'),
+      supabase
+        .from('profiles')
+        .select('id, full_name, role')
+        .in('role', ['admin', 'hr', 'superuser'])
+        .order('full_name'),
+    ]);
+    if (chainData) setChainApprovers(chainData as any);
+    if (adminData) setAdmins(adminData);
+  }
+
+  async function fetchSubmissions() {
+    const { data } = await supabase
+      .from('form_submissions')
+      .select('id, status, submitted_at, template:template_id(name, category)')
+      .eq('employee_id', id)
+      .order('submitted_at', { ascending: false });
+    if (data) setSubmissions(data as any);
+  }
+
+  async function fetchDocuments() {
+    const { data } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('employee_id', id)
+      .order('created_at', { ascending: false });
+    if (data) setDocuments(data);
+  }
+
+  // ---------- Profile edit + custom fields ----------
+
+  function openEditModal() {
+    setEditableCustomFields(
+      customFields.map(f => ({ id: f.id, field_name: f.field_name, field_value: f.field_value ?? '' }))
+    );
+    setEditModal(true);
+  }
+
+  function addCustomField() {
+    setEditableCustomFields(prev => [...prev, { field_name: '', field_value: '' }]);
+  }
+
+  function removeCustomField(index: number) {
+    setEditableCustomFields(prev => prev.filter((_, i) => i !== index));
+  }
+
+  function updateCustomField(index: number, key: 'field_name' | 'field_value', value: string) {
+    setEditableCustomFields(prev =>
+      prev.map((f, i) => (i === index ? { ...f, [key]: value } : f))
+    );
   }
 
   async function handleSave() {
@@ -121,13 +268,287 @@ export default function EmployeeProfile() {
       })
       .eq('id', id);
 
+    if (error) {
+      setSaving(false);
+      notify('Error', error.message);
+      return;
+    }
+
+    // Reconcile custom fields: delete removed, update changed, insert new
+    const originalIds = customFields.map(f => f.id);
+    const keptIds = editableCustomFields.filter(f => f.id).map(f => f.id!) as string[];
+    const removedIds = originalIds.filter(oid => !keptIds.includes(oid));
+
+    if (removedIds.length > 0) {
+      await supabase.from('employee_custom_fields').delete().in('id', removedIds);
+    }
+
+    const toUpdate = editableCustomFields.filter(f => f.id && f.field_name.trim());
+    const toInsert = editableCustomFields.filter(f => !f.id && f.field_name.trim());
+
+    for (const f of toUpdate) {
+      await supabase
+        .from('employee_custom_fields')
+        .update({ field_name: f.field_name.trim(), field_value: f.field_value })
+        .eq('id', f.id);
+    }
+
+    if (toInsert.length > 0) {
+      await supabase.from('employee_custom_fields').insert(
+        toInsert.map((f, i) => ({
+          employee_id: id,
+          field_name: f.field_name.trim(),
+          field_value: f.field_value,
+          field_order: customFields.length + i,
+        }))
+      );
+    }
+
     setSaving(false);
+    setEditModal(false);
+    fetchProfile();
+    fetchCustomFields();
+  }
+
+  // ---------- Approval chain (scoped to this employee) ----------
+
+  function openChainModal() {
+    if (chainApprovers.length > 0) {
+      setEditableApprovers(
+        chainApprovers.map(c => admins.find(a => a.id === c.approver_id) ?? null)
+      );
+    } else {
+      setEditableApprovers([null]);
+    }
+    setChainModalVisible(true);
+  }
+
+  function addApproverSlot() {
+    if (editableApprovers.length >= 4) {
+      notify('Maximum reached', 'You can add a maximum of 4 approvers.');
+      return;
+    }
+    setEditableApprovers(prev => [...prev, null]);
+  }
+
+  function removeApproverSlot(index: number) {
+    if (editableApprovers.length === 1) {
+      notify('Minimum required', 'At least 1 approver is required.');
+      return;
+    }
+    setEditableApprovers(prev => prev.filter((_, i) => i !== index));
+  }
+
+  function setApproverSlot(index: number, approver: Profile) {
+    setEditableApprovers(prev => prev.map((a, i) => (i === index ? approver : a)));
+    setShowApproverDropdown(null);
+  }
+
+  async function handleSaveChain() {
+    if (editableApprovers.some(a => a === null)) {
+      notify('Missing approvers', 'Please select all approvers.');
+      return;
+    }
+
+    setSavingChain(true);
+
+    await supabase.from('approval_chains').delete().eq('employee_id', id);
+
+    const { data: userData } = await supabase.auth.getUser();
+    const rows = editableApprovers.map((approver, index) => ({
+      employee_id: id,
+      approver_id: approver!.id,
+      approval_order: index + 1,
+      created_by: userData.user?.id,
+    }));
+
+    const { error } = await supabase.from('approval_chains').insert(rows);
+
+    setSavingChain(false);
 
     if (error) {
-      Alert.alert('Error', error.message);
-    } else {
-      setEditModal(false);
-      fetchData();
+      notify('Error', error.message);
+      return;
+    }
+
+    setChainModalVisible(false);
+    fetchChain();
+  }
+
+  function deleteChain() {
+    confirm(
+      'Remove Approval Chain',
+      `Remove the approval chain for ${employee?.full_name}?`,
+      async () => {
+        const { error } = await supabase.from('approval_chains').delete().eq('employee_id', id);
+        if (error) {
+          notify('Error', error.message);
+        } else {
+          fetchChain();
+        }
+      }
+    );
+  }
+
+  // ---------- Submissions search/filter ----------
+
+  const filteredSubmissions = submissions.filter(s => {
+    if (submissionFilter !== 'all' && s.status !== submissionFilter) return false;
+    if (submissionSearch.trim()) {
+      const q = submissionSearch.trim().toLowerCase();
+      if (!s.template?.name?.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const submissionCounts = {
+    all: submissions.length,
+    pending: submissions.filter(s => s.status === 'pending').length,
+    in_review: submissions.filter(s => s.status === 'in_review').length,
+    approved: submissions.filter(s => s.status === 'approved').length,
+    declined: submissions.filter(s => s.status === 'declined').length,
+  };
+
+  function getStatusColor(status: string) {
+    switch (status) {
+      case 'approved': return '#10b981';
+      case 'declined': return '#ef4444';
+      case 'in_review': return '#3b82f6';
+      default: return '#f59e0b';
+    }
+  }
+
+  function getStatusBg(status: string) {
+    if (isDark) {
+      switch (status) {
+        case 'approved': return '#064e3b';
+        case 'declined': return '#3b1a1a';
+        case 'in_review': return '#1e3a5f';
+        default: return '#78350f';
+      }
+    }
+    switch (status) {
+      case 'approved': return '#d1fae5';
+      case 'declined': return '#fee2e2';
+      case 'in_review': return '#dbeafe';
+      default: return '#fef3c7';
+    }
+  }
+
+  function getStatusIcon(status: string) {
+    switch (status) {
+      case 'approved': return <CheckCircle color="#10b981" size={13} />;
+      case 'declined': return <XCircle color="#ef4444" size={13} />;
+      default: return <Clock color="#f59e0b" size={13} />;
+    }
+  }
+
+  // ---------- Documents ----------
+
+  function openDocModal() {
+    setDocName('');
+    setDocCategory('');
+    setSelectedFile(null);
+    setVisibleToEmployee(true);
+    setDocModalVisible(true);
+  }
+
+  async function pickDocFile() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (!result.canceled && result.assets[0]) {
+        setSelectedFile(result.assets[0]);
+        if (!docName) setDocName(result.assets[0].name.replace(/\.[^.]+$/, ''));
+      }
+    } catch {
+      notify('Error', 'Could not pick file.');
+    }
+  }
+
+  async function handleUploadDoc() {
+    if (!docName.trim()) {
+      notify('Missing name', 'Please enter a document name.');
+      return;
+    }
+    if (!docCategory) {
+      notify('Missing category', 'Please select a category.');
+      return;
+    }
+    if (!selectedFile) {
+      notify('No file', 'Please select a file to upload.');
+      return;
+    }
+
+    setUploadingDoc(true);
+
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const fileExt = selectedFile.name.split('.').pop();
+      const fileName = `doc_${Date.now()}.${fileExt}`;
+      const arrayBuffer = await fileToUint8Array(selectedFile.uri);
+
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(fileName, arrayBuffer, {
+          contentType: selectedFile.mimeType ?? 'application/octet-stream',
+        });
+
+      if (uploadError) {
+        notify('Upload error', uploadError.message);
+        setUploadingDoc(false);
+        return;
+      }
+
+      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(fileName);
+
+      const { error: dbError } = await supabase.from('documents').insert({
+        name: docName.trim(),
+        category: docCategory,
+        file_url: urlData.publicUrl,
+        file_type: fileExt,
+        employee_id: id,
+        uploaded_by: userData.user?.id,
+        visible_to_employee: visibleToEmployee,
+      });
+
+      if (dbError) {
+        notify('Error', dbError.message);
+      } else {
+        setDocModalVisible(false);
+        fetchDocuments();
+      }
+    } catch (e: any) {
+      notify('Error', e.message ?? 'Something went wrong reading that file.');
+    }
+
+    setUploadingDoc(false);
+  }
+
+  function deleteDocument(doc: Document) {
+    confirm(
+      'Delete Document',
+      `Delete "${doc.name}"? This cannot be undone.`,
+      async () => {
+        const { error } = await supabase.from('documents').delete().eq('id', doc.id);
+        if (error) {
+          notify('Error', error.message);
+        } else {
+          fetchDocuments();
+        }
+      }
+    );
+  }
+
+  function getDocCategoryColor(category: string) {
+    switch (category) {
+      case 'personal': return { bg: isDark ? '#1e3a5f' : '#dbeafe', text: '#3b82f6' };
+      case 'policy': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
+      case 'procedure': return { bg: isDark ? '#064e3b' : '#d1fae5', text: '#10b981' };
+      case 'contract': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
+      default: return { bg: isDark ? colors.gray[800] : colors.gray[200], text: colors.gray[500] };
     }
   }
 
@@ -167,10 +588,7 @@ export default function EmployeeProfile() {
           <ArrowLeft color={colors.yellow} size={24} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: theme.text }]}>Employee Profile</Text>
-        <TouchableOpacity
-          style={styles.editBtn}
-          onPress={() => setEditModal(true)}
-        >
+        <TouchableOpacity style={styles.editBtn} onPress={openEditModal}>
           <Text style={styles.editBtnText}>Edit</Text>
         </TouchableOpacity>
       </View>
@@ -190,64 +608,185 @@ export default function EmployeeProfile() {
           {employee.sites && (
             <View style={styles.siteRow}>
               <MapPin color={colors.yellow} size={14} />
-              <Text style={[styles.siteName, { color: theme.subtext }]}>
-                {employee.sites.name}
-              </Text>
+              <Text style={[styles.siteName, { color: theme.subtext }]}>{employee.sites.name}</Text>
             </View>
           )}
         </View>
 
-        {/* Details */}
+        {/* Work Details */}
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Work Details</Text>
+          <DetailRow icon={<Hash color={colors.yellow} size={16} />} label="Employee Number" value={employee.employee_number} theme={theme} />
+          <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Job Title" value={employee.job_title} theme={theme} />
+          <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Department" value={employee.department} theme={theme} />
+          <DetailRow icon={<Phone color={colors.yellow} size={16} />} label="Phone" value={employee.phone} theme={theme} />
+          <DetailRow icon={<Hash color={colors.yellow} size={16} />} label="ID Number" value={employee.id_number} theme={theme} />
+          <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Date Joined" value={employee.date_joined} theme={theme} isLast={customFields.length === 0} />
+          {customFields.map((f, i) => (
+            <DetailRow
+              key={f.id}
+              icon={<Hash color={colors.yellow} size={16} />}
+              label={f.field_name}
+              value={f.field_value}
+              theme={theme}
+              isLast={i === customFields.length - 1}
+            />
+          ))}
+        </View>
 
-          <DetailRow
-            icon={<Hash color={colors.yellow} size={16} />}
-            label="Employee Number"
-            value={employee.employee_number}
-            theme={theme}
+        {/* Approval Chain (scoped to this employee) */}
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardHeaderLeft}>
+              <GitBranch color={colors.yellow} size={18} />
+              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Approval Chain</Text>
+            </View>
+            {chainApprovers.length > 0 && (
+              <TouchableOpacity onPress={deleteChain}>
+                <Trash2 color="#ef4444" size={18} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {chainApprovers.length === 0 ? (
+            <Text style={[styles.emptyInlineText, { color: theme.muted }]}>
+              No approvers set up for {employee.full_name} yet.
+            </Text>
+          ) : (
+            chainApprovers.map(a => (
+              <View key={a.id} style={styles.chainRow}>
+                <View style={[styles.orderBadge, { backgroundColor: `${colors.yellow}20` }]}>
+                  <Text style={[styles.orderText, { color: colors.yellow }]}>{a.approval_order}</Text>
+                </View>
+                <Text style={[styles.chainApproverName, { color: theme.text }]}>{a.approver?.full_name}</Text>
+              </View>
+            ))
+          )}
+
+          <TouchableOpacity style={[styles.inlineActionBtn, { borderColor: colors.yellow }]} onPress={openChainModal}>
+            <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>
+              {chainApprovers.length === 0 ? 'Set Up Approvers' : 'Edit Approvers'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Submitted Forms (search + filter) */}
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={styles.cardHeaderLeft}>
+            <FileText color={colors.yellow} size={18} />
+            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Submitted Forms</Text>
+          </View>
+
+          <TextInput
+            style={[styles.searchInput, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+            placeholder="Search by form name..."
+            placeholderTextColor={theme.muted}
+            value={submissionSearch}
+            onChangeText={setSubmissionSearch}
           />
-          <DetailRow
-            icon={<Briefcase color={colors.yellow} size={16} />}
-            label="Job Title"
-            value={employee.job_title}
-            theme={theme}
-          />
-          <DetailRow
-            icon={<Briefcase color={colors.yellow} size={16} />}
-            label="Department"
-            value={employee.department}
-            theme={theme}
-          />
-          <DetailRow
-            icon={<Phone color={colors.yellow} size={16} />}
-            label="Phone"
-            value={employee.phone}
-            theme={theme}
-          />
-          <DetailRow
-            icon={<Hash color={colors.yellow} size={16} />}
-            label="ID Number"
-            value={employee.id_number}
-            theme={theme}
-          />
-          <DetailRow
-            icon={<Briefcase color={colors.yellow} size={16} />}
-            label="Date Joined"
-            value={employee.date_joined}
-            theme={theme}
-            isLast
-          />
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+            {(['all', 'pending', 'in_review', 'approved', 'declined'] as const).map(f => (
+              <TouchableOpacity
+                key={f}
+                style={[
+                  styles.filterTab,
+                  { borderColor: theme.border },
+                  submissionFilter === f && { backgroundColor: colors.yellow, borderColor: colors.yellow },
+                ]}
+                onPress={() => setSubmissionFilter(f)}
+              >
+                <Text style={[
+                  styles.filterTabText,
+                  { color: submissionFilter === f ? colors.black : theme.subtext },
+                ]}>
+                  {f.replace('_', ' ')} ({submissionCounts[f]})
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {filteredSubmissions.length === 0 ? (
+            <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No matching submissions.</Text>
+          ) : (
+            filteredSubmissions.map(s => (
+              <TouchableOpacity
+                key={s.id}
+                style={[styles.submissionRow, { borderColor: theme.border }]}
+                onPress={() => router.push(`/(app)/hr/requests/${s.id}` as any)}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.submissionName, { color: theme.text }]}>
+                    {s.template?.name ?? 'Unknown Form'}
+                  </Text>
+                  <Text style={[styles.submissionDate, { color: theme.muted }]}>
+                    {new Date(s.submitted_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: getStatusBg(s.status) }]}>
+                  <View style={styles.statusInner}>
+                    {getStatusIcon(s.status)}
+                    <Text style={[styles.statusText, { color: getStatusColor(s.status) }]}>
+                      {s.status.replace('_', ' ')}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+
+        {/* Documents (scoped to this employee) */}
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardHeaderLeft}>
+              <FolderOpen color={colors.yellow} size={18} />
+              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Documents</Text>
+            </View>
+            <TouchableOpacity style={styles.smallAddBtn} onPress={openDocModal}>
+              <Plus color={colors.black} size={16} />
+            </TouchableOpacity>
+          </View>
+
+          {documents.length === 0 ? (
+            <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No documents for this employee yet.</Text>
+          ) : (
+            documents.map(doc => {
+              const cat = getDocCategoryColor(doc.category);
+              return (
+                <View key={doc.id} style={[styles.docRow, { borderColor: theme.border }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.docName, { color: theme.text }]} numberOfLines={1}>{doc.name}</Text>
+                    <View style={styles.docMetaRow}>
+                      <View style={[styles.catBadge, { backgroundColor: cat.bg }]}>
+                        <Text style={[styles.catText, { color: cat.text }]}>{doc.category}</Text>
+                      </View>
+                      <Text style={[styles.docDate, { color: theme.muted }]}>
+                        {new Date(doc.created_at).toLocaleDateString('en-ZA')}
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.docActionBtn}
+                    onPress={() => {
+                      const { Linking } = require('react-native');
+                      Linking.openURL(doc.file_url);
+                    }}
+                  >
+                    <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>View</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.docActionBtn} onPress={() => deleteDocument(doc)}>
+                    <Trash2 color="#ef4444" size={16} />
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )}
         </View>
       </ScrollView>
 
-      {/* Edit Modal */}
-      <Modal
-        visible={editModal}
-        animationType="slide"
-        transparent={false}
-        onRequestClose={() => setEditModal(false)}
-      >
+      {/* Edit Profile Modal */}
+      <Modal visible={editModal} animationType="slide" transparent={false} onRequestClose={() => setEditModal(false)}>
         <ScrollView
           style={[styles.modalContainer, { backgroundColor: theme.background }]}
           contentContainerStyle={styles.modalContent}
@@ -262,7 +801,6 @@ export default function EmployeeProfile() {
           </View>
 
           <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-
             <Field label="Employee Number" value={employeeNumber} onChange={setEmployeeNumber} theme={theme} placeholder="e.g. TKI001" />
             <Field label="Job Title" value={jobTitle} onChange={setJobTitle} theme={theme} placeholder="e.g. Field Technician" />
             <Field label="Department" value={department} onChange={setDepartment} theme={theme} placeholder="e.g. Operations" />
@@ -270,7 +808,6 @@ export default function EmployeeProfile() {
             <Field label="ID Number" value={idNumber} onChange={setIdNumber} theme={theme} placeholder="e.g. 9001015009087" keyboardType="numeric" />
             <Field label="Date Joined" value={dateJoined} onChange={setDateJoined} theme={theme} placeholder="YYYY-MM-DD" />
 
-            {/* Site Dropdown */}
             <View style={styles.fieldGroup}>
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SITE</Text>
               <TouchableOpacity
@@ -283,35 +820,21 @@ export default function EmployeeProfile() {
                 </Text>
                 <ChevronDown color={theme.muted} size={16} />
               </TouchableOpacity>
-
               {showSiteDropdown && (
                 <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
                   <TouchableOpacity
                     style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
-                    onPress={() => {
-                      setSelectedSiteId(null);
-                      setShowSiteDropdown(false);
-                    }}
+                    onPress={() => { setSelectedSiteId(null); setShowSiteDropdown(false); }}
                   >
                     <Text style={[styles.dropdownItemText, { color: theme.subtext }]}>No site</Text>
                   </TouchableOpacity>
                   {sites.map(site => (
                     <TouchableOpacity
                       key={site.id}
-                      style={[
-                        styles.dropdownItem,
-                        { borderBottomColor: theme.border },
-                        selectedSiteId === site.id && { backgroundColor: `${colors.yellow}20` },
-                      ]}
-                      onPress={() => {
-                        setSelectedSiteId(site.id);
-                        setShowSiteDropdown(false);
-                      }}
+                      style={[styles.dropdownItem, { borderBottomColor: theme.border }, selectedSiteId === site.id && { backgroundColor: `${colors.yellow}20` }]}
+                      onPress={() => { setSelectedSiteId(site.id); setShowSiteDropdown(false); }}
                     >
-                      <Text style={[
-                        styles.dropdownItemText,
-                        { color: selectedSiteId === site.id ? colors.yellow : theme.text }
-                      ]}>
+                      <Text style={[styles.dropdownItemText, { color: selectedSiteId === site.id ? colors.yellow : theme.text }]}>
                         {site.name}
                       </Text>
                     </TouchableOpacity>
@@ -319,17 +842,200 @@ export default function EmployeeProfile() {
                 </View>
               )}
             </View>
+
+            {/* Custom Fields */}
+            <View style={[styles.customFieldsHeader]}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext, marginBottom: 0 }]}>CUSTOM FIELDS</Text>
+              <TouchableOpacity onPress={addCustomField}>
+                <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 14 }}>+ Add Field</Text>
+              </TouchableOpacity>
+            </View>
+
+            {editableCustomFields.map((f, index) => (
+              <View key={f.id ?? `new-${index}`} style={styles.customFieldRow}>
+                <View style={{ flex: 1, gap: 8 }}>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                    placeholder="Field name (e.g. Emergency Contact)"
+                    placeholderTextColor={theme.muted}
+                    value={f.field_name}
+                    onChangeText={v => updateCustomField(index, 'field_name', v)}
+                  />
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                    placeholder="Value"
+                    placeholderTextColor={theme.muted}
+                    value={f.field_value}
+                    onChangeText={v => updateCustomField(index, 'field_value', v)}
+                  />
+                </View>
+                <TouchableOpacity onPress={() => removeCustomField(index)} style={{ paddingTop: 8 }}>
+                  <Trash2 color="#ef4444" size={18} />
+                </TouchableOpacity>
+              </View>
+            ))}
           </View>
 
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && { opacity: 0.6 }]}
-            onPress={handleSave}
-            disabled={saving}
-          >
-            {saving
-              ? <ActivityIndicator color={colors.black} />
-              : <Text style={styles.saveBtnText}>Save Changes</Text>
-            }
+          <TouchableOpacity style={[styles.saveBtn, saving && { opacity: 0.6 }]} onPress={handleSave} disabled={saving}>
+            {saving ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Changes</Text>}
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
+
+      {/* Edit Approval Chain Modal */}
+      <Modal visible={chainModalVisible} animationType="slide" transparent={false} onRequestClose={() => setChainModalVisible(false)}>
+        <ScrollView
+          style={[styles.modalContainer, { backgroundColor: theme.background }]}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+            <TouchableOpacity onPress={() => setChainModalVisible(false)}>
+              <X color={theme.muted} size={24} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Approvers for {employee.full_name}</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.customFieldsHeader}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext, marginBottom: 0 }]}>
+                APPROVERS (MAX 4, MIN 1)
+              </Text>
+              {editableApprovers.length < 4 && (
+                <TouchableOpacity onPress={addApproverSlot}>
+                  <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 14 }}>+ Add</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {editableApprovers.map((approver, index) => (
+              <View key={index} style={styles.approverInputRow}>
+                <View style={[styles.orderBadge, { backgroundColor: `${colors.yellow}20` }]}>
+                  <Text style={[styles.orderText, { color: colors.yellow }]}>{index + 1}</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.approverDropdownBtn, { backgroundColor: theme.input, borderColor: theme.border, flex: 1 }]}
+                  onPress={() => setShowApproverDropdown(showApproverDropdown === index ? null : index)}
+                >
+                  <Text style={[styles.dropdownBtnText, { color: approver ? theme.text : theme.subtext }]}>
+                    {approver?.full_name ?? 'Select approver'}
+                  </Text>
+                  <ChevronDown color={theme.muted} size={14} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => removeApproverSlot(index)}>
+                  <Trash2 color="#ef4444" size={18} />
+                </TouchableOpacity>
+
+                {showApproverDropdown === index && (
+                  <View style={[styles.approverDropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                    <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
+                      {admins.map(admin => (
+                        <TouchableOpacity
+                          key={admin.id}
+                          style={[styles.dropdownItem, { borderBottomColor: theme.border }, approver?.id === admin.id && { backgroundColor: `${colors.yellow}20` }]}
+                          onPress={() => setApproverSlot(index, admin)}
+                        >
+                          <Text style={[styles.dropdownItemText, { color: approver?.id === admin.id ? colors.yellow : theme.text }]}>
+                            {admin.full_name}
+                          </Text>
+                          <Text style={[styles.dropdownItemSub, { color: theme.subtext }]}>{admin.role}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity style={[styles.saveBtn, savingChain && { opacity: 0.6 }]} onPress={handleSaveChain} disabled={savingChain}>
+            {savingChain ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Approvers</Text>}
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
+
+      {/* Upload Document Modal (scoped to this employee) */}
+      <Modal visible={docModalVisible} animationType="slide" transparent={false} onRequestClose={() => setDocModalVisible(false)}>
+        <ScrollView
+          style={[styles.modalContainer, { backgroundColor: theme.background }]}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+            <TouchableOpacity onPress={() => setDocModalVisible(false)}>
+              <X color={theme.muted} size={24} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Add Document</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <TouchableOpacity
+              style={[styles.filePicker, { backgroundColor: theme.input, borderColor: selectedFile ? colors.yellow : theme.border }]}
+              onPress={pickDocFile}
+            >
+              <Upload color={selectedFile ? colors.yellow : theme.muted} size={24} />
+              <Text style={[styles.filePickerText, { color: selectedFile ? colors.yellow : theme.muted }]}>
+                {selectedFile ? selectedFile.name : 'Tap to select a PDF or image'}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DOCUMENT NAME *</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                placeholder="e.g. Employment Contract"
+                placeholderTextColor={theme.subtext}
+                value={docName}
+                onChangeText={setDocName}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>CATEGORY *</Text>
+              <TouchableOpacity
+                style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
+                onPress={() => setShowDocCategoryDropdown(!showDocCategoryDropdown)}
+              >
+                <Text style={[styles.dropdownBtnText, { color: docCategory ? theme.text : theme.subtext }]}>
+                  {DOC_CATEGORIES.find(c => c.value === docCategory)?.label ?? 'Select category'}
+                </Text>
+                <ChevronDown color={theme.muted} size={16} />
+              </TouchableOpacity>
+              {showDocCategoryDropdown && (
+                <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  {DOC_CATEGORIES.map(cat => (
+                    <TouchableOpacity
+                      key={cat.value}
+                      style={[styles.dropdownItem, { borderBottomColor: theme.border }, docCategory === cat.value && { backgroundColor: `${colors.yellow}20` }]}
+                      onPress={() => { setDocCategory(cat.value); setShowDocCategoryDropdown(false); }}
+                    >
+                      <Text style={[styles.dropdownItemText, { color: docCategory === cat.value ? colors.yellow : theme.text }]}>
+                        {cat.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            <View style={styles.switchRow}>
+              <View style={styles.switchInfo}>
+                <Text style={[styles.switchLabel, { color: theme.text }]}>Visible to Employee</Text>
+                <Text style={[styles.switchDesc, { color: theme.subtext }]}>Employee can see this document</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.toggle, { backgroundColor: visibleToEmployee ? colors.yellow : theme.input, borderColor: theme.border }]}
+                onPress={() => setVisibleToEmployee(!visibleToEmployee)}
+              >
+                <View style={[styles.toggleThumb, { backgroundColor: colors.white, transform: [{ translateX: visibleToEmployee ? 20 : 2 }] }]} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <TouchableOpacity style={[styles.saveBtn, uploadingDoc && { opacity: 0.6 }]} onPress={handleUploadDoc} disabled={uploadingDoc}>
+            {uploadingDoc ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Upload Document</Text>}
           </TouchableOpacity>
         </ScrollView>
       </Modal>
@@ -343,9 +1049,7 @@ function DetailRow({ icon, label, value, theme, isLast }: any) {
       <View style={styles.detailIcon}>{icon}</View>
       <View style={styles.detailInfo}>
         <Text style={[styles.detailLabel, { color: theme.subtext }]}>{label}</Text>
-        <Text style={[styles.detailValue, { color: value ? theme.text : theme.muted }]}>
-          {value ?? 'Not set'}
-        </Text>
+        <Text style={[styles.detailValue, { color: value ? theme.text : theme.muted }]}>{value ?? 'Not set'}</Text>
       </View>
     </View>
   );
@@ -371,119 +1075,108 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 20, borderBottomWidth: 1,
   },
   headerTitle: { fontSize: 20, fontWeight: '700' },
-  editBtn: {
-    backgroundColor: colors.yellow,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
+  editBtn: { backgroundColor: colors.yellow, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   editBtnText: { color: colors.black, fontWeight: '700', fontSize: 14 },
   content: { padding: 16, gap: 16 },
-  profileCard: {
-    alignItems: 'center',
-    padding: 24,
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 8,
-  },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
+  profileCard: { alignItems: 'center', padding: 24, borderRadius: 16, borderWidth: 1, gap: 8 },
+  avatar: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
   name: { fontSize: 22, fontWeight: '700' },
-  roleBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
-  },
+  roleBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
   roleText: { fontSize: 13, fontWeight: '600' },
   siteRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   siteName: { fontSize: 13 },
-  card: {
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-  },
+  card: { borderRadius: 16, padding: 20, borderWidth: 1 },
+  cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   sectionTitle: { fontSize: 16, fontWeight: '700', marginBottom: 16 },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    gap: 12,
-  },
+  detailRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 12 },
   detailIcon: { width: 24, alignItems: 'center' },
   detailInfo: { flex: 1 },
   detailLabel: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5, marginBottom: 2 },
   detailValue: { fontSize: 15 },
+  emptyInlineText: { fontSize: 13, fontStyle: 'italic', marginBottom: 8 },
+  chainRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+  orderBadge: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  orderText: { fontSize: 13, fontWeight: '700' },
+  chainApproverName: { fontSize: 14, fontWeight: '600' },
+  inlineActionBtn: { borderWidth: 1, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  inlineActionBtnText: { fontSize: 14, fontWeight: '700' },
+  searchInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, marginBottom: 10 },
+  filterScroll: { marginBottom: 10 },
+  filterTab: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6, marginRight: 8 },
+  filterTabText: { fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
+  submissionRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 12, borderTopWidth: 1, gap: 10,
+  },
+  submissionName: { fontSize: 14, fontWeight: '600' },
+  submissionDate: { fontSize: 12, marginTop: 2 },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
+  statusInner: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  statusText: { fontSize: 11, fontWeight: '600', textTransform: 'capitalize' },
+  smallAddBtn: {
+    backgroundColor: colors.yellow, width: 28, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  docRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderTopWidth: 1, gap: 10 },
+  docName: { fontSize: 14, fontWeight: '600' },
+  docMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  catBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20 },
+  catText: { fontSize: 10, fontWeight: '700' },
+  docDate: { fontSize: 11 },
+  docActionBtn: { paddingHorizontal: 8, paddingVertical: 6 },
   // Modal
   modalContainer: { flex: 1 },
   modalContent: { paddingBottom: 48 },
   modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 20, borderBottomWidth: 1,
   },
   modalTitle: { fontSize: 18, fontWeight: '700' },
-  formCard: {
-    margin: 16,
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-  },
+  formCard: { margin: 16, borderRadius: 20, padding: 20, borderWidth: 1 },
   fieldGroup: { marginBottom: 16 },
   fieldLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.8, marginBottom: 8 },
-  fieldInput: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-  },
+  fieldInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
+  input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
   dropdownBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 52,
-    gap: 10,
+    flexDirection: 'row', alignItems: 'center', borderWidth: 1,
+    borderRadius: 12, paddingHorizontal: 14, height: 52, gap: 10,
   },
   dropdownBtnText: { flex: 1, fontSize: 15 },
-  dropdown: {
-    borderWidth: 1,
-    borderRadius: 12,
-    marginTop: 4,
-    overflow: 'hidden',
-  },
-  dropdownItem: {
-    padding: 14,
-    borderBottomWidth: 1,
-  },
+  dropdown: { borderWidth: 1, borderRadius: 12, marginTop: 4, overflow: 'hidden' },
+  dropdownItem: { padding: 14, borderBottomWidth: 1 },
   dropdownItemText: { fontSize: 15 },
+  dropdownItemSub: { fontSize: 12, marginTop: 2 },
+  customFieldsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, marginTop: 4 },
+  customFieldRow: { flexDirection: 'row', gap: 10, marginBottom: 12, alignItems: 'flex-start' },
+  approverInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10, position: 'relative' },
+  approverDropdownBtn: {
+    flexDirection: 'row', alignItems: 'center', borderWidth: 1,
+    borderRadius: 12, paddingHorizontal: 12, height: 48, gap: 8,
+  },
+  approverDropdown: {
+    position: 'absolute', top: 52, left: 38, right: 30, borderWidth: 1,
+    borderRadius: 12, zIndex: 9999, elevation: 9999, overflow: 'visible' as any,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8,
+  },
+  filePicker: {
+    borderWidth: 2, borderRadius: 14, borderStyle: 'dashed',
+    padding: 24, alignItems: 'center', gap: 10, marginBottom: 20,
+  },
+  filePickerText: { fontSize: 14, textAlign: 'center' },
+  switchRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
+  switchInfo: { flex: 1 },
+  switchLabel: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  switchDesc: { fontSize: 12 },
+  toggle: { width: 46, height: 26, borderRadius: 13, borderWidth: 1, justifyContent: 'center' },
+  toggleThumb: { width: 20, height: 20, borderRadius: 10 },
   saveBtn: {
-    backgroundColor: colors.yellow,
-    borderRadius: 14,
-    height: 56,
-    alignItems: 'center',
-    justifyContent: 'center',
-    margin: 16,
+    backgroundColor: colors.yellow, borderRadius: 14, height: 56,
+    alignItems: 'center', justifyContent: 'center', margin: 16,
   },
   saveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
 });
