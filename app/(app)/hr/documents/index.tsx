@@ -2,11 +2,12 @@ import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Alert, Modal, TextInput
+  Modal, TextInput, Platform
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Plus, FolderOpen, FileText, Trash2, Eye, ChevronDown, X, Upload } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { notify, confirm } from '../../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -55,6 +56,25 @@ type Employee = {
   id: string;
   full_name: string;
 };
+
+// expo-file-system's readAsStringAsync does not reliably support the
+// blob: URIs that expo-document-picker returns on web — it can silently
+// fail there. fetch()+blob() works the same way across web and native,
+// so we use that path specifically for web and keep the native approach
+// (which is well-tested and doesn't need changing) for iOS/Android.
+async function fileToUint8Array(uri: string): Promise<Uint8Array> {
+  if (Platform.OS === 'web') {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const buffer = await blob.arrayBuffer();
+    return new Uint8Array(buffer);
+  }
+
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+}
 
 export default function DocumentsManager() {
   const router = useRouter();
@@ -137,21 +157,21 @@ export default function DocumentsManager() {
         if (!docName) setDocName(result.assets[0].name.replace(/\.[^.]+$/, ''));
       }
     } catch {
-      Alert.alert('Error', 'Could not pick file.');
+      notify('Error', 'Could not pick file.');
     }
   }
 
   async function handleUpload() {
     if (!docName.trim()) {
-      Alert.alert('Missing name', 'Please enter a document name.');
+      notify('Missing name', 'Please enter a document name.');
       return;
     }
     if (!docCategory) {
-      Alert.alert('Missing category', 'Please select a category.');
+      notify('Missing category', 'Please select a category.');
       return;
     }
     if (!selectedFile) {
-      Alert.alert('No file', 'Please select a file to upload.');
+      notify('No file', 'Please select a file to upload.');
       return;
     }
 
@@ -162,12 +182,7 @@ export default function DocumentsManager() {
       const fileExt = selectedFile.name.split('.').pop();
       const fileName = `doc_${Date.now()}.${fileExt}`;
 
-      // Read file as base64
-      const base64 = await FileSystem.readAsStringAsync(selectedFile.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      const arrayBuffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+      const arrayBuffer = await fileToUint8Array(selectedFile.uri);
 
       const { error: uploadError } = await supabase.storage
         .from('documents')
@@ -176,7 +191,7 @@ export default function DocumentsManager() {
         });
 
       if (uploadError) {
-        Alert.alert('Upload error', uploadError.message);
+        notify('Upload error', uploadError.message);
         setSaving(false);
         return;
       }
@@ -198,33 +213,30 @@ export default function DocumentsManager() {
         });
 
       if (dbError) {
-        Alert.alert('Error', dbError.message);
+        notify('Error', dbError.message);
       } else {
         setModalVisible(false);
         fetchData();
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      notify('Error', e.message ?? 'Something went wrong reading that file.');
     }
 
     setSaving(false);
   }
 
-  async function deleteDocument(doc: Document) {
-    Alert.alert(
+  function deleteDocument(doc: Document) {
+    confirm(
       'Delete Document',
       `Delete "${doc.name}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            await supabase.from('documents').delete().eq('id', doc.id);
-            fetchData();
-          }
+      async () => {
+        const { error } = await supabase.from('documents').delete().eq('id', doc.id);
+        if (error) {
+          notify('Error', error.message);
+        } else {
+          fetchData();
         }
-      ]
+      }
     );
   }
 
@@ -239,7 +251,7 @@ export default function DocumentsManager() {
   }
 
   const filtered = documents.filter(doc => {
-    if (filterEmployee && doc.employee_id !== filterEmployee)
+    if (filterEmployee && doc.employee_id !== filterEmployee) return false;
     if (filterCategory && doc.category !== filterCategory) return false;
     return true;
   });
