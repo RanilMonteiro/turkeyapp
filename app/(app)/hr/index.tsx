@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Users, FileText, FolderOpen, ClipboardList, MapPin, GitBranch, LogOut } from 'lucide-react-native';
+import { Users, FileText, FolderOpen, ClipboardList, MapPin, GitBranch, LogOut, CheckCircle } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 
 const colors = {
@@ -80,6 +80,13 @@ export default function HRDashboard() {
       icon: FileText,
       description: 'View all form submissions',
       route: '/(app)/hr/requests',
+    },
+    {
+      id: 'approvals',
+      title: 'My Approvals',
+      icon: CheckCircle,
+      description: 'Requests waiting for your approval',
+      route: '/(app)/shared/my-approvals',
     },
     {
       id: 'sites',
