@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Users, FileText, FolderOpen, ClipboardList, MapPin, GitBranch, LogOut, CheckCircle } from 'lucide-react-native';
+import { Users, FileText, MapPin, LogOut, CheckCircle } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 
 const colors = {
@@ -52,6 +52,10 @@ export default function HRDashboard() {
     router.replace('/(auth)/login' as any);
   }
 
+  // Forms (template builder), standalone Documents, and standalone
+  // Approval Chains have been removed from here — the first is
+  // discarded in favor of purpose-built forms, and the other two now
+  // live inside each employee's own profile page instead.
   const features = [
     {
       id: 'employees',
@@ -59,20 +63,6 @@ export default function HRDashboard() {
       icon: Users,
       description: 'Manage employee profiles',
       route: '/(app)/hr/employees',
-    },
-    {
-      id: 'forms',
-      title: 'Forms',
-      icon: ClipboardList,
-      description: 'Create and manage forms',
-      route: '/(app)/hr/forms',
-    },
-    {
-      id: 'documents',
-      title: 'Documents',
-      icon: FolderOpen,
-      description: 'Upload and manage documents',
-      route: '/(app)/hr/documents',
     },
     {
       id: 'requests',
@@ -94,13 +84,6 @@ export default function HRDashboard() {
       icon: MapPin,
       description: 'Manage company sites',
       route: '/(app)/hr/sites',
-    },
-    {
-      id: 'approval-chains',
-      title: 'Approval Chains',
-      icon: GitBranch,
-      description: 'Set up approval workflows',
-      route: '/(app)/hr/approval-chains',
     },
   ];
 
