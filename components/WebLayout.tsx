@@ -28,6 +28,10 @@ const colors = {
   }
 };
 
+// HR nav trimmed to match the new dashboard: Forms (template builder),
+// standalone Documents, and standalone Approval Chains are gone —
+// Documents and Approval Chains now live inside each employee's own
+// profile page, and Forms (the generic builder) was discarded.
 const navByRole: Record<string, { label: string; icon: any; route: string }[]> = {
   superuser: [
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/superuser' },
@@ -37,11 +41,9 @@ const navByRole: Record<string, { label: string; icon: any; route: string }[]> =
   hr: [
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/hr' },
     { label: 'Employees', icon: Users, route: '/(app)/hr/employees' },
-    { label: 'Forms', icon: ClipboardList, route: '/(app)/hr/forms' },
-    { label: 'Documents', icon: FolderOpen, route: '/(app)/hr/documents' },
     { label: 'Requests', icon: FileText, route: '/(app)/hr/requests' },
+    { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals' },
     { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites' },
-    { label: 'Approval Chains', icon: GitBranch, route: '/(app)/hr/approval-chains' },
   ],
   admin: [
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/admin' },

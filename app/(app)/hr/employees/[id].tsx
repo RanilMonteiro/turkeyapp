@@ -8,13 +8,14 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, User, MapPin, Phone, Briefcase, Hash, ChevronDown, X,
   Plus, Trash2, GitBranch, FileText, Clock, CheckCircle, XCircle,
-  FolderOpen, Upload
+  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar
 } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 const colors = {
   yellow: '#fbbf24',
@@ -83,8 +84,10 @@ type Document = {
   category: string;
   file_url: string;
   created_at: string;
+  document_date: string | null;
   visible_to_employee: boolean;
 };
+type FormTemplateOption = { id: string; name: string; category: string | null };
 
 export default function EmployeeProfile() {
   const router = useRouter();
@@ -137,6 +140,17 @@ export default function EmployeeProfile() {
   const [selectedFile, setSelectedFile] = useState<any>(null);
   const [visibleToEmployee, setVisibleToEmployee] = useState(true);
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [docDate, setDocDate] = useState('');
+  const [showDocDatePicker, setShowDocDatePicker] = useState(false);
+  const [docSearch, setDocSearch] = useState('');
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+
+  // Form visibility (per-employee)
+  const [allTemplates, setAllTemplates] = useState<FormTemplateOption[]>([]);
+  const [hiddenTemplateIds, setHiddenTemplateIds] = useState<Set<string>>(new Set());
+  const [formVisibilityModalVisible, setFormVisibilityModalVisible] = useState(false);
+  const [editableHiddenIds, setEditableHiddenIds] = useState<Set<string>>(new Set());
+  const [savingVisibility, setSavingVisibility] = useState(false);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -162,6 +176,7 @@ export default function EmployeeProfile() {
       fetchChain(),
       fetchSubmissions(),
       fetchDocuments(),
+      fetchFormVisibility(),
     ]);
     setLoading(false);
   }
@@ -227,6 +242,22 @@ export default function EmployeeProfile() {
       .eq('employee_id', id)
       .order('created_at', { ascending: false });
     if (data) setDocuments(data);
+  }
+
+  async function fetchFormVisibility() {
+    const [{ data: templates }, { data: hidden }] = await Promise.all([
+      supabase
+        .from('form_templates')
+        .select('id, name, category')
+        .eq('is_active', true)
+        .order('name'),
+      supabase
+        .from('employee_hidden_forms')
+        .select('template_id')
+        .eq('employee_id', id),
+    ]);
+    if (templates) setAllTemplates(templates);
+    if (hidden) setHiddenTemplateIds(new Set(hidden.map(h => h.template_id)));
   }
 
   // ---------- Profile edit + custom fields ----------
@@ -390,6 +421,58 @@ export default function EmployeeProfile() {
     );
   }
 
+  // ---------- Form visibility (which forms this employee can see) ----------
+
+  function openFormVisibilityModal() {
+    setEditableHiddenIds(new Set(hiddenTemplateIds));
+    setFormVisibilityModalVisible(true);
+  }
+
+  function toggleTemplateVisibility(templateId: string) {
+    setEditableHiddenIds(prev => {
+      const next = new Set(prev);
+      if (next.has(templateId)) {
+        next.delete(templateId);
+      } else {
+        next.add(templateId);
+      }
+      return next;
+    });
+  }
+
+  async function handleSaveFormVisibility() {
+    setSavingVisibility(true);
+
+    // Reconcile: delete rows for templates newly made visible, insert
+    // rows for templates newly hidden. Compare against what was
+    // originally loaded (hiddenTemplateIds), not the working copy.
+    const newlyVisible = [...hiddenTemplateIds].filter(t => !editableHiddenIds.has(t));
+    const newlyHidden = [...editableHiddenIds].filter(t => !hiddenTemplateIds.has(t));
+
+    if (newlyVisible.length > 0) {
+      await supabase
+        .from('employee_hidden_forms')
+        .delete()
+        .eq('employee_id', id)
+        .in('template_id', newlyVisible);
+    }
+
+    if (newlyHidden.length > 0) {
+      const { error } = await supabase.from('employee_hidden_forms').insert(
+        newlyHidden.map(templateId => ({ employee_id: id, template_id: templateId }))
+      );
+      if (error) {
+        setSavingVisibility(false);
+        notify('Error', error.message);
+        return;
+      }
+    }
+
+    setSavingVisibility(false);
+    setFormVisibilityModalVisible(false);
+    fetchFormVisibility();
+  }
+
   // ---------- Submissions search/filter ----------
 
   const filteredSubmissions = submissions.filter(s => {
@@ -445,11 +528,29 @@ export default function EmployeeProfile() {
 
   // ---------- Documents ----------
 
+  // Search overrides folder view — when searching, show a flat filtered
+  // list across all categories instead of the folder breakdown.
+  const docSearchActive = docSearch.trim().length > 0;
+
+  const filteredFlatDocuments = documents.filter(d =>
+    d.name.toLowerCase().includes(docSearch.trim().toLowerCase())
+  );
+
+  // Only categories that actually have at least one document show up
+  // as a folder — no empty subfolders.
+  const docsByCategory = documents.reduce((acc, doc) => {
+    (acc[doc.category] ??= []).push(doc);
+    return acc;
+  }, {} as Record<string, Document[]>);
+
+  const categoriesWithDocs = DOC_CATEGORIES.filter(c => (docsByCategory[c.value]?.length ?? 0) > 0);
+
   function openDocModal() {
     setDocName('');
     setDocCategory('');
     setSelectedFile(null);
     setVisibleToEmployee(true);
+    setDocDate('');
     setDocModalVisible(true);
   }
 
@@ -512,6 +613,7 @@ export default function EmployeeProfile() {
         employee_id: id,
         uploaded_by: userData.user?.id,
         visible_to_employee: visibleToEmployee,
+        document_date: docDate || null,
       });
 
       if (dbError) {
@@ -670,6 +772,22 @@ export default function EmployeeProfile() {
           </TouchableOpacity>
         </View>
 
+        {/* Form Access (which forms this employee can/can't see) */}
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={styles.cardHeaderLeft}>
+            <ClipboardList color={colors.yellow} size={18} />
+            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Form Access</Text>
+          </View>
+          <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
+            {hiddenTemplateIds.size === 0
+              ? `${employee.full_name} can see all ${allTemplates.length} available forms.`
+              : `${hiddenTemplateIds.size} of ${allTemplates.length} forms are hidden from ${employee.full_name}.`}
+          </Text>
+          <TouchableOpacity style={[styles.inlineActionBtn, { borderColor: colors.yellow }]} onPress={openFormVisibilityModal}>
+            <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Manage Form Access</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Submitted Forms (search + filter) */}
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <View style={styles.cardHeaderLeft}>
@@ -748,37 +866,66 @@ export default function EmployeeProfile() {
             </TouchableOpacity>
           </View>
 
+          <View style={[styles.docSearchRow, { backgroundColor: theme.input, borderColor: theme.border }]}>
+            <Search color={theme.muted} size={16} />
+            <TextInput
+              style={[styles.docSearchInput, { color: theme.text }]}
+              placeholder="Search documents..."
+              placeholderTextColor={theme.muted}
+              value={docSearch}
+              onChangeText={setDocSearch}
+            />
+          </View>
+
           {documents.length === 0 ? (
             <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No documents for this employee yet.</Text>
+          ) : docSearchActive ? (
+            // Search mode: flat filtered list across all categories
+            filteredFlatDocuments.length === 0 ? (
+              <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No documents match your search.</Text>
+            ) : (
+              filteredFlatDocuments.map(doc => (
+                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} deleteDocument={deleteDocument} />
+              ))
+            )
+          ) : expandedCategory ? (
+            // Inside a folder: show just that category's documents
+            <View>
+              <TouchableOpacity style={styles.folderBackRow} onPress={() => setExpandedCategory(null)}>
+                <ArrowLeft color={colors.yellow} size={16} />
+                <Text style={{ color: colors.yellow, fontWeight: '600', fontSize: 14 }}>
+                  Back to folders
+                </Text>
+              </TouchableOpacity>
+              <Text style={[styles.folderTitle, { color: theme.text }]}>
+                {DOC_CATEGORIES.find(c => c.value === expandedCategory)?.label ?? expandedCategory}
+              </Text>
+              {(docsByCategory[expandedCategory] ?? []).map(doc => (
+                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} deleteDocument={deleteDocument} />
+              ))}
+            </View>
           ) : (
-            documents.map(doc => {
-              const cat = getDocCategoryColor(doc.category);
+            // Folder view: only categories that actually have documents
+            categoriesWithDocs.map(cat => {
+              const count = docsByCategory[cat.value].length;
+              const catColor = getDocCategoryColor(cat.value);
               return (
-                <View key={doc.id} style={[styles.docRow, { borderColor: theme.border }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.docName, { color: theme.text }]} numberOfLines={1}>{doc.name}</Text>
-                    <View style={styles.docMetaRow}>
-                      <View style={[styles.catBadge, { backgroundColor: cat.bg }]}>
-                        <Text style={[styles.catText, { color: cat.text }]}>{doc.category}</Text>
-                      </View>
-                      <Text style={[styles.docDate, { color: theme.muted }]}>
-                        {new Date(doc.created_at).toLocaleDateString('en-ZA')}
-                      </Text>
-                    </View>
+                <TouchableOpacity
+                  key={cat.value}
+                  style={[styles.folderRow, { borderColor: theme.border }]}
+                  onPress={() => setExpandedCategory(cat.value)}
+                >
+                  <View style={[styles.folderIcon, { backgroundColor: catColor.bg }]}>
+                    <Folder color={catColor.text} size={18} />
                   </View>
-                  <TouchableOpacity
-                    style={styles.docActionBtn}
-                    onPress={() => {
-                      const { Linking } = require('react-native');
-                      Linking.openURL(doc.file_url);
-                    }}
-                  >
-                    <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>View</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.docActionBtn} onPress={() => deleteDocument(doc)}>
-                    <Trash2 color="#ef4444" size={16} />
-                  </TouchableOpacity>
-                </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.folderName, { color: theme.text }]}>{cat.label}</Text>
+                    <Text style={[styles.folderCount, { color: theme.muted }]}>
+                      {count} document{count !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                  <ChevronDown color={theme.muted} size={16} style={{ transform: [{ rotate: '-90deg' }] }} />
+                </TouchableOpacity>
               );
             })
           )}
@@ -1020,6 +1167,31 @@ export default function EmployeeProfile() {
               )}
             </View>
 
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DOCUMENT DATE</Text>
+              <TouchableOpacity
+                style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
+                onPress={() => setShowDocDatePicker(true)}
+              >
+                <Calendar color={colors.yellow} size={16} />
+                <Text style={[styles.dropdownBtnText, { color: docDate ? theme.text : theme.subtext }]}>
+                  {docDate || 'Select a date (optional)'}
+                </Text>
+              </TouchableOpacity>
+              {showDocDatePicker && (
+                <DateTimePicker
+                  value={docDate ? new Date(docDate) : new Date()}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
+                  onChange={(_, date) => {
+                    setShowDocDatePicker(false);
+                    if (date) setDocDate(date.toISOString().split('T')[0]);
+                  }}
+                  themeVariant={isDark ? 'dark' : 'light'}
+                />
+              )}
+            </View>
+
             <View style={styles.switchRow}>
               <View style={styles.switchInfo}>
                 <Text style={[styles.switchLabel, { color: theme.text }]}>Visible to Employee</Text>
@@ -1039,6 +1211,89 @@ export default function EmployeeProfile() {
           </TouchableOpacity>
         </ScrollView>
       </Modal>
+
+      {/* Form Visibility Modal */}
+      <Modal visible={formVisibilityModalVisible} animationType="slide" transparent={false} onRequestClose={() => setFormVisibilityModalVisible(false)}>
+        <ScrollView
+          style={[styles.modalContainer, { backgroundColor: theme.background }]}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+            <TouchableOpacity onPress={() => setFormVisibilityModalVisible(false)}>
+              <X color={theme.muted} size={24} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Form Access</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.fieldHint, { color: theme.muted, marginBottom: 16 }]}>
+              Toggle off any form {employee.full_name} should not be able to see or submit.
+            </Text>
+            {allTemplates.length === 0 ? (
+              <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No forms exist yet.</Text>
+            ) : (
+              allTemplates.map(t => {
+                const isVisible = !editableHiddenIds.has(t.id);
+                return (
+                  <View key={t.id} style={styles.switchRow}>
+                    <View style={styles.switchInfo}>
+                      <Text style={[styles.switchLabel, { color: theme.text }]}>{t.name}</Text>
+                      {t.category && (
+                        <Text style={[styles.switchDesc, { color: theme.subtext }]}>{t.category}</Text>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.toggle, { backgroundColor: isVisible ? colors.yellow : theme.input, borderColor: theme.border }]}
+                      onPress={() => toggleTemplateVisibility(t.id)}
+                    >
+                      <View style={[styles.toggleThumb, { backgroundColor: colors.white, transform: [{ translateX: isVisible ? 20 : 2 }] }]} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
+          </View>
+
+          <TouchableOpacity style={[styles.saveBtn, savingVisibility && { opacity: 0.6 }]} onPress={handleSaveFormVisibility} disabled={savingVisibility}>
+            {savingVisibility ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Form Access</Text>}
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
+    </View>
+  );
+}
+
+function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument }: any) {
+  const cat = getDocCategoryColor(doc.category);
+  return (
+    <View style={[styles.docRow, { borderColor: theme.border }]}>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.docName, { color: theme.text }]} numberOfLines={1}>{doc.name}</Text>
+        <View style={styles.docMetaRow}>
+          <View style={[styles.catBadge, { backgroundColor: cat.bg }]}>
+            <Text style={[styles.catText, { color: cat.text }]}>{doc.category}</Text>
+          </View>
+          <Text style={[styles.docDate, { color: theme.muted }]}>
+            {doc.document_date
+              ? new Date(doc.document_date).toLocaleDateString('en-ZA')
+              : new Date(doc.created_at).toLocaleDateString('en-ZA')}
+          </Text>
+        </View>
+      </View>
+      <TouchableOpacity
+        style={styles.docActionBtn}
+        onPress={() => {
+          const { Linking } = require('react-native');
+          Linking.openURL(doc.file_url);
+        }}
+      >
+        <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>View</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.docActionBtn} onPress={() => deleteDocument(doc)}>
+        <Trash2 color="#ef4444" size={16} />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -1129,6 +1384,23 @@ const styles = StyleSheet.create({
   catText: { fontSize: 10, fontWeight: '700' },
   docDate: { fontSize: 11 },
   docActionBtn: { paddingHorizontal: 8, paddingVertical: 6 },
+  docSearchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1,
+    borderRadius: 12, paddingHorizontal: 12, height: 44, marginBottom: 12,
+  },
+  docSearchInput: { flex: 1, fontSize: 14 },
+  folderRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, borderTopWidth: 1,
+  },
+  folderIcon: {
+    width: 38, height: 38, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  folderName: { fontSize: 14, fontWeight: '600' },
+  folderCount: { fontSize: 12, marginTop: 2 },
+  folderBackRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  folderTitle: { fontSize: 15, fontWeight: '700', marginBottom: 4 },
   // Modal
   modalContainer: { flex: 1 },
   modalContent: { paddingBottom: 48 },
@@ -1140,6 +1412,7 @@ const styles = StyleSheet.create({
   formCard: { margin: 16, borderRadius: 20, padding: 20, borderWidth: 1 },
   fieldGroup: { marginBottom: 16 },
   fieldLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.8, marginBottom: 8 },
+  fieldHint: { fontSize: 13, lineHeight: 18 },
   fieldInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
   input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
   dropdownBtn: {

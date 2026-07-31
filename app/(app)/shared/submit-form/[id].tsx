@@ -8,7 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, ChevronDown, Calendar } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify } from '../../../../lib/notify';
-import SignatureCanvas from 'react-native-signature-canvas';
+import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Platform } from 'react-native';
 
@@ -57,7 +57,7 @@ export default function SubmitForm() {
   const [activeSignatureField, setActiveSignatureField] = useState<string | null>(null);
   const [activeDateField, setActiveDateField] = useState<string | null>(null);
   const [activeDropdownField, setActiveDropdownField] = useState<string | null>(null);
-  const signatureRef = useRef<any>(null);
+  const signatureRef = useRef<SignaturePadHandle>(null);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -197,22 +197,6 @@ export default function SubmitForm() {
       () => router.back()
     );
   }
-
-  const signatureWebStyle = `
-    .m-signature-pad { box-shadow: none; border: none; width: 100%; height: 100%; }
-    .m-signature-pad--body { border: none; }
-    .m-signature-pad--footer {
-      display: flex; justify-content: space-between; padding: 16px;
-      background-color: ${isDark ? '#0f172a' : '#f8fafc'};
-    }
-    .m-signature-pad--footer .button {
-      font-size: 16px; font-weight: 600; padding: 14px 28px;
-      border-radius: 10px; border: none;
-    }
-    .m-signature-pad--footer .button.clear { background-color: transparent; color: ${isDark ? '#94a3b8' : '#64748b'}; }
-    .m-signature-pad--footer .button.save { background-color: #fbbf24; color: #000; }
-    body { background-color: ${isDark ? '#1e293b' : '#ffffff'}; margin: 0; }
-  `;
 
   if (loading) {
     return (
@@ -412,7 +396,7 @@ export default function SubmitForm() {
           <Text style={[styles.sigHint, { color: theme.subtext }]}>
             Draw your signature then tap Save Signature
           </Text>
-          <SignatureCanvas
+          <SignaturePad
             ref={signatureRef}
             onOK={async (sig) => {
               if (activeSignatureField) {
@@ -422,19 +406,20 @@ export default function SubmitForm() {
               }
             }}
             onEmpty={() => notify('Empty', 'Please draw your signature first.')}
-            descriptionText=""
-            clearText="Clear"
-            confirmText="Save Signature"
-            webStyle={signatureWebStyle}
             style={{
-              flex: 1,
               borderWidth: 1,
               borderColor: theme.border,
               margin: 16,
               borderRadius: 12,
-              minHeight: 400,
+              minHeight: 300,
             }}
           />
+          <TouchableOpacity
+            style={styles.sigSaveBtn}
+            onPress={() => signatureRef.current?.readSignature()}
+          >
+            <Text style={styles.sigSaveBtnText}>Save Signature</Text>
+          </TouchableOpacity>
         </View>
       </Modal>
     </>
@@ -505,4 +490,14 @@ const styles = StyleSheet.create({
   sigCancel: { fontSize: 16 },
   sigTitle: { fontSize: 18, fontWeight: '700' },
   sigHint: { textAlign: 'center', fontSize: 14, padding: 12 },
+  sigSaveBtn: {
+    backgroundColor: colors.yellow,
+    borderRadius: 14,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 16,
+    marginBottom: 24,
+  },
+  sigSaveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
 });
