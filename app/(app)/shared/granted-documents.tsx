@@ -4,7 +4,7 @@ import {
   StyleSheet, useColorScheme, ActivityIndicator, TextInput
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, FolderOpen, Search, Folder, ChevronDown } from 'lucide-react-native';
+import { ArrowLeft, FolderOpen, Search, Folder, ChevronDown, User } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -49,6 +49,7 @@ export default function GrantedDocuments() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
 
   const theme = {
@@ -96,13 +97,23 @@ export default function GrantedDocuments() {
     return d.name.toLowerCase().includes(q) || (d.employee?.full_name ?? '').toLowerCase().includes(q);
   });
 
-  // Only categories that actually have at least one granted document
-  // show up as a folder — no empty subfolders.
-  const docsByCategory = documents.reduce((acc, doc) => {
+  // Level 1: group by employee. Only employees who actually have at
+  // least one granted document show up as a folder.
+  const docsByEmployee = documents.reduce((acc, doc) => {
+    const key = doc.employee_id ?? 'unknown';
+    (acc[key] ??= { name: doc.employee?.full_name ?? 'Unknown Employee', docs: [] }).docs.push(doc);
+    return acc;
+  }, {} as Record<string, { name: string; docs: Document[] }>);
+
+  const employeeFolders = Object.entries(docsByEmployee).sort((a, b) => a[1].name.localeCompare(b[1].name));
+
+  // Level 2: within the expanded employee, group by category. Only
+  // categories that employee actually has documents in show up.
+  const currentEmployeeDocs = expandedEmployeeId ? docsByEmployee[expandedEmployeeId]?.docs ?? [] : [];
+  const docsByCategory = currentEmployeeDocs.reduce((acc, doc) => {
     (acc[doc.category] ??= []).push(doc);
     return acc;
   }, {} as Record<string, Document[]>);
-
   const categoriesWithDocs = DOC_CATEGORIES.filter(c => (docsByCategory[c.value]?.length ?? 0) > 0);
 
   function DocRow({ doc }: { doc: Document }) {
@@ -118,9 +129,14 @@ export default function GrantedDocuments() {
         <View style={{ flex: 1 }}>
           <Text style={[styles.docName, { color: theme.text }]} numberOfLines={1}>{doc.name}</Text>
           <View style={styles.docMetaRow}>
-            <Text style={[styles.docEmployee, { color: theme.subtext }]} numberOfLines={1}>
-              {doc.employee?.full_name ?? 'Unknown Employee'}
-            </Text>
+            {searchActive && (
+              <Text style={[styles.docEmployee, { color: theme.subtext }]} numberOfLines={1}>
+                {doc.employee?.full_name ?? 'Unknown Employee'} ·
+              </Text>
+            )}
+            <View style={[styles.catBadge, { backgroundColor: cat.bg }]}>
+              <Text style={[styles.catText, { color: cat.text }]}>{doc.category}</Text>
+            </View>
             <Text style={[styles.docDate, { color: theme.muted }]}>
               {doc.document_date
                 ? new Date(doc.document_date).toLocaleDateString('en-ZA')
@@ -133,6 +149,22 @@ export default function GrantedDocuments() {
     );
   }
 
+  function goBack() {
+    if (expandedCategory) {
+      setExpandedCategory(null);
+    } else if (expandedEmployeeId) {
+      setExpandedEmployeeId(null);
+    } else {
+      router.back();
+    }
+  }
+
+  const headerTitle = expandedCategory
+    ? DOC_CATEGORIES.find(c => c.value === expandedCategory)?.label ?? 'Documents'
+    : expandedEmployeeId
+    ? docsByEmployee[expandedEmployeeId]?.name ?? 'Documents'
+    : 'Documents';
+
   if (loading) {
     return (
       <View style={[styles.centered, { backgroundColor: theme.background }]}>
@@ -144,14 +176,10 @@ export default function GrantedDocuments() {
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={[styles.header, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => (expandedCategory ? setExpandedCategory(null) : router.back())}>
+        <TouchableOpacity onPress={goBack}>
           <ArrowLeft color={colors.yellow} size={24} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>
-          {expandedCategory
-            ? DOC_CATEGORIES.find(c => c.value === expandedCategory)?.label ?? 'Documents'
-            : 'Documents'}
-        </Text>
+        <Text style={[styles.headerTitle, { color: theme.text }]}>{headerTitle}</Text>
         <View style={{ width: 24 }} />
       </View>
 
@@ -178,7 +206,7 @@ export default function GrantedDocuments() {
             </Text>
           </View>
         ) : searchActive ? (
-          // Search overrides folder view — flat filtered list
+          // Search overrides folder view entirely — flat filtered list
           filteredFlat.length === 0 ? (
             <View style={[styles.emptyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <Text style={[styles.emptyText, { color: theme.subtext }]}>No documents match your search</Text>
@@ -188,13 +216,13 @@ export default function GrantedDocuments() {
               {filteredFlat.map(doc => <DocRow key={doc.id} doc={doc} />)}
             </View>
           )
-        ) : expandedCategory ? (
-          // Inside a category folder
+        ) : expandedEmployeeId && expandedCategory ? (
+          // Level 3: documents inside Employee > Category
           <View style={[styles.folderContentsCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             {(docsByCategory[expandedCategory] ?? []).map(doc => <DocRow key={doc.id} doc={doc} />)}
           </View>
-        ) : (
-          // Top-level: category folders, only ones with documents
+        ) : expandedEmployeeId ? (
+          // Level 2: category folders for this employee
           <View style={[styles.folderListCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             {categoriesWithDocs.map(cat => {
               const count = docsByCategory[cat.value].length;
@@ -218,6 +246,28 @@ export default function GrantedDocuments() {
                 </TouchableOpacity>
               );
             })}
+          </View>
+        ) : (
+          // Level 1: employee folders — only employees with granted docs
+          <View style={[styles.folderListCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            {employeeFolders.map(([employeeId, group]) => (
+              <TouchableOpacity
+                key={employeeId}
+                style={[styles.folderRow, { borderColor: theme.border }]}
+                onPress={() => setExpandedEmployeeId(employeeId)}
+              >
+                <View style={[styles.folderIcon, { backgroundColor: `${colors.yellow}20` }]}>
+                  <User color={colors.yellow} size={18} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.folderName, { color: theme.text }]}>{group.name}</Text>
+                  <Text style={[styles.folderCount, { color: theme.muted }]}>
+                    {group.docs.length} document{group.docs.length !== 1 ? 's' : ''}
+                  </Text>
+                </View>
+                <ChevronDown color={theme.muted} size={16} style={{ transform: [{ rotate: '-90deg' }] }} />
+              </TouchableOpacity>
+            ))}
           </View>
         )}
       </ScrollView>
@@ -263,7 +313,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, borderTopWidth: 1, gap: 10,
   },
   docName: { fontSize: 14, fontWeight: '600' },
-  docMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
-  docEmployee: { fontSize: 12, flexShrink: 1 },
+  docMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' },
+  docEmployee: { fontSize: 12 },
+  catBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20 },
+  catText: { fontSize: 10, fontWeight: '700' },
   docDate: { fontSize: 11 },
 });
