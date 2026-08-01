@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, FileText, Calendar, BarChart3, LogOut, Users, ClipboardList, CheckCircle, FolderOpen } from 'lucide-react-native';
+import { User, FileText, Calendar, BarChart3, LogOut, Users, ClipboardList, CheckCircle, FolderOpen, Eye } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 
 const colors = {
@@ -24,6 +24,7 @@ export default function AdminDashboard() {
   const isDark = useColorScheme() === 'dark';
   const [fullName, setFullName] = useState('');
   const [permissions, setPermissions] = useState<string[]>([]);
+  const [hasDocGrants, setHasDocGrants] = useState(false);
 
   useEffect(() => {
     fetchProfile();
@@ -45,8 +46,17 @@ export default function AdminDashboard() {
       .eq('user_id', userData.user.id)
       .eq('granted', true);
 
+    // "See Docs" only shows up for admins HR has actually granted
+    // document access to — not every admin needs this card.
+    const { data: grants } = await supabase
+      .from('document_access_grants')
+      .select('id')
+      .eq('admin_id', userData.user.id)
+      .limit(1);
+
     if (profile) setFullName(profile.full_name ?? '');
     if (perms) setPermissions(perms.map(p => p.permission));
+    setHasDocGrants((grants?.length ?? 0) > 0);
   }
 
   async function handleLogout() {
@@ -111,6 +121,14 @@ export default function AdminDashboard() {
   route: '/(app)/shared/my-documents',
   permission: null,
 },
+    ...(hasDocGrants ? [{
+      id: 'see-docs',
+      title: 'See Docs',
+      icon: Eye,
+      description: 'Documents you have been granted access to',
+      route: '/(app)/shared/granted-documents',
+      permission: null,
+    }] : []),
     {
       id: 'reports',
       title: 'Reports',
