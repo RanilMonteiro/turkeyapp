@@ -37,6 +37,10 @@ const navByRole: Record<string, { label: string; icon: any; route: string }[]> =
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/superuser' },
     { label: 'Manage Users', icon: Users, route: '/(app)/superuser/manage-users' },
     { label: 'Callouts', icon: FileText, route: '/(app)/callouts/(admin)/dashboard' },
+    { label: 'Employees', icon: Users, route: '/(app)/hr/employees' },
+    { label: 'Requests', icon: FileText, route: '/(app)/hr/requests' },
+    { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals' },
+    { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites' },
   ],
   hr: [
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/hr' },

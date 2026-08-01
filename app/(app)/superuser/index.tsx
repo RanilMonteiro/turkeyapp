@@ -1,6 +1,6 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, FileText, Calendar, BarChart3, LogOut, Users, Settings } from 'lucide-react-native';
+import { User, FileText, Calendar, BarChart3, LogOut, Users, Settings, MapPin, CheckCircle } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 
 const colors = {
@@ -39,6 +39,36 @@ export default function SuperuserDashboard() {
     icon: FileText,
     description: 'Manage all callouts',
     route: '/(app)/callouts/(admin)/dashboard',
+  },
+  // Same HR-level features HR has access to — RLS already grants
+  // superuser the same access everywhere, this just wires up the UI.
+  {
+    id: 'employees',
+    title: 'Employees',
+    icon: Users,
+    description: 'Manage employee profiles',
+    route: '/(app)/hr/employees',
+  },
+  {
+    id: 'requests',
+    title: 'Requests',
+    icon: FileText,
+    description: 'View all form submissions',
+    route: '/(app)/hr/requests',
+  },
+  {
+    id: 'approvals',
+    title: 'My Approvals',
+    icon: CheckCircle,
+    description: 'Requests waiting for your approval',
+    route: '/(app)/shared/my-approvals',
+  },
+  {
+    id: 'sites',
+    title: 'Sites',
+    icon: MapPin,
+    description: 'Manage company sites',
+    route: '/(app)/hr/sites',
   },
 ];
 
