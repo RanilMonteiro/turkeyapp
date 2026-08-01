@@ -8,7 +8,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, User, MapPin, Phone, Briefcase, Hash, ChevronDown, X,
   Plus, Trash2, GitBranch, FileText, Clock, CheckCircle, XCircle,
-  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar
+  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye
 } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
@@ -88,6 +88,8 @@ type Document = {
   visible_to_employee: boolean;
 };
 type FormTemplateOption = { id: string; name: string; category: string | null };
+type DocGrant = { admin_id: string; categories: string[] | null; admin: { full_name: string } | null };
+type EditableGrant = { granted: boolean; categories: string[] | null };
 
 export default function EmployeeProfile() {
   const router = useRouter();
@@ -152,6 +154,13 @@ export default function EmployeeProfile() {
   const [editableHiddenIds, setEditableHiddenIds] = useState<Set<string>>(new Set());
   const [savingVisibility, setSavingVisibility] = useState(false);
 
+  // Document access grants (which admins can see this employee's docs)
+  const [adminUsers, setAdminUsers] = useState<Profile[]>([]);
+  const [docGrants, setDocGrants] = useState<DocGrant[]>([]);
+  const [docAccessModalVisible, setDocAccessModalVisible] = useState(false);
+  const [editableGrants, setEditableGrants] = useState<Record<string, EditableGrant>>({});
+  const [savingDocAccess, setSavingDocAccess] = useState(false);
+
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
     card: isDark ? colors.gray[900] : colors.white,
@@ -177,6 +186,7 @@ export default function EmployeeProfile() {
       fetchSubmissions(),
       fetchDocuments(),
       fetchFormVisibility(),
+      fetchDocAccess(),
     ]);
     setLoading(false);
   }
@@ -258,6 +268,22 @@ export default function EmployeeProfile() {
     ]);
     if (templates) setAllTemplates(templates);
     if (hidden) setHiddenTemplateIds(new Set(hidden.map(h => h.template_id)));
+  }
+
+  async function fetchDocAccess() {
+    const [{ data: admins_ }, { data: grants }] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('id, full_name, role')
+        .eq('role', 'admin')
+        .order('full_name'),
+      supabase
+        .from('document_access_grants')
+        .select('admin_id, categories, admin:admin_id(full_name)')
+        .eq('employee_id', id),
+    ]);
+    if (admins_) setAdminUsers(admins_);
+    if (grants) setDocGrants(grants as any);
   }
 
   // ---------- Profile edit + custom fields ----------
@@ -471,6 +497,84 @@ export default function EmployeeProfile() {
     setSavingVisibility(false);
     setFormVisibilityModalVisible(false);
     fetchFormVisibility();
+  }
+
+  // ---------- Document access grants (which admins see this employee's docs) ----------
+
+  function openDocAccessModal() {
+    const initial: Record<string, EditableGrant> = {};
+    adminUsers.forEach(admin => {
+      const existing = docGrants.find(g => g.admin_id === admin.id);
+      initial[admin.id] = existing
+        ? { granted: true, categories: existing.categories }
+        : { granted: false, categories: null };
+    });
+    setEditableGrants(initial);
+    setDocAccessModalVisible(true);
+  }
+
+  function toggleAdminGrant(adminId: string) {
+    setEditableGrants(prev => ({
+      ...prev,
+      [adminId]: {
+        granted: !prev[adminId]?.granted,
+        categories: prev[adminId]?.categories ?? null,
+      },
+    }));
+  }
+
+  function setGrantToAllCategories(adminId: string) {
+    setEditableGrants(prev => ({
+      ...prev,
+      [adminId]: { ...prev[adminId], categories: null },
+    }));
+  }
+
+  function toggleGrantCategory(adminId: string, category: string) {
+    setEditableGrants(prev => {
+      const current = prev[adminId];
+      const currentCategories = current?.categories;
+      // If currently "all" (null), start narrowing from just this category.
+      if (currentCategories === null) {
+        return { ...prev, [adminId]: { ...current, categories: [category] } };
+      }
+      const has = currentCategories!.includes(category);
+      const next = has
+        ? currentCategories!.filter(c => c !== category)
+        : [...currentCategories!, category];
+      return { ...prev, [adminId]: { ...current, categories: next } };
+    });
+  }
+
+  async function handleSaveDocAccess() {
+    setSavingDocAccess(true);
+
+    // Simple reconcile: clear existing grants for this employee, then
+    // reinsert current state — same pattern used for the approval chain.
+    await supabase.from('document_access_grants').delete().eq('employee_id', id);
+
+    const { data: userData } = await supabase.auth.getUser();
+    const rows = Object.entries(editableGrants)
+      .filter(([_, g]) => g.granted)
+      .map(([adminId, g]) => ({
+        admin_id: adminId,
+        employee_id: id,
+        categories: g.categories,
+        granted_by: userData.user?.id,
+      }));
+
+    if (rows.length > 0) {
+      const { error } = await supabase.from('document_access_grants').insert(rows);
+      if (error) {
+        setSavingDocAccess(false);
+        notify('Error', error.message);
+        return;
+      }
+    }
+
+    setSavingDocAccess(false);
+    setDocAccessModalVisible(false);
+    fetchDocAccess();
   }
 
   // ---------- Submissions search/filter ----------
@@ -930,6 +1034,22 @@ export default function EmployeeProfile() {
             })
           )}
         </View>
+
+        {/* Document Access (which admins can see this employee's docs) */}
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={styles.cardHeaderLeft}>
+            <Eye color={colors.yellow} size={18} />
+            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Document Access</Text>
+          </View>
+          <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
+            {docGrants.length === 0
+              ? `No admins currently have access to ${employee.full_name}'s documents.`
+              : docGrants.map(g => g.admin?.full_name).filter(Boolean).join(', ') + ' can see some or all of these documents.'}
+          </Text>
+          <TouchableOpacity style={[styles.inlineActionBtn, { borderColor: colors.yellow }]} onPress={openDocAccessModal}>
+            <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Manage Document Access</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
       {/* Edit Profile Modal */}
@@ -1261,6 +1381,96 @@ export default function EmployeeProfile() {
           </TouchableOpacity>
         </ScrollView>
       </Modal>
+
+      {/* Document Access Modal */}
+      <Modal visible={docAccessModalVisible} animationType="slide" transparent={false} onRequestClose={() => setDocAccessModalVisible(false)}>
+        <ScrollView
+          style={[styles.modalContainer, { backgroundColor: theme.background }]}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+            <TouchableOpacity onPress={() => setDocAccessModalVisible(false)}>
+              <X color={theme.muted} size={24} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Document Access</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.fieldHint, { color: theme.muted, marginBottom: 16 }]}>
+              Grant specific admins access to {employee.full_name}'s documents. Turn on a category
+              restriction to limit them to just that type, or leave on "All Categories" for full access.
+            </Text>
+            {adminUsers.length === 0 ? (
+              <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No admin users exist yet.</Text>
+            ) : (
+              adminUsers.map(admin => {
+                const grant = editableGrants[admin.id] ?? { granted: false, categories: null };
+                return (
+                  <View key={admin.id} style={styles.docAccessBlock}>
+                    <View style={styles.switchRow}>
+                      <View style={styles.switchInfo}>
+                        <Text style={[styles.switchLabel, { color: theme.text }]}>{admin.full_name}</Text>
+                        <Text style={[styles.switchDesc, { color: theme.subtext }]}>
+                          {grant.granted
+                            ? (grant.categories === null ? 'All categories' : grant.categories.join(', ') || 'No categories selected')
+                            : 'No access'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.toggle, { backgroundColor: grant.granted ? colors.yellow : theme.input, borderColor: theme.border }]}
+                        onPress={() => toggleAdminGrant(admin.id)}
+                      >
+                        <View style={[styles.toggleThumb, { backgroundColor: colors.white, transform: [{ translateX: grant.granted ? 20 : 2 }] }]} />
+                      </TouchableOpacity>
+                    </View>
+
+                    {grant.granted && (
+                      <View style={styles.categoryChipsRow}>
+                        <TouchableOpacity
+                          style={[
+                            styles.categoryChip,
+                            { borderColor: theme.border },
+                            grant.categories === null && { backgroundColor: colors.yellow, borderColor: colors.yellow },
+                          ]}
+                          onPress={() => setGrantToAllCategories(admin.id)}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: grant.categories === null ? colors.black : theme.subtext }}>
+                            All Categories
+                          </Text>
+                        </TouchableOpacity>
+                        {DOC_CATEGORIES.map(cat => {
+                          const selected = grant.categories !== null && grant.categories.includes(cat.value);
+                          return (
+                            <TouchableOpacity
+                              key={cat.value}
+                              style={[
+                                styles.categoryChip,
+                                { borderColor: theme.border },
+                                selected && { backgroundColor: colors.yellow, borderColor: colors.yellow },
+                              ]}
+                              onPress={() => toggleGrantCategory(admin.id, cat.value)}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: selected ? colors.black : theme.subtext }}>
+                                {cat.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
+                );
+              })
+            )}
+          </View>
+
+          <TouchableOpacity style={[styles.saveBtn, savingDocAccess && { opacity: 0.6 }]} onPress={handleSaveDocAccess} disabled={savingDocAccess}>
+            {savingDocAccess ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Document Access</Text>}
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
     </View>
   );
 }
@@ -1401,6 +1611,9 @@ const styles = StyleSheet.create({
   folderCount: { fontSize: 12, marginTop: 2 },
   folderBackRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   folderTitle: { fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  docAccessBlock: { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(148,163,184,0.2)' },
+  categoryChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 },
+  categoryChip: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
   // Modal
   modalContainer: { flex: 1 },
   modalContent: { paddingBottom: 48 },
