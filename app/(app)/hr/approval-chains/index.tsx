@@ -446,7 +446,13 @@ export default function ApprovalChains() {
 
               
               {selectedApprovers.map((approver, index) => (
-                <View key={index} style={styles.approverInputRow}>
+                <View
+                  key={index}
+                  style={[
+                    styles.approverInputRow,
+                    showApproverDropdown === index && styles.approverInputRowActive,
+                  ]}
+                >
                   <View style={[styles.orderBadge, { backgroundColor: `${colors.yellow}20` }]}>
                     <Text style={[styles.orderText, { color: colors.yellow }]}>{index + 1}</Text>
                   </View>
@@ -598,7 +604,10 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
   },
-  fieldGroup: { marginBottom: 20 },
+  fieldGroup: {
+  marginBottom: 20,
+  zIndex: 1,
+},
   label: { fontSize: 12, fontWeight: '600', letterSpacing: 0.8, marginBottom: 8 },
   dropdownBtn: {
     flexDirection: 'row',
@@ -629,13 +638,19 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   addApproverText: { fontSize: 14, fontWeight: '700' },
-  approverInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 10,
-    position: 'relative',
-  },
+ approverInputRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 10,
+  marginBottom: 10,
+  position: 'relative',
+  zIndex: 1,
+  elevation: 1,
+},
+approverInputRowActive: {
+  zIndex: 999,
+  elevation: 999,
+},
   approverDropdownBtn: {
     flexDirection: 'row',
     alignItems: 'center',
