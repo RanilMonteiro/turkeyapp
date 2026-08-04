@@ -1177,7 +1177,13 @@ export default function EmployeeProfile() {
             </View>
 
             {editableApprovers.map((approver, index) => (
-              <View key={index} style={styles.approverInputRow}>
+              <View
+                key={index}
+                style={[
+                  styles.approverInputRow,
+                  showApproverDropdown === index && styles.approverInputRowActive,
+                ]}
+              >
                 <View style={[styles.orderBadge, { backgroundColor: `${colors.yellow}20` }]}>
                   <Text style={[styles.orderText, { color: colors.yellow }]}>{index + 1}</Text>
                 </View>
@@ -1640,6 +1646,10 @@ const styles = StyleSheet.create({
   customFieldsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, marginTop: 4 },
   customFieldRow: { flexDirection: 'row', gap: 10, marginBottom: 12, alignItems: 'flex-start' },
   approverInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10, position: 'relative' },
+  approverInputRowActive: {
+    zIndex: 20,
+    elevation: 20,
+  },
   approverDropdownBtn: {
     flexDirection: 'row', alignItems: 'center', borderWidth: 1,
     borderRadius: 12, paddingHorizontal: 12, height: 48, gap: 8,
