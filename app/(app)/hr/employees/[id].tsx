@@ -16,8 +16,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import DatePickerField from '../../../../components/DatePickerField';
-
+import DatePickerField from '../../../../components/DatepickerField';
 const colors = {
   yellow: '#fbbf24',
   white: '#ffffff',
