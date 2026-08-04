@@ -2,14 +2,16 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  TextInput, Modal
+  TextInput, Modal, Platform
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, ChevronDown } from 'lucide-react-native';
+import { ArrowLeft, ChevronDown, Paperclip, X, CheckCircle } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
-import DatePickerField from '../../../../components/DatepickerField'
+import DatePickerField from '../../../../components/DatepickerField';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const colors = {
   yellow: '#fbbf24',
@@ -43,6 +45,21 @@ type Template = {
   requires_approval: boolean;
 };
 
+type Attachment = { url: string; name: string };
+
+async function fileToUint8Array(uri: string): Promise<Uint8Array> {
+  if (Platform.OS === 'web') {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const buffer = await blob.arrayBuffer();
+    return new Uint8Array(buffer);
+  }
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+}
+
 export default function SubmitForm() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
@@ -55,6 +72,7 @@ export default function SubmitForm() {
   const [submitting, setSubmitting] = useState(false);
   const [activeSignatureField, setActiveSignatureField] = useState<string | null>(null);
   const [activeDropdownField, setActiveDropdownField] = useState<string | null>(null);
+  const [uploadingAttachmentField, setUploadingAttachmentField] = useState<string | null>(null);
   const signatureRef = useRef<SignaturePadHandle>(null);
 
   const theme = {
@@ -106,6 +124,79 @@ export default function SubmitForm() {
     setFormData(prev => ({ ...prev, [fieldId]: value }));
   }
 
+  // ---------- Conditional requirement: attachment is compulsory for
+  // Sick Leave, optional for every other leave type. Driven by reading
+  // the sibling "Type of Leave" field's currently selected value,
+  // rather than a hardcoded template/field id — so this generalizes to
+  // any future form with the same "Type of Leave" + attachment shape.
+
+  function selectedLeaveType(): string | null {
+    const leaveTypeField = fields.find(f => f.label.toLowerCase().includes('type of leave'));
+    if (!leaveTypeField) return null;
+    const val = formData[leaveTypeField.id];
+    return typeof val === 'string' ? val : null;
+  }
+
+  function isFieldRequired(field: Field): boolean {
+    if (field.field_type === 'attachment') {
+      const leaveType = selectedLeaveType();
+      if (leaveType && leaveType.toLowerCase().includes('sick leave')) return true;
+      return field.required;
+    }
+    return field.required;
+  }
+
+  function attachmentHint(field: Field): string | null {
+    if (field.field_type !== 'attachment') return null;
+    const hasLeaveTypeSibling = fields.some(f => f.label.toLowerCase().includes('type of leave'));
+    if (!hasLeaveTypeSibling) return field.required ? 'Required' : 'Optional';
+    return isFieldRequired(field)
+      ? 'Required for Sick Leave.'
+      : 'Optional for this leave type — required only for Sick Leave.';
+  }
+
+  // ---------- Attachment upload ----------
+
+  async function pickAttachmentFile(fieldId: string) {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets[0]) return;
+
+      const asset = result.assets[0];
+      setUploadingAttachmentField(fieldId);
+
+      const fileExt = asset.name.split('.').pop();
+      const fileName = `form_attachment_${id}_${fieldId}_${Date.now()}.${fileExt}`;
+      const arrayBuffer = await fileToUint8Array(asset.uri);
+
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(fileName, arrayBuffer, {
+          contentType: asset.mimeType ?? 'application/octet-stream',
+        });
+
+      if (uploadError) {
+        notify('Upload error', uploadError.message);
+        setUploadingAttachmentField(null);
+        return;
+      }
+
+      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(fileName);
+      setFieldValue(fieldId, { url: urlData.publicUrl, name: asset.name } as Attachment);
+    } catch (e: any) {
+      notify('Error', e.message ?? 'Something went wrong reading that file.');
+    } finally {
+      setUploadingAttachmentField(null);
+    }
+  }
+
+  function removeAttachment(fieldId: string) {
+    setFieldValue(fieldId, null);
+  }
+
   async function uploadSignatureForField(base64: string, fieldId: string): Promise<string | null> {
     try {
       const base64Data = base64.replace('data:image/png;base64,', '');
@@ -125,10 +216,16 @@ export default function SubmitForm() {
   }
 
   async function handleSubmit() {
-    // Validate required fields
+    // Validate required fields (attachment uses the dynamic
+    // Sick-Leave-dependent requirement, not the raw DB flag)
     for (const field of fields) {
-      if (field.required && !formData[field.id]) {
-        notify('Missing field', `"${field.label}" is required.`);
+      if (isFieldRequired(field) && !formData[field.id]) {
+        notify(
+          'Missing field',
+          field.field_type === 'attachment'
+            ? `A supporting document is required for Sick Leave.`
+            : `"${field.label}" is required.`
+        );
         return;
       }
     }
@@ -232,7 +329,7 @@ export default function SubmitForm() {
               style={[styles.fieldGroup, index < fields.length - 1 && { borderBottomWidth: 1, borderBottomColor: theme.border }]}
             >
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
-                {field.label.toUpperCase()}{field.required ? ' *' : ''}
+                {field.label.toUpperCase()}{isFieldRequired(field) ? ' *' : ''}
               </Text>
 
               {/* Text */}
@@ -316,6 +413,49 @@ export default function SubmitForm() {
                   </View>
                   <Text style={[styles.checkboxLabel, { color: theme.text }]}>Yes</Text>
                 </TouchableOpacity>
+              )}
+
+              {/* Attachment */}
+              {field.field_type === 'attachment' && (
+                <>
+                  {attachmentHint(field) && (
+                    <Text style={[styles.attachmentHint, { color: isFieldRequired(field) ? '#f59e0b' : theme.muted }]}>
+                      {attachmentHint(field)}
+                    </Text>
+                  )}
+
+                  {formData[field.id] ? (
+                    <View style={[styles.attachedBox, { borderColor: '#10b981', backgroundColor: theme.input }]}>
+                      <CheckCircle color="#10b981" size={18} />
+                      <Text style={[styles.attachedText, { color: theme.text }]} numberOfLines={1}>
+                        {(formData[field.id] as Attachment).name}
+                      </Text>
+                      <TouchableOpacity onPress={() => removeAttachment(field.id)} style={styles.attachedRemoveBtn}>
+                        <X color="#ef4444" size={18} />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={[
+                        styles.attachBox,
+                        { borderColor: isFieldRequired(field) ? colors.yellow : theme.border },
+                      ]}
+                      onPress={() => pickAttachmentFile(field.id)}
+                      disabled={uploadingAttachmentField === field.id}
+                    >
+                      {uploadingAttachmentField === field.id ? (
+                        <ActivityIndicator color={colors.yellow} />
+                      ) : (
+                        <>
+                          <Paperclip color={isFieldRequired(field) ? colors.yellow : theme.muted} size={20} />
+                          <Text style={[styles.attachBoxText, { color: isFieldRequired(field) ? colors.yellow : theme.muted }]}>
+                            Tap to attach a PDF or image
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                </>
               )}
 
               {/* Signature */}
@@ -447,6 +587,18 @@ const styles = StyleSheet.create({
   },
   checkmark: { color: colors.black, fontWeight: '700', fontSize: 14 },
   checkboxLabel: { fontSize: 15 },
+  attachmentHint: { fontSize: 12, marginBottom: 8 },
+  attachBox: {
+    height: 90, borderWidth: 2, borderRadius: 12,
+    borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  attachBoxText: { fontSize: 14, fontWeight: '600' },
+  attachedBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    height: 56, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14,
+  },
+  attachedText: { flex: 1, fontSize: 14, fontWeight: '600' },
+  attachedRemoveBtn: { padding: 4 },
   signBox: {
     height: 100, borderWidth: 2, borderRadius: 12,
     borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center',
