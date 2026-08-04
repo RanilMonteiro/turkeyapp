@@ -5,9 +5,9 @@ import {
   Modal, Image, TextInput, Linking
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, CheckCircle, XCircle, Clock, User, Paperclip } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle, XCircle, Clock, User, Paperclip, ShieldAlert } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
-import { notify } from '../../../../lib/notify';
+import { notify, confirm } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
 
 const colors = {
@@ -39,7 +39,9 @@ type Approval = {
   signature_url: string | null;
   comments: string | null;
   actioned_at: string | null;
+  overridden_by: string | null;
   approver: { full_name: string } | null;
+  overrider?: { full_name: string } | null;
 };
 
 type Submission = {
@@ -67,8 +69,11 @@ export default function SubmissionDetail() {
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [signature, setSignature] = useState<string | null>(null);
   const [comments, setComments] = useState('');
-  const [actionType, setActionType] = useState<'approved' | 'declined' | null>(null);
   const [actioning, setActioning] = useState(false);
+
+  // Superuser override: which pending approval step (if any) they've
+  // chosen to act on instead of their own assigned step, if any.
+  const [overrideTargetId, setOverrideTargetId] = useState<string | null>(null);
 
   const theme = {
     background: isDark ? colors.black : '#f8fafc',
@@ -119,21 +124,39 @@ export default function SubmissionDetail() {
 
     const { data: approvalData } = await supabase
       .from('form_approvals')
-      .select('*, approver:approver_id(full_name)')
+      .select('*, approver:approver_id(full_name), overrider:overridden_by(full_name)')
       .eq('submission_id', id)
       .order('approval_order');
 
-    if (approvalData) setApprovals(approvalData);
+    if (approvalData) setApprovals(approvalData as any);
 
     setLoading(false);
   }
 
-  // Find if current user is next approver
-  const myApproval = approvals.find(
+  const isSuperuser = currentUserRole === 'superuser';
+
+  // The step assigned to the current user, if any.
+  const myPendingApproval = approvals.find(
     a => a.approver_id === currentUserId && a.status === 'pending'
   );
 
-  const canApprove = myApproval && submission?.status !== 'approved' && submission?.status !== 'declined';
+  // All steps still awaiting action — a superuser can pick any of
+  // these to override, not just their own.
+  const pendingApprovals = approvals.filter(a => a.status === 'pending');
+
+  // The step actually being acted on right now: either the current
+  // user's own assigned step, or — for a superuser — whichever step
+  // they've explicitly chosen to override.
+  const targetApproval = overrideTargetId
+    ? approvals.find(a => a.id === overrideTargetId) ?? null
+    : myPendingApproval;
+
+  const isOverride = !!overrideTargetId && overrideTargetId !== myPendingApproval?.id;
+
+  const canAct =
+    !!targetApproval &&
+    submission?.status !== 'approved' &&
+    submission?.status !== 'declined';
 
   async function uploadSignature(base64: string): Promise<string | null> {
     try {
@@ -154,27 +177,45 @@ export default function SubmissionDetail() {
     }
   }
 
-  async function handleAction(type: 'approved' | 'declined') {
+  function requestAction(type: 'approved' | 'declined') {
+    if (isOverride && targetApproval) {
+      confirm(
+        'Override Approval',
+        `This bypasses ${targetApproval.approver?.full_name ?? 'the assigned approver'}'s own approval step. Continue?`,
+        () => performAction(type),
+        type === 'approved' ? 'Approve' : 'Decline'
+      );
+    } else {
+      performAction(type);
+    }
+  }
+
+  async function performAction(type: 'approved' | 'declined') {
     if (!signature) {
       notify('Signature required', 'Please sign before approving or declining.');
       return;
     }
-    if (!myApproval) return;
+    if (!targetApproval) return;
 
     setActioning(true);
 
     const signatureUrl = await uploadSignature(signature);
 
+    const updatePayload: Record<string, any> = {
+      status: type,
+      signature_url: signatureUrl,
+      comments: comments || null,
+      actioned_at: new Date().toISOString(),
+    };
+    if (isOverride) {
+      updatePayload.overridden_by = currentUserId;
+    }
+
     // Update this approval step
     const { error: approvalUpdateError } = await supabase
       .from('form_approvals')
-      .update({
-        status: type,
-        signature_url: signatureUrl,
-        comments: comments || null,
-        actioned_at: new Date().toISOString(),
-      })
-      .eq('id', myApproval.id);
+      .update(updatePayload)
+      .eq('id', targetApproval.id);
 
     if (approvalUpdateError) {
       setActioning(false);
@@ -192,9 +233,9 @@ export default function SubmissionDetail() {
         .eq('id', id);
       submissionUpdateError = error;
     } else {
-      // Check if there are more approvers
+      // Check if there are more approvers after this step
       const nextApproval = approvals.find(
-        a => a.approval_order === myApproval.approval_order + 1
+        a => a.approval_order === targetApproval.approval_order + 1
       );
 
       if (nextApproval) {
@@ -216,6 +257,9 @@ export default function SubmissionDetail() {
 
     setActioning(false);
     setShowSignatureModal(false);
+    setOverrideTargetId(null);
+    setSignature(null);
+    setComments('');
 
     if (submissionUpdateError) {
       notify('Error', submissionUpdateError.message);
@@ -224,7 +268,7 @@ export default function SubmissionDetail() {
 
     notify(
       type === 'approved' ? 'Approved' : 'Declined',
-      `You have ${type} this request.`,
+      `You have ${type} this request${isOverride ? ' (override)' : ''}.`,
       () => fetchData()
     );
   }
@@ -408,6 +452,15 @@ export default function SubmissionDetail() {
                     </View>
                   </View>
 
+                  {approval.overrider && (
+                    <View style={styles.overrideNotice}>
+                      <ShieldAlert color="#f59e0b" size={13} />
+                      <Text style={[styles.overrideNoticeText, { color: theme.subtext }]}>
+                        Overridden by {approval.overrider.full_name}
+                      </Text>
+                    </View>
+                  )}
+
                   {approval.comments && (
                     <Text style={[styles.approvalComments, { color: theme.subtext }]}>
                       💬 {approval.comments}
@@ -439,10 +492,46 @@ export default function SubmissionDetail() {
             </View>
           )}
 
-          {/* Action Buttons — only show if current user is next approver */}
-          {canApprove && (
+          {/* Superuser Override picker — lets a superuser choose ANY
+              pending step to act on, not just their own. */}
+          {isSuperuser && submission.status !== 'approved' && submission.status !== 'declined' && pendingApprovals.length > 0 && (
             <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-              <Text style={[styles.sectionTitle, { color: theme.text }]}>Your Action</Text>
+              <View style={styles.overrideHeaderRow}>
+                <ShieldAlert color="#f59e0b" size={18} />
+                <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Superuser Override</Text>
+              </View>
+              <Text style={[styles.actionHint, { color: theme.subtext, marginBottom: 12 }]}>
+                Act on behalf of any pending approver — useful if someone is unavailable or this needs urgent sign-off.
+              </Text>
+              {pendingApprovals.map(a => {
+                const selected = targetApproval?.id === a.id;
+                return (
+                  <TouchableOpacity
+                    key={a.id}
+                    style={[
+                      styles.overrideOption,
+                      { borderColor: selected ? colors.yellow : theme.border },
+                      selected && { backgroundColor: `${colors.yellow}15` },
+                    ]}
+                    onPress={() => setOverrideTargetId(a.id === myPendingApproval?.id ? null : a.id)}
+                  >
+                    <Text style={[styles.overrideOptionText, { color: selected ? colors.yellow : theme.text }]}>
+                      Step {a.approval_order} — {a.approver?.full_name}
+                      {a.approver_id === currentUserId ? ' (you)' : ''}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Action Buttons — shown for the current user's own assigned
+              step, OR for a superuser who has selected an override target */}
+          {canAct && (
+            <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>
+                {isOverride ? `Acting for ${targetApproval?.approver?.full_name}` : 'Your Action'}
+              </Text>
               <Text style={[styles.actionHint, { color: theme.subtext }]}>
                 You need to sign before approving or declining.
               </Text>
@@ -482,7 +571,7 @@ export default function SubmissionDetail() {
               <View style={styles.actionBtns}>
                 <TouchableOpacity
                   style={[styles.declineBtn, actioning && { opacity: 0.6 }]}
-                  onPress={() => handleAction('declined')}
+                  onPress={() => requestAction('declined')}
                   disabled={actioning}
                 >
                   <XCircle color={colors.white} size={18} />
@@ -490,7 +579,7 @@ export default function SubmissionDetail() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.approveBtn, actioning && { opacity: 0.6 }]}
-                  onPress={() => handleAction('approved')}
+                  onPress={() => requestAction('approved')}
                   disabled={actioning}
                 >
                   {actioning
@@ -632,6 +721,16 @@ const styles = StyleSheet.create({
   },
   actionedAt: { fontSize: 11, marginLeft: 44, marginTop: 4 },
   chainLine: { width: 2, height: 16, marginLeft: 15, marginVertical: 4 },
+  overrideNotice: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginLeft: 44, marginTop: 4,
+  },
+  overrideNoticeText: { fontSize: 12, fontStyle: 'italic' },
+  overrideHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  overrideOption: {
+    borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 8,
+  },
+  overrideOptionText: { fontSize: 14, fontWeight: '600' },
   actionHint: { fontSize: 13, marginBottom: 12 },
   commentsInput: {
     borderWidth: 1,
