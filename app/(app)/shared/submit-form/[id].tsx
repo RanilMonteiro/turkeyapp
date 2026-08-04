@@ -102,17 +102,31 @@ export default function SubmitForm() {
       const { data: userData } = await supabase.auth.getUser();
       const { data: profile } = await supabase
         .from('profiles')
-        .select('full_name, employee_number, job_title, department, sites(name)')
+        .select('full_name, employee_number, job_title, department, phone, id_number, sites(name)')
         .eq('id', userData.user?.id)
         .single();
+
+      // Auto-fill map: each entry lists the phrases that identify a
+      // field as "this kind of info" (matched against the field's
+      // label, lowercased), and where to pull the value from on the
+      // employee's profile. Ordered most-specific first so a generic
+      // term like "name" doesn't accidentally steal a field that a
+      // more specific term (like "site name") should have claimed.
+      const autoFillMap: { matches: string[]; value: string | null | undefined }[] = [
+        { matches: ['employee number', 'emp no', 'emp #', 'staff number'], value: profile?.employee_number },
+        { matches: ['id number', 'identity number'], value: profile?.id_number },
+        { matches: ['job title', 'position', 'designation'], value: profile?.job_title },
+        { matches: ['department', 'division'], value: profile?.department },
+        { matches: ['contact no', 'contact number', 'phone', 'cell', 'mobile', 'tel'], value: profile?.phone },
+        { matches: ['site name', 'branch', 'site'], value: (profile as any)?.sites?.name },
+        { matches: ['full name', 'employee name', 'name of employee', 'applicant name', 'name'], value: profile?.full_name },
+      ];
 
       const autoData: { [key: string]: string } = {};
       fieldData.forEach((field: Field) => {
         const lowerLabel = field.label.toLowerCase();
-        if (lowerLabel.includes('name') && profile?.full_name) autoData[field.id] = profile.full_name;
-        if (lowerLabel.includes('employee number') && profile?.employee_number) autoData[field.id] = profile.employee_number;
-        if (lowerLabel.includes('job title') && profile?.job_title) autoData[field.id] = profile.job_title;
-        if (lowerLabel.includes('department') && profile?.department) autoData[field.id] = profile.department;
+        const match = autoFillMap.find(m => m.value && m.matches.some(term => lowerLabel.includes(term)));
+        if (match?.value) autoData[field.id] = match.value;
       });
       setFormData(autoData);
     }
