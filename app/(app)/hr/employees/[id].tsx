@@ -38,6 +38,7 @@ const DOC_CATEGORIES = [
   { value: 'procedure', label: 'Procedure' },
   { value: 'contract', label: 'Contract' },
   { value: 'form', label: 'Form' },
+  { value: 'disciplinary', label: 'Disciplinary' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -754,6 +755,7 @@ export default function EmployeeProfile() {
       case 'policy': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
       case 'procedure': return { bg: isDark ? '#064e3b' : '#d1fae5', text: '#10b981' };
       case 'contract': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
+      case 'disciplinary': return { bg: isDark ? '#7f1d1d' : '#fee2e2', text: '#dc2626'};
       default: return { bg: isDark ? colors.gray[800] : colors.gray[200], text: colors.gray[500] };
     }
   }
