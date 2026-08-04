@@ -16,6 +16,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import DatePickerField from '../../../../components/DatePickerField';
 
 const colors = {
   yellow: '#fbbf24',
@@ -1075,8 +1076,19 @@ export default function EmployeeProfile() {
             <Field label="Department" value={department} onChange={setDepartment} theme={theme} placeholder="e.g. Operations" />
             <Field label="Phone" value={phone} onChange={setPhone} theme={theme} placeholder="e.g. 071 234 5678" keyboardType="phone-pad" />
             <Field label="ID Number" value={idNumber} onChange={setIdNumber} theme={theme} placeholder="e.g. 9001015009087" keyboardType="numeric" />
-            <Field label="Date Joined" value={dateJoined} onChange={setDateJoined} theme={theme} placeholder="YYYY-MM-DD" />
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
+                DATE JOINED
+              </Text>
 
+              <DatePickerField
+                value={dateJoined}
+                onChange={setDateJoined}
+                placeholder="Select date"
+                isDark={isDark}
+                theme={theme}
+              />
+            </View>
             <View style={styles.fieldGroup}>
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SITE</Text>
               <TouchableOpacity
@@ -1311,28 +1323,17 @@ export default function EmployeeProfile() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DOCUMENT DATE</Text>
-              <TouchableOpacity
-                style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
-                onPress={() => setShowDocDatePicker(true)}
-              >
-                <Calendar color={colors.yellow} size={16} />
-                <Text style={[styles.dropdownBtnText, { color: docDate ? theme.text : theme.subtext }]}>
-                  {docDate || 'Select a date (optional)'}
-                </Text>
-              </TouchableOpacity>
-              {showDocDatePicker && (
-                <DateTimePicker
-                  value={docDate ? new Date(docDate) : new Date()}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
-                  onChange={(_, date) => {
-                    setShowDocDatePicker(false);
-                    if (date) setDocDate(date.toISOString().split('T')[0]);
-                  }}
-                  themeVariant={isDark ? 'dark' : 'light'}
-                />
-              )}
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
+                DOCUMENT DATE
+              </Text>
+
+              <DatePickerField
+                value={docDate}
+                onChange={setDocDate}
+                placeholder="Select document date"
+                isDark={isDark}
+                theme={theme}
+              />
             </View>
 
             <View style={styles.switchRow}>
