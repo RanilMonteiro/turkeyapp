@@ -5,12 +5,11 @@ import {
   TextInput, Modal
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, ChevronDown, Calendar } from 'lucide-react-native';
+import { ArrowLeft, ChevronDown } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { Platform } from 'react-native';
+import DatePickerField from '../../../../components/DatepickerField'
 
 const colors = {
   yellow: '#fbbf24',
@@ -55,7 +54,6 @@ export default function SubmitForm() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [activeSignatureField, setActiveSignatureField] = useState<string | null>(null);
-  const [activeDateField, setActiveDateField] = useState<string | null>(null);
   const [activeDropdownField, setActiveDropdownField] = useState<string | null>(null);
   const signatureRef = useRef<SignaturePadHandle>(null);
 
@@ -264,29 +262,13 @@ export default function SubmitForm() {
 
               {/* Date */}
               {field.field_type === 'date' && (
-                <>
-                  <TouchableOpacity
-                    style={[styles.pickerBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
-                    onPress={() => setActiveDateField(field.id)}
-                  >
-                    <Calendar color={colors.yellow} size={16} />
-                    <Text style={[styles.pickerBtnText, { color: formData[field.id] ? theme.text : theme.muted }]}>
-                      {formData[field.id] ?? 'Select date'}
-                    </Text>
-                  </TouchableOpacity>
-                  {activeDateField === field.id && (
-                    <DateTimePicker
-                      value={formData[field.id] ? new Date(formData[field.id]) : new Date()}
-                      mode="date"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
-                      onChange={(_, date) => {
-                        setActiveDateField(null);
-                        if (date) setFieldValue(field.id, date.toISOString().split('T')[0]);
-                      }}
-                      themeVariant={isDark ? 'dark' : 'light'}
-                    />
-                  )}
-                </>
+                <DatePickerField
+                  value={formData[field.id] ?? ''}
+                  onChange={v => setFieldValue(field.id, v)}
+                  placeholder="Select date"
+                  isDark={isDark}
+                  theme={theme}
+                />
               )}
 
               {/* Dropdown */}
