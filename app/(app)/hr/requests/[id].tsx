@@ -2,10 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Modal, Image, TextInput
+  Modal, Image, TextInput, Linking
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, CheckCircle, XCircle, Clock, User } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle, XCircle, Clock, User, Paperclip } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
@@ -256,6 +256,63 @@ export default function SubmissionDetail() {
     }
   }
 
+  // Renders a single field's answer. Pulled out of the JSX map so the
+  // "attachment" branch (which needs its own tap handler) doesn't have
+  // to fight with the ternary chain.
+  function renderFieldValue(field: Field, value: any) {
+    if (field.field_type === 'signature' && value) {
+      return (
+        <Image
+          source={{ uri: value }}
+          style={[styles.signatureImage, { borderColor: theme.border }]}
+          resizeMode="contain"
+        />
+      );
+    }
+
+    // Attachment fields store { url, name } (see submit-form/[id].tsx),
+    // not a plain string like every other field type — rendering that
+    // object directly as <Text>{value}</Text> is what was crashing this
+    // screen to a blank/black render. Handle it explicitly instead.
+    if (field.field_type === 'attachment') {
+      if (!value || !value.url) {
+        return <Text style={[styles.responseValue, { color: theme.muted }]}>No attachment provided</Text>;
+      }
+      return (
+        <TouchableOpacity
+          style={styles.attachmentRow}
+          onPress={() => Linking.openURL(value.url)}
+        >
+          <Paperclip color={colors.yellow} size={16} />
+          <Text style={[styles.fileLink, { color: colors.yellow }]} numberOfLines={1}>
+            {value.name ?? 'View attachment'}
+          </Text>
+        </TouchableOpacity>
+      );
+    }
+
+    // Legacy/alternate "file" type, in case any older template still
+    // uses it — kept as its own branch rather than folded into the
+    // generic fallback below.
+    if (field.field_type === 'file' && value) {
+      return <Text style={[styles.fileLink, { color: colors.yellow }]}>📎 File attached</Text>;
+    }
+
+    // Generic fallback for text/textarea/date/dropdown/checkbox — value
+    // here is always expected to be a primitive (string/boolean), never
+    // an object, or this will throw the same way the attachment bug did.
+    const displayValue =
+      typeof value === 'object' && value !== null
+        ? JSON.stringify(value)
+        : value;
+
+    return (
+      <Text style={[styles.responseValue, { color: displayValue ? theme.text : theme.muted }]}>
+        {displayValue ?? 'Not answered'}
+      </Text>
+    );
+  }
+
   if (loading) {
     return (
       <View style={[styles.centered, { backgroundColor: theme.background }]}>
@@ -321,21 +378,7 @@ export default function SubmissionDetail() {
               return (
                 <View key={field.id} style={[styles.responseRow, { borderBottomColor: theme.border }]}>
                   <Text style={[styles.responseLabel, { color: theme.subtext }]}>{field.label}</Text>
-                  {field.field_type === 'signature' && value ? (
-                    <Image
-                      source={{ uri: value }}
-                      style={[styles.signatureImage, { borderColor: theme.border }]}
-                      resizeMode="contain"
-                    />
-                  ) : field.field_type === 'file' && value ? (
-                    <Text style={[styles.fileLink, { color: colors.yellow }]}>
-                      📎 File attached
-                    </Text>
-                  ) : (
-                    <Text style={[styles.responseValue, { color: value ? theme.text : theme.muted }]}>
-                      {value ?? 'Not answered'}
-                    </Text>
-                  )}
+                  {renderFieldValue(field, value)}
                 </View>
               );
             })}
@@ -546,6 +589,7 @@ const styles = StyleSheet.create({
   responseLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.5, marginBottom: 6 },
   responseValue: { fontSize: 15 },
   fileLink: { fontSize: 14, fontWeight: '600' },
+  attachmentRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   signatureImage: {
     width: '100%',
     height: 120,
