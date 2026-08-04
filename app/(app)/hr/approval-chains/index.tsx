@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Modal
+  Modal, Platform
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, GitBranch, Plus, Trash2, ChevronDown, X, User } from 'lucide-react-native';
@@ -289,7 +289,7 @@ export default function ApprovalChains() {
                   </Text>
                   {chain.site && (
                     <Text style={[styles.siteName, { color: theme.subtext }]}>
-                      📍 {chain.site.name}
+                      ðŸ“ {chain.site.name}
                     </Text>
                   )}
                 </View>
@@ -432,7 +432,7 @@ export default function ApprovalChains() {
             </View>
 
             {/* Approvers */}
-            <View style={styles.fieldGroup}>
+            <View style={[styles.fieldGroup, showApproverDropdown !== null && styles.fieldGroupOpen]}>
               <View style={styles.approversHeader}>
                 <Text style={[styles.label, { color: theme.subtext }]}>
                   APPROVERS * (MAX 4, MIN 1)
@@ -448,10 +448,7 @@ export default function ApprovalChains() {
               {selectedApprovers.map((approver, index) => (
                 <View
                   key={index}
-                  style={[
-                    styles.approverInputRow,
-                    showApproverDropdown === index && styles.approverInputRowActive,
-                  ]}
+                  style={[styles.approverInputRow, showApproverDropdown === index && styles.approverInputRowOpen]}
                 >
                   <View style={[styles.orderBadge, { backgroundColor: `${colors.yellow}20` }]}>
                     <Text style={[styles.orderText, { color: colors.yellow }]}>{index + 1}</Text>
@@ -473,7 +470,13 @@ export default function ApprovalChains() {
                   </TouchableOpacity>
 
                   {showApproverDropdown === index && (
-                    <View style={[styles.approverDropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                    <View
+                      style={[
+                        styles.approverDropdown,
+                        Platform.OS === 'web' && styles.approverDropdownWeb,
+                        { backgroundColor: theme.card, borderColor: theme.border }
+                      ]}
+                    >
                       <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
                         {admins.map(admin => (
                           <TouchableOpacity
@@ -604,10 +607,10 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
   },
-  fieldGroup: {
-  marginBottom: 20,
-  zIndex: 1,
-},
+  fieldGroup: { marginBottom: 20 },
+  fieldGroupOpen: {
+    zIndex: 1000,
+  },
   label: { fontSize: 12, fontWeight: '600', letterSpacing: 0.8, marginBottom: 8 },
   dropdownBtn: {
     flexDirection: 'row',
@@ -638,19 +641,16 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   addApproverText: { fontSize: 14, fontWeight: '700' },
- approverInputRow: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  gap: 10,
-  marginBottom: 10,
-  position: 'relative',
-  zIndex: 1,
-  elevation: 1,
-},
-approverInputRowActive: {
-  zIndex: 999,
-  elevation: 999,
-},
+  approverInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+    position: 'relative',
+  },
+  approverInputRowOpen: {
+    zIndex: 1001,
+  },
   approverDropdownBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -667,8 +667,8 @@ approverInputRowActive: {
   right: 30,
   borderWidth: 1,
   borderRadius: 12,
-  zIndex: 9999,
-  elevation: 9999,
+  zIndex: 1002,
+  elevation: 1002,
   overflow: 'visible' as any,
 
   shadowColor: '#000',
@@ -676,6 +676,9 @@ approverInputRowActive: {
   shadowOpacity: 0.2,
   shadowRadius: 8,
 },
+  approverDropdownWeb: {
+    zIndex: 99999,
+  },
   saveBtn: {
     backgroundColor: colors.yellow,
     borderRadius: 14,
