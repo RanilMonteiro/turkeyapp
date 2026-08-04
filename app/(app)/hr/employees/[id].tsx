@@ -1177,19 +1177,13 @@ export default function EmployeeProfile() {
             </View>
 
             {editableApprovers.map((approver, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.approverInputRow,
-                  showApproverDropdown === index && styles.approverInputRowActive,
-                ]}
-              >
+              <View key={index} style={styles.approverInputRow}>
                 <View style={[styles.orderBadge, { backgroundColor: `${colors.yellow}20` }]}>
                   <Text style={[styles.orderText, { color: colors.yellow }]}>{index + 1}</Text>
                 </View>
                 <TouchableOpacity
                   style={[styles.approverDropdownBtn, { backgroundColor: theme.input, borderColor: theme.border, flex: 1 }]}
-                  onPress={() => setShowApproverDropdown(showApproverDropdown === index ? null : index)}
+                  onPress={() => setShowApproverDropdown(index)}
                 >
                   <Text style={[styles.dropdownBtnText, { color: approver ? theme.text : theme.subtext }]}>
                     {approver?.full_name ?? 'Select approver'}
@@ -1199,25 +1193,6 @@ export default function EmployeeProfile() {
                 <TouchableOpacity onPress={() => removeApproverSlot(index)}>
                   <Trash2 color="#ef4444" size={18} />
                 </TouchableOpacity>
-
-                {showApproverDropdown === index && (
-                  <View style={[styles.approverDropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                    <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
-                      {admins.map(admin => (
-                        <TouchableOpacity
-                          key={admin.id}
-                          style={[styles.dropdownItem, { borderBottomColor: theme.border }, approver?.id === admin.id && { backgroundColor: `${colors.yellow}20` }]}
-                          onPress={() => setApproverSlot(index, admin)}
-                        >
-                          <Text style={[styles.dropdownItemText, { color: approver?.id === admin.id ? colors.yellow : theme.text }]}>
-                            {admin.full_name}
-                          </Text>
-                          <Text style={[styles.dropdownItemSub, { color: theme.subtext }]}>{admin.role}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  </View>
-                )}
               </View>
             ))}
           </View>
@@ -1226,6 +1201,46 @@ export default function EmployeeProfile() {
             {savingChain ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Approvers</Text>}
           </TouchableOpacity>
         </ScrollView>
+      </Modal>
+
+      {/* Approver Picker Modal — a real Modal instead of an absolutely
+          positioned dropdown, so it can't get stuck behind the Save
+          button or clipped due to web stacking-context quirks. */}
+      <Modal
+        visible={showApproverDropdown !== null}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowApproverDropdown(null)}
+      >
+        <TouchableOpacity
+          style={styles.pickerOverlay}
+          activeOpacity={1}
+          onPress={() => setShowApproverDropdown(null)}
+        >
+          <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.pickerTitle, { color: theme.text }]}>Select Approver</Text>
+            <ScrollView style={{ maxHeight: 360 }}>
+              {admins.map(admin => {
+                const currentApprover = showApproverDropdown !== null ? editableApprovers[showApproverDropdown] : null;
+                const isSelected = currentApprover?.id === admin.id;
+                return (
+                  <TouchableOpacity
+                    key={admin.id}
+                    style={[styles.dropdownItem, { borderBottomColor: theme.border }, isSelected && { backgroundColor: `${colors.yellow}20` }]}
+                    onPress={() => {
+                      if (showApproverDropdown !== null) setApproverSlot(showApproverDropdown, admin);
+                    }}
+                  >
+                    <Text style={[styles.dropdownItemText, { color: isSelected ? colors.yellow : theme.text }]}>
+                      {admin.full_name}
+                    </Text>
+                    <Text style={[styles.dropdownItemSub, { color: theme.subtext }]}>{admin.role}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
       </Modal>
 
       {/* Upload Document Modal (scoped to this employee) */}
@@ -1620,6 +1635,15 @@ const styles = StyleSheet.create({
   docAccessBlock: { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(148,163,184,0.2)' },
   categoryChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 },
   categoryChip: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
+  // Approver picker modal
+  pickerOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
+  },
+  pickerSheet: {
+    width: '100%', maxWidth: 420, borderRadius: 16, borderWidth: 1, padding: 16,
+  },
+  pickerTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
   // Modal
   modalContainer: { flex: 1 },
   modalContent: { paddingBottom: 48 },
@@ -1645,19 +1669,10 @@ const styles = StyleSheet.create({
   dropdownItemSub: { fontSize: 12, marginTop: 2 },
   customFieldsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, marginTop: 4 },
   customFieldRow: { flexDirection: 'row', gap: 10, marginBottom: 12, alignItems: 'flex-start' },
-  approverInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10, position: 'relative' },
-  approverInputRowActive: {
-    zIndex: 20,
-    elevation: 20,
-  },
+  approverInputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
   approverDropdownBtn: {
     flexDirection: 'row', alignItems: 'center', borderWidth: 1,
     borderRadius: 12, paddingHorizontal: 12, height: 48, gap: 8,
-  },
-  approverDropdown: {
-    position: 'absolute', top: 52, left: 38, right: 30, borderWidth: 1,
-    borderRadius: 12, zIndex: 9999, elevation: 9999, overflow: 'visible' as any,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8,
   },
   filePicker: {
     borderWidth: 2, borderRadius: 14, borderStyle: 'dashed',
