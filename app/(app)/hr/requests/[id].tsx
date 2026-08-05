@@ -11,6 +11,9 @@ import { notify, confirm } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { Asset } from 'expo-asset';
+const turnkeyLogo = require('../../../../assets/images/Turnkeylogo.png');
+
 
 const colors = {
   yellow: '#fbbf24',
@@ -376,7 +379,7 @@ export default function SubmissionDetail() {
     });
   }
 
-  function buildSubmissionHtml(): string {
+  function buildSubmissionHtml(logoUri?: string): string {
     if (!submission) return '<html><body>No data</body></html>';
 
     const statusColor = getStatusColor(submission.status);
@@ -448,7 +451,7 @@ export default function SubmissionDetail() {
               font-size: 13px; font-weight: 700; text-transform: capitalize;
               background: ${statusColor}20; color: ${statusColor};
             }
-            .header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+            .header-row { display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;}.logo-section{display:flex;flex-direction:column;align-items:flex-end;}.logo{width:100px;height:auto;margin-bottom:12px;}
           </style>
         </head>
         <body>
@@ -459,7 +462,7 @@ export default function SubmissionDetail() {
               ${submission.employee?.job_title ? `<div class="meta">${escapeHtml(submission.employee.job_title)}</div>` : ''}
               <div class="meta">${formatDateTime(submission.submitted_at)}</div>
             </div>
-            <div class="status-badge">${escapeHtml(submission.status.replace('_', ' '))}</div>
+            <div class="logo-section">${logoUri?`<img src="${logoUri}" class="logo" />`:``}<div class="status-badge">${escapeHtml(submission.status.replace('_',' '))}</div></div>
           </div>
 
           <h2>Form Responses</h2>
@@ -479,7 +482,9 @@ export default function SubmissionDetail() {
     setDownloadingPdf(true);
 
     try {
-      const html = buildSubmissionHtml();
+      const asset=Asset.fromModule(turnkeyLogo);
+      await asset.downloadAsync();
+      const html=buildSubmissionHtml(asset.localUri ?? asset.uri);
 
       if (Platform.OS === 'web') {
         // expo-print's printAsync on web doesn't reliably swap in
