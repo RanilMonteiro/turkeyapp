@@ -47,6 +47,7 @@ const ALL_PERMISSIONS = [
   { key: 'view_calendar', label: 'Calendar', description: 'Access the job calendar' },
   { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians' },
   { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics' },
+  { key: 'can_approve', label: 'Eligible Approver', description: 'Can be chosen as an approver in employee approval chains' },
 ];
 
 export default function CreateUser() {
