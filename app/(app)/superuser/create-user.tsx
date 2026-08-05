@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, TextInput,
@@ -26,11 +26,10 @@ const colors = {
 const ALL_PERMISSIONS = [
   { key: 'view_callouts', label: 'View Callouts', description: 'See all callouts', enabled: true },
   { key: 'manage_callouts', label: 'Manage Callouts', description: 'Create and edit callouts', enabled: true },
-  { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics', enabled: false },
-  { key: 'view_documents', label: 'View Documents', description: 'See uploaded documents', enabled: false },
-  { key: 'approve_documents', label: 'Approve Documents', description: 'Sign off on documents', enabled: false },
-  { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians', enabled: false },
-  { key: 'view_calendar', label: 'View Calendar', description: 'Access the job calendar', enabled: false },
+  { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics', enabled: true },
+  { key: 'view_documents', label: 'View Documents', description: 'See uploaded documents', enabled: true },
+  { key: 'approve_documents', label: 'Approve Documents', description: 'Sign off on documents', enabled: true },
+  { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians', enabled: true },
 ];
 
 export default function CreateUser() {
@@ -44,6 +43,14 @@ export default function CreateUser() {
   const [role, setRole] = useState<'admin' | 'technician' | 'hr'>('technician');
   const [permissions, setPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Clear non-admin permissions automatically when role changes
+  useEffect(() => {
+    if (role !== 'admin') {
+      setPermissions([]);
+    }
+  }, [role]);
+
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -219,7 +226,12 @@ export default function CreateUser() {
           Control what this user can access
         </Text>
 
-        {ALL_PERMISSIONS.map((perm) => (
+        {role !== 'admin' ? (
+          <Text style={{ color: theme.subtext, paddingVertical: 8 }}>
+            Permissions are managed by admins only. Technicians and HR have no permission controls here.
+          </Text>
+        ) : (
+          ALL_PERMISSIONS.map((perm) => (
           <View
             key={perm.key}
             style={[styles.permRow, { borderBottomColor: theme.border }]}
@@ -246,7 +258,8 @@ export default function CreateUser() {
               }
             />
           </View>
-        ))}
+        ))
+        )}
       </View>
 
       <TouchableOpacity
