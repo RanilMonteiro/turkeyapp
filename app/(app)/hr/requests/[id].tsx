@@ -482,12 +482,36 @@ export default function SubmissionDetail() {
       const html = buildSubmissionHtml();
 
       if (Platform.OS === 'web') {
-        // On web, printAsync opens the browser's native print dialog
-        // with this HTML rendered — the user picks "Save as PDF" as
-        // the destination. There's no real native PDF-file generation
-        // available in a browser without a heavier library, and this
-        // is the standard, dependency-free way to offer PDF export.
-        await Print.printAsync({ html });
+        // expo-print's printAsync on web doesn't reliably swap in
+        // custom HTML — it can end up printing whatever's currently
+        // on screen (the app itself) instead of our report, cropped
+        // to the viewport. Opening a real separate window and writing
+        // our HTML directly into it sidesteps that entirely: this is
+        // printing an actual standalone document, not a snapshot of
+        // the app.
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          notify('Pop-up blocked', 'Please allow pop-ups for this site, then try again.');
+          setDownloadingPdf(false);
+          return;
+        }
+        printWindow.document.open();
+        printWindow.document.write(html);
+        printWindow.document.close();
+
+        // Give the window a moment to finish laying out images
+        // (signatures) before triggering print, otherwise some
+        // browsers print before they've loaded.
+        printWindow.onload = () => {
+          printWindow.focus();
+          printWindow.print();
+        };
+        // Fallback in case onload doesn't fire (some browsers with
+        // document.write-based windows skip it).
+        setTimeout(() => {
+          printWindow.focus();
+          printWindow.print();
+        }, 400);
       } else {
         // On native, generate an actual PDF file, then hand it off
         // via the share sheet so the user can save or send it.
