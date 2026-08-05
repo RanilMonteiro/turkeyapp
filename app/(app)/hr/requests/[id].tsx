@@ -2,13 +2,15 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Modal, Image, TextInput, Linking
+  Modal, Image, TextInput, Linking, Platform
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, CheckCircle, XCircle, Clock, User, Paperclip, ShieldAlert } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle, XCircle, Clock, User, Paperclip, ShieldAlert, Download } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 
 const colors = {
   yellow: '#fbbf24',
@@ -70,6 +72,7 @@ export default function SubmissionDetail() {
   const [signature, setSignature] = useState<string | null>(null);
   const [comments, setComments] = useState('');
   const [actioning, setActioning] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   // Superuser override: which pending approval step (if any) they've
   // chosen to act on instead of their own assigned step, if any.
@@ -357,6 +360,155 @@ export default function SubmissionDetail() {
     );
   }
 
+  // ---------- PDF export ----------
+
+  function escapeHtml(str: string): string {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatDateTime(iso: string): string {
+    return new Date(iso).toLocaleDateString('en-ZA', {
+      day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  }
+
+  function buildSubmissionHtml(): string {
+    if (!submission) return '<html><body>No data</body></html>';
+
+    const statusColor = getStatusColor(submission.status);
+
+    const responsesRows = fields.map(field => {
+      const value = submission.form_data[field.id];
+      let cell: string;
+
+      if (field.field_type === 'signature' && value) {
+        cell = `<img src="${escapeHtml(value)}" style="max-width:220px;max-height:90px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;" />`;
+      } else if (field.field_type === 'attachment') {
+        cell = value?.url
+          ? `<a href="${escapeHtml(value.url)}">📎 ${escapeHtml(value.name ?? 'Attachment')}</a>`
+          : '<span style="color:#94a3b8;">No attachment provided</span>';
+      } else if (field.field_type === 'file' && value) {
+        cell = '📎 File attached';
+      } else {
+        const display = typeof value === 'object' && value !== null ? JSON.stringify(value) : value;
+        cell = display ? escapeHtml(String(display)) : '<span style="color:#94a3b8;">Not answered</span>';
+      }
+
+      return `
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#64748b;width:35%;vertical-align:top;">${escapeHtml(field.label)}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;vertical-align:top;">${cell}</td>
+        </tr>`;
+    }).join('');
+
+    const approvalBlocks = approvals.map(a => {
+      const aColor = getStatusColor(a.status);
+      const overrideNote = a.overrider
+        ? `<div style="font-size:12px;color:#f59e0b;margin-top:4px;">⚠ Overridden by ${escapeHtml(a.overrider.full_name)}</div>`
+        : '';
+      const commentsHtml = a.comments
+        ? `<div style="font-size:13px;color:#64748b;margin-top:6px;">💬 ${escapeHtml(a.comments)}</div>`
+        : '';
+      const sigHtml = a.signature_url
+        ? `<img src="${escapeHtml(a.signature_url)}" style="max-width:200px;max-height:80px;margin-top:8px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;" />`
+        : '';
+      const actionedHtml = a.actioned_at
+        ? `<div style="font-size:11px;color:#94a3b8;margin-top:6px;">${formatDateTime(a.actioned_at)}</div>`
+        : '';
+
+      return `
+        <div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="font-weight:700;">Step ${a.approval_order} — ${escapeHtml(a.approver?.full_name ?? 'Unknown')}</div>
+            <div style="background:${aColor}20;color:${aColor};padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;text-transform:capitalize;">${escapeHtml(a.status)}</div>
+          </div>
+          ${overrideNote}
+          ${commentsHtml}
+          ${sigHtml}
+          ${actionedHtml}
+        </div>`;
+    }).join('');
+
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1e293b; padding: 32px; }
+            h1 { font-size: 22px; margin-bottom: 4px; }
+            h2 { font-size: 16px; margin: 28px 0 12px; border-bottom: 2px solid #fbbf24; padding-bottom: 6px; }
+            table { width: 100%; border-collapse: collapse; }
+            .meta { color: #64748b; font-size: 13px; margin-bottom: 2px; }
+            .status-badge {
+              display: inline-block; padding: 6px 14px; border-radius: 20px;
+              font-size: 13px; font-weight: 700; text-transform: capitalize;
+              background: ${statusColor}20; color: ${statusColor};
+            }
+            .header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+          </style>
+        </head>
+        <body>
+          <div class="header-row">
+            <div>
+              <h1>${escapeHtml(submission.template?.name ?? 'Form Submission')}</h1>
+              <div class="meta">Submitted by: ${escapeHtml(submission.employee?.full_name ?? 'Unknown')}</div>
+              ${submission.employee?.job_title ? `<div class="meta">${escapeHtml(submission.employee.job_title)}</div>` : ''}
+              <div class="meta">${formatDateTime(submission.submitted_at)}</div>
+            </div>
+            <div class="status-badge">${escapeHtml(submission.status.replace('_', ' '))}</div>
+          </div>
+
+          <h2>Form Responses</h2>
+          <table>${responsesRows}</table>
+
+          ${approvals.length > 0 ? `<h2>Approval Chain</h2>${approvalBlocks}` : ''}
+
+          <div style="margin-top:32px;font-size:11px;color:#94a3b8;">
+            Generated ${formatDateTime(new Date().toISOString())} — TKI Callouts
+          </div>
+        </body>
+      </html>`;
+  }
+
+  async function handleDownloadPdf() {
+    if (!submission) return;
+    setDownloadingPdf(true);
+
+    try {
+      const html = buildSubmissionHtml();
+
+      if (Platform.OS === 'web') {
+        // On web, printAsync opens the browser's native print dialog
+        // with this HTML rendered — the user picks "Save as PDF" as
+        // the destination. There's no real native PDF-file generation
+        // available in a browser without a heavier library, and this
+        // is the standard, dependency-free way to offer PDF export.
+        await Print.printAsync({ html });
+      } else {
+        // On native, generate an actual PDF file, then hand it off
+        // via the share sheet so the user can save or send it.
+        const { uri } = await Print.printToFileAsync({ html });
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(uri, {
+            mimeType: 'application/pdf',
+            dialogTitle: 'Save submission PDF',
+          });
+        } else {
+          notify('PDF ready', `Saved to: ${uri}`);
+        }
+      }
+    } catch (e: any) {
+      notify('Error', e.message ?? 'Could not generate PDF.');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
   if (loading) {
     return (
       <View style={[styles.centered, { backgroundColor: theme.background }]}>
@@ -382,7 +534,12 @@ export default function SubmissionDetail() {
             <ArrowLeft color={colors.yellow} size={24} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: theme.text }]}>Request Details</Text>
-          <View style={{ width: 24 }} />
+          <TouchableOpacity onPress={handleDownloadPdf} disabled={downloadingPdf} style={styles.downloadBtn}>
+            {downloadingPdf
+              ? <ActivityIndicator color={colors.yellow} size="small" />
+              : <Download color={colors.yellow} size={22} />
+            }
+          </TouchableOpacity>
         </View>
 
         <View style={styles.content}>
@@ -412,6 +569,20 @@ export default function SubmissionDetail() {
                 hour: '2-digit', minute: '2-digit'
               })}
             </Text>
+
+            <TouchableOpacity
+              style={[styles.downloadPdfBtn, { borderColor: colors.yellow }, downloadingPdf && { opacity: 0.6 }]}
+              onPress={handleDownloadPdf}
+              disabled={downloadingPdf}
+            >
+              {downloadingPdf
+                ? <ActivityIndicator color={colors.yellow} size="small" />
+                : <Download color={colors.yellow} size={16} />
+              }
+              <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 14 }}>
+                {downloadingPdf ? 'Preparing...' : 'Download as PDF'}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* Form Data */}
@@ -655,6 +826,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   headerTitle: { fontSize: 18, fontWeight: '700' },
+  downloadBtn: { padding: 4 },
+  downloadPdfBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    borderWidth: 1, borderRadius: 12, paddingVertical: 12, marginTop: 16,
+  },
   content: { padding: 16, gap: 16, paddingBottom: 48 },
   card: { borderRadius: 16, padding: 20, borderWidth: 1 },
   topRow: {
