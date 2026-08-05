@@ -74,6 +74,14 @@ export default function AdminDashboard() {
       permission: 'view_callouts',
     },
     {
+      id: 'callouts-tech',
+      title: 'Callouts (Technician)',
+      icon: FileText,
+      description: 'Accept and complete jobs like a technician',
+      route: '/(app)/callouts/(technician)/jobs',
+      permission: 'view_callouts_tech',
+    },
+    {
       id: 'calendar',
       title: 'Calendar',
       icon: Calendar,

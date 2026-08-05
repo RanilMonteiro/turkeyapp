@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, TextInput,
-  Alert, ActivityIndicator, Switch
+  ActivityIndicator, Switch
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
+import { notify } from '../../../lib/notify';
 
 const colors = {
   yellow: '#fbbf24',
@@ -23,14 +24,14 @@ const colors = {
   }
 };
 
+// Kept in sync with create-user.tsx — same permission set, same
+// no-longer-artificially-locked toggles.
 const ALL_PERMISSIONS = [
-  { key: 'view_callouts', label: 'View Callouts', description: 'See all callouts', enabled: true },
-  { key: 'manage_callouts', label: 'Manage Callouts', description: 'Create and edit callouts', enabled: true },
-  { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics', enabled: false },
-  { key: 'view_documents', label: 'View Documents', description: 'See uploaded documents', enabled: false },
-  { key: 'approve_documents', label: 'Approve Documents', description: 'Sign off on documents', enabled: false },
-  { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians', enabled: false },
-  { key: 'view_calendar', label: 'View Calendar', description: 'Access the job calendar', enabled: false },
+  { key: 'view_callouts', label: 'Callouts (Admin)', description: 'Manage and create callouts' },
+  { key: 'view_callouts_tech', label: 'Callouts (Technician view)', description: 'Accept and complete jobs like a technician' },
+  { key: 'view_calendar', label: 'Calendar', description: 'Access the job calendar' },
+  { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians' },
+  { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics' },
 ];
 
 export default function EditUser() {
@@ -91,14 +92,22 @@ export default function EditUser() {
     );
   }
 
+  function selectRole(newRole: 'admin' | 'technician' | 'hr') {
+    setRole(newRole);
+    // Permissions only mean anything for admin — clear them out when
+    // switching away so a stale selection doesn't get silently saved
+    // against a technician or HR account.
+    if (newRole !== 'admin') setPermissions([]);
+  }
+
   async function handleSave() {
     if (!fullName) {
-      Alert.alert('Missing fields', 'Please enter a full name.');
+      notify('Missing fields', 'Please enter a full name.');
       return;
     }
 
     if (newPassword && newPassword.length < 6) {
-      Alert.alert('Weak password', 'Password must be at least 6 characters.');
+      notify('Weak password', 'Password must be at least 6 characters.');
       return;
     }
 
@@ -111,7 +120,7 @@ export default function EditUser() {
       user_id: id,
       full_name: fullName,
       role,
-      permissions,
+      permissions: role === 'admin' ? permissions : [],
     };
 
     if (newPassword) payload.password = newPassword;
@@ -132,11 +141,9 @@ export default function EditUser() {
     setSaving(false);
 
     if (result.success) {
-      Alert.alert('Saved', 'User has been updated.', [
-        { text: 'OK', onPress: () => router.back() }
-      ]);
+      notify('Saved', 'User has been updated.', () => router.back());
     } else {
-      Alert.alert('Error', result.error || 'Something went wrong.');
+      notify('Error', result.error || 'Something went wrong.');
     }
   }
 
@@ -203,7 +210,7 @@ export default function EditUser() {
                 { borderColor: theme.border, backgroundColor: theme.input },
                 role === 'technician' && styles.roleBtnActive,
               ]}
-              onPress={() => setRole('technician')}
+              onPress={() => selectRole('technician')}
             >
               <Text style={[styles.roleBtnText, { color: theme.subtext }, role === 'technician' && styles.roleBtnTextActive]}>
                 Technician
@@ -215,7 +222,7 @@ export default function EditUser() {
                 { borderColor: theme.border, backgroundColor: theme.input },
                 role === 'admin' && styles.roleBtnActive,
               ]}
-              onPress={() => setRole('admin')}
+              onPress={() => selectRole('admin')}
             >
               <Text style={[styles.roleBtnText, { color: theme.subtext }, role === 'admin' && styles.roleBtnTextActive]}>
                 Admin
@@ -227,7 +234,7 @@ export default function EditUser() {
                 { borderColor: theme.border, backgroundColor: theme.input },
                 role === 'hr' && styles.roleBtnActive,
               ]}
-              onPress={() => setRole('hr')}
+              onPress={() => selectRole('hr')}
             >
               <Text style={[styles.roleBtnText, { color: theme.subtext }, role === 'hr' && styles.roleBtnTextActive]}>
                 HR
@@ -237,41 +244,39 @@ export default function EditUser() {
         </View>
       </View>
 
-      <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Permissions</Text>
-        <Text style={[styles.sectionSubtitle, { color: theme.subtext }]}>
-          Control what this user can access
-        </Text>
+      {/* Permissions only apply to admin — technicians and HR use their
+          own fixed screens and don't need this. */}
+      {role === 'admin' && (
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Permissions</Text>
+          <Text style={[styles.sectionSubtitle, { color: theme.subtext }]}>
+            Control what this admin can access. Checking both Callout options shows both the
+            admin management view and the technician job-accepting view on their dashboard.
+          </Text>
 
-        {ALL_PERMISSIONS.map((perm) => (
-          <View
-            key={perm.key}
-            style={[styles.permRow, { borderBottomColor: theme.border }]}
-          >
-            <View style={styles.permInfo}>
-              <Text style={[styles.permLabel, { color: perm.enabled ? theme.text : theme.subtext }]}>
-                {perm.label}
-              </Text>
-              <Text style={[styles.permDesc, { color: theme.subtext }]}>
-                {perm.description}
-              </Text>
+          {ALL_PERMISSIONS.map((perm) => (
+            <View
+              key={perm.key}
+              style={[styles.permRow, { borderBottomColor: theme.border }]}
+            >
+              <View style={styles.permInfo}>
+                <Text style={[styles.permLabel, { color: theme.text }]}>
+                  {perm.label}
+                </Text>
+                <Text style={[styles.permDesc, { color: theme.subtext }]}>
+                  {perm.description}
+                </Text>
+              </View>
+              <Switch
+                value={permissions.includes(perm.key)}
+                onValueChange={() => togglePermission(perm.key)}
+                trackColor={{ false: isDark ? colors.gray[700] : colors.gray[200], true: `${colors.yellow}80` }}
+                thumbColor={permissions.includes(perm.key) ? colors.yellow : colors.gray[400]}
+              />
             </View>
-            <Switch
-              value={perm.enabled ? permissions.includes(perm.key) : false}
-              onValueChange={() => {
-                if (perm.enabled) togglePermission(perm.key);
-              }}
-              disabled={!perm.enabled}
-              trackColor={{ false: isDark ? colors.gray[700] : colors.gray[200], true: `${colors.yellow}80` }}
-              thumbColor={
-                !perm.enabled
-                  ? isDark ? colors.gray[700] : colors.gray[400]
-                  : permissions.includes(perm.key) ? colors.yellow : colors.gray[400]
-              }
-            />
-          </View>
-        ))}
-      </View>
+          ))}
+        </View>
+      )}
 
       <TouchableOpacity
         style={[styles.submitButton, saving && { opacity: 0.6 }]}

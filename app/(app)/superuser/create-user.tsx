@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, TextInput,
-  Alert, ActivityIndicator, Switch
+  ActivityIndicator, Switch
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
+import { notify } from '../../../lib/notify';
 
 const colors = {
   yellow: '#fbbf24',
@@ -23,13 +24,29 @@ const colors = {
   }
 };
 
+// Every permission here is now fully toggleable — there used to be a
+// hardcoded `enabled: false` on most of these that permanently locked
+// their switches off no matter what was selected. That's gone.
+//
+// This list only includes permissions that actually gate something in
+// the app right now:
+//  - view_callouts       -> admin-side Callouts management dashboard
+//  - view_callouts_tech  -> technician-style "accept/complete a job"
+//                           view, also available to admins if granted
+//  - view_calendar       -> Callout calendar
+//  - manage_team         -> Technicians list
+//  - view_reports        -> Reports screen
+//
+// view_documents / approve_documents were removed: they predate the
+// Document Access Grants system (HR grants specific admins access to
+// specific employees' documents) and don't gate anything anymore —
+// leaving them in would just be another "toggle that does nothing."
 const ALL_PERMISSIONS = [
-  { key: 'view_callouts', label: 'View Callouts', description: 'See all callouts', enabled: true },
-  { key: 'manage_callouts', label: 'Manage Callouts', description: 'Create and edit callouts', enabled: true },
-  { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics', enabled: true },
-  { key: 'view_documents', label: 'View Documents', description: 'See uploaded documents', enabled: true },
-  { key: 'approve_documents', label: 'Approve Documents', description: 'Sign off on documents', enabled: true },
-  { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians', enabled: true },
+  { key: 'view_callouts', label: 'Callouts (Admin)', description: 'Manage and create callouts' },
+  { key: 'view_callouts_tech', label: 'Callouts (Technician view)', description: 'Accept and complete jobs like a technician' },
+  { key: 'view_calendar', label: 'Calendar', description: 'Access the job calendar' },
+  { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians' },
+  { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics' },
 ];
 
 export default function CreateUser() {
@@ -43,14 +60,6 @@ export default function CreateUser() {
   const [role, setRole] = useState<'admin' | 'technician' | 'hr'>('technician');
   const [permissions, setPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-
-  // Clear non-admin permissions automatically when role changes
-  useEffect(() => {
-    if (role !== 'admin') {
-      setPermissions([]);
-    }
-  }, [role]);
-
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -68,13 +77,21 @@ export default function CreateUser() {
     );
   }
 
+  function selectRole(newRole: 'admin' | 'technician' | 'hr') {
+    setRole(newRole);
+    // Permissions only mean anything for admin — clear them out when
+    // switching away so a stale selection doesn't get silently saved
+    // against a technician or HR account.
+    if (newRole !== 'admin') setPermissions([]);
+  }
+
   async function handleCreate() {
     if (!fullName || !username || !password) {
-      Alert.alert('Missing fields', 'Please fill in all required fields.');
+      notify('Missing fields', 'Please fill in all required fields.');
       return;
     }
     if (password.length < 6) {
-      Alert.alert('Weak password', 'Password must be at least 6 characters.');
+      notify('Weak password', 'Password must be at least 6 characters.');
       return;
     }
 
@@ -96,7 +113,7 @@ export default function CreateUser() {
           password,
           full_name: fullName,
           role,
-          permissions,
+          permissions: role === 'admin' ? permissions : [],
         }),
       }
     );
@@ -105,13 +122,13 @@ export default function CreateUser() {
     setLoading(false);
 
     if (result.success) {
-      Alert.alert(
+      notify(
         'User created',
         `${fullName} has been created as ${role}.`,
-        [{ text: 'OK', onPress: () => router.back() }]
+        () => router.back()
       );
     } else {
-      Alert.alert('Error', result.error || 'Something went wrong.');
+      notify('Error', result.error || 'Something went wrong.');
     }
   }
 
@@ -186,7 +203,7 @@ export default function CreateUser() {
                 { borderColor: theme.border, backgroundColor: theme.input },
                 role === 'technician' && styles.roleBtnActive,
               ]}
-              onPress={() => setRole('technician')}
+              onPress={() => selectRole('technician')}
             >
               <Text style={[styles.roleBtnText, { color: theme.subtext }, role === 'technician' && styles.roleBtnTextActive]}>
                 Technician
@@ -198,7 +215,7 @@ export default function CreateUser() {
                 { borderColor: theme.border, backgroundColor: theme.input },
                 role === 'admin' && styles.roleBtnActive,
               ]}
-              onPress={() => setRole('admin')}
+              onPress={() => selectRole('admin')}
             >
               <Text style={[styles.roleBtnText, { color: theme.subtext }, role === 'admin' && styles.roleBtnTextActive]}>
                 Admin
@@ -210,7 +227,7 @@ export default function CreateUser() {
                 { borderColor: theme.border, backgroundColor: theme.input },
                 role === 'hr' && styles.roleBtnActive,
               ]}
-              onPress={() => setRole('hr')}
+              onPress={() => selectRole('hr')}
             >
               <Text style={[styles.roleBtnText, { color: theme.subtext }, role === 'hr' && styles.roleBtnTextActive]}>
                 HR
@@ -220,47 +237,39 @@ export default function CreateUser() {
         </View>
       </View>
 
-      <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Permissions</Text>
-        <Text style={[styles.sectionSubtitle, { color: theme.subtext }]}>
-          Control what this user can access
-        </Text>
-
-        {role !== 'admin' ? (
-          <Text style={{ color: theme.subtext, paddingVertical: 8 }}>
-            Permissions are managed by admins only. Technicians and HR have no permission controls here.
+      {/* Permissions only apply to admin — technicians and HR use their
+          own fixed screens and don't need this. */}
+      {role === 'admin' && (
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Permissions</Text>
+          <Text style={[styles.sectionSubtitle, { color: theme.subtext }]}>
+            Control what this admin can access. Checking both Callout options shows both the
+            admin management view and the technician job-accepting view on their dashboard.
           </Text>
-        ) : (
-          ALL_PERMISSIONS.map((perm) => (
-          <View
-            key={perm.key}
-            style={[styles.permRow, { borderBottomColor: theme.border }]}
-          >
-            <View style={styles.permInfo}>
-              <Text style={[styles.permLabel, { color: perm.enabled ? theme.text : theme.subtext }]}>
-                {perm.label}
-              </Text>
-              <Text style={[styles.permDesc, { color: theme.subtext }]}>
-                {perm.description}
-              </Text>
+
+          {ALL_PERMISSIONS.map((perm) => (
+            <View
+              key={perm.key}
+              style={[styles.permRow, { borderBottomColor: theme.border }]}
+            >
+              <View style={styles.permInfo}>
+                <Text style={[styles.permLabel, { color: theme.text }]}>
+                  {perm.label}
+                </Text>
+                <Text style={[styles.permDesc, { color: theme.subtext }]}>
+                  {perm.description}
+                </Text>
+              </View>
+              <Switch
+                value={permissions.includes(perm.key)}
+                onValueChange={() => togglePermission(perm.key)}
+                trackColor={{ false: isDark ? colors.gray[700] : colors.gray[200], true: `${colors.yellow}80` }}
+                thumbColor={permissions.includes(perm.key) ? colors.yellow : colors.gray[400]}
+              />
             </View>
-            <Switch
-              value={perm.enabled ? permissions.includes(perm.key) : false}
-              onValueChange={() => {
-                if (perm.enabled) togglePermission(perm.key);
-              }}
-              disabled={!perm.enabled}
-              trackColor={{ false: isDark ? colors.gray[700] : colors.gray[200], true: `${colors.yellow}80` }}
-              thumbColor={
-                !perm.enabled
-                  ? isDark ? colors.gray[700] : colors.gray[400]
-                  : permissions.includes(perm.key) ? colors.yellow : colors.gray[400]
-              }
-            />
-          </View>
-        ))
-        )}
-      </View>
+          ))}
+        </View>
+      )}
 
       <TouchableOpacity
         style={[styles.submitButton, loading && { opacity: 0.6 }]}
@@ -332,7 +341,7 @@ const styles = StyleSheet.create({
   roleBtnText: { fontSize: 13, fontWeight: '600' },
   roleBtnTextActive: { color: colors.black },
   sectionTitle: { fontSize: 17, fontWeight: '700', marginBottom: 4 },
-  sectionSubtitle: { fontSize: 13, marginBottom: 16 },
+  sectionSubtitle: { fontSize: 13, marginBottom: 16, lineHeight: 18 },
   permRow: {
     flexDirection: 'row',
     alignItems: 'center',
