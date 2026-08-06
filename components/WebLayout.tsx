@@ -84,7 +84,7 @@ export default function WebLayout({ children }: Props) {
   const isDark = useColorScheme() === 'dark';
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [profile, setProfile] = useState<{ role: string; full_name: string } | null>(null);
-
+const [permissions, setPermissions] = useState<string[]>([]);
   const isWeb = Platform.OS === 'web';
   const isDesktop = width >= 768;
 
@@ -96,16 +96,26 @@ export default function WebLayout({ children }: Props) {
     return () => subscription.unsubscribe();
   }, []);
 
+
   async function fetchProfile() {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) { setProfile(null); return; }
-    const { data } = await supabase
-      .from('profiles')
-      .select('role, full_name')
-      .eq('id', userData.user.id)
-      .single();
-    if (data) setProfile(data);
-  }
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) { setProfile(null); return; }
+
+  const { data } = await supabase
+    .from('profiles')
+    .select('role, full_name')
+    .eq('id', userData.user.id)
+    .single();
+
+  const { data: perms } = await supabase
+    .from('user_permissions')
+    .select('permission')
+    .eq('user_id', userData.user.id)
+    .eq('granted', true);
+
+  if (data) setProfile(data);
+  if (perms) setPermissions(perms.map(p => p.permission));
+}
 
   const isAuthScreen = pathname?.includes('auth') || pathname === '/';
 
@@ -124,7 +134,9 @@ export default function WebLayout({ children }: Props) {
     topbar: isDark ? colors.gray[900] : colors.white,
   };
 
-  const navItems = navByRole[profile.role] ?? [];
+  const navItems = (navByRole[profile.role] ?? []).filter(
+  item => item.permission === null || permissions.includes(item.permission)
+);
   const currentPage = navItems.find(n =>
     pathname === n.route || pathname.startsWith(n.route + '/')
   );

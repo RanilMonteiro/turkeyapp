@@ -61,7 +61,7 @@ export default function TechnicianDashboard() {
       icon: FileText,
       description: 'View and accept callouts',
       route: '/(app)/callouts/(technician)/jobs',
-      permission: 'view_callouts',
+      permission: null,
     },
 
     {
