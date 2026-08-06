@@ -247,7 +247,7 @@ export default function EditUser() {
 
       {/* Permissions only apply to admin — technicians and HR use their
           own fixed screens and don't need this. */}
-      {role === 'admin' && (
+      {(role === 'admin' || role === 'hr') && (
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Permissions</Text>
           <Text style={[styles.sectionSubtitle, { color: theme.subtext }]}>

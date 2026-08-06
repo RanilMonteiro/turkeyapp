@@ -333,6 +333,7 @@ export default function EmployeeProfile() {
     }
 
   // Reconcile custom fields: delete removed, update changed, broadcast new
+   // Reconcile custom fields: delete removed, update changed, broadcast new
     const originalIds = customFields.map(f => f.id);
     const keptIds = editableCustomFields.filter(f => f.id).map(f => f.id!) as string[];
     const removedIds = originalIds.filter(oid => !keptIds.includes(oid));
@@ -353,9 +354,8 @@ export default function EmployeeProfile() {
 
     if (toBroadcast.length > 0) {
       const { data: allEmployees } = await supabase
-        .from('profiles')
-        .select('id')
-        .neq('role', 'superuser');
+  .from('profiles')
+  .select('id');
 
       const rows: any[] = [];
       toBroadcast.forEach((f, i) => {
@@ -388,7 +388,6 @@ export default function EmployeeProfile() {
     fetchProfile();
     fetchCustomFields();
   }
-
   // ---------- Approval chain (scoped to this employee) ----------
 
   function openChainModal() {
