@@ -16,7 +16,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import DatePickerField from '../../../../components/DatepickerField';
+import DatePickerField from '../../../../components/DatepickerField'
 const colors = {
   yellow: '#fbbf24',
   white: '#ffffff',
@@ -332,7 +332,7 @@ export default function EmployeeProfile() {
       return;
     }
 
-    // Reconcile custom fields: delete removed, update changed, insert new
+  // Reconcile custom fields: delete removed, update changed, broadcast new
     const originalIds = customFields.map(f => f.id);
     const keptIds = editableCustomFields.filter(f => f.id).map(f => f.id!) as string[];
     const removedIds = originalIds.filter(oid => !keptIds.includes(oid));
@@ -342,7 +342,7 @@ export default function EmployeeProfile() {
     }
 
     const toUpdate = editableCustomFields.filter(f => f.id && f.field_name.trim());
-    const toInsert = editableCustomFields.filter(f => !f.id && f.field_name.trim());
+    const toBroadcast = editableCustomFields.filter(f => !f.id && f.field_name.trim());
 
     for (const f of toUpdate) {
       await supabase
@@ -351,15 +351,36 @@ export default function EmployeeProfile() {
         .eq('id', f.id);
     }
 
-    if (toInsert.length > 0) {
-      await supabase.from('employee_custom_fields').insert(
-        toInsert.map((f, i) => ({
-          employee_id: id,
-          field_name: f.field_name.trim(),
-          field_value: f.field_value,
-          field_order: customFields.length + i,
-        }))
-      );
+    if (toBroadcast.length > 0) {
+      const { data: allEmployees } = await supabase
+        .from('profiles')
+        .select('id')
+        .neq('role', 'superuser');
+
+      const rows: any[] = [];
+      toBroadcast.forEach((f, i) => {
+        const fieldOrder = customFields.length + i;
+        (allEmployees ?? []).forEach(emp => {
+          rows.push({
+            employee_id: emp.id,
+            field_name: f.field_name.trim(),
+            field_value: emp.id === id ? f.field_value : null,
+            field_order: fieldOrder,
+          });
+        });
+      });
+
+      if (rows.length > 0) {
+        const { error: insertError } = await supabase
+          .from('employee_custom_fields')
+          .upsert(rows, { onConflict: 'employee_id,field_name', ignoreDuplicates: true });
+
+        if (insertError) {
+          setSaving(false);
+          notify('Error', insertError.message);
+          return;
+        }
+      }
     }
 
     setSaving(false);
