@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 import { User, Plus, Edit, Trash2, Shield, Wrench } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
+import { Platform } from 'react-native';
 
 const colors = {
   yellow: '#fbbf24',
@@ -64,41 +65,56 @@ export default function ManageUsers() {
     setLoading(false);
   }
 
-  async function deleteUser(userId: string, name: string) {
+async function deleteUser(userId: string, name: string) {
+  const performDelete = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const response = await fetch(
+      `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/create-user`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ action: 'delete', user_id: userId }),
+      }
+    );
+
+    const result = await response.json();
+    if (result.success) {
+      if (Platform.OS === 'web') {
+        window.alert(`${name} has been removed.`);
+      } else {
+        Alert.alert('Deleted', `${name} has been removed.`);
+      }
+      fetchUsers();
+    } else {
+      if (Platform.OS === 'web') {
+        window.alert(`Error: ${result.error}`);
+      } else {
+        Alert.alert('Error', result.error);
+      }
+    }
+  };
+
+  if (Platform.OS === 'web') {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${name}? This cannot be undone.`
+    );
+    if (confirmed) {
+      await performDelete();
+    }
+  } else {
     Alert.alert(
       'Delete User',
       `Are you sure you want to delete ${name}? This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const response = await fetch(
-              `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/create-user`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${session?.access_token}`,
-                },
-                body: JSON.stringify({ action: 'delete', user_id: userId }),
-              }
-            );
-
-            const result = await response.json();
-            if (result.success) {
-              Alert.alert('Deleted', `${name} has been removed.`);
-              fetchUsers();
-            } else {
-              Alert.alert('Error', result.error);
-            }
-          }
-        }
+        { text: 'Delete', style: 'destructive', onPress: performDelete },
       ]
     );
   }
+}
 
   function getRoleIcon(role: string) {
     if (role === 'admin') return <Shield color={colors.yellow} size={18} />;
