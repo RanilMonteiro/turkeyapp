@@ -95,10 +95,10 @@ export default function EditUser() {
 
   function selectRole(newRole: 'admin' | 'technician' | 'hr') {
     setRole(newRole);
-    // Permissions only mean anything for admin — clear them out when
-    // switching away so a stale selection doesn't get silently saved
-    // against a technician or HR account.
-    if (newRole !== 'admin') setPermissions([]);
+    // Permissions only mean anything for admin/hr — clear them out
+    // when switching to technician so a stale selection doesn't get
+    // silently saved against a technician account.
+    if (newRole === 'technician') setPermissions([]);
   }
 
   async function handleSave() {
@@ -121,7 +121,7 @@ export default function EditUser() {
       user_id: id,
       full_name: fullName,
       role,
-      permissions: role === 'admin' ? permissions : [],
+      permissions: role === 'admin' || role === 'hr' ? permissions : [],
     };
 
     if (newPassword) payload.password = newPassword;

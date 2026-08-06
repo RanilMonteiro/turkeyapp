@@ -80,10 +80,10 @@ export default function CreateUser() {
 
   function selectRole(newRole: 'admin' | 'technician' | 'hr') {
     setRole(newRole);
-    // Permissions only mean anything for admin — clear them out when
-    // switching away so a stale selection doesn't get silently saved
-    // against a technician or HR account.
-    if (newRole !== 'admin') setPermissions([]);
+    // Permissions only mean anything for admin/hr — clear them out
+    // when switching to technician so a stale selection doesn't get
+    // silently saved against a technician account.
+    if (newRole === 'technician') setPermissions([]);
   }
 
   async function handleCreate() {
@@ -114,7 +114,7 @@ export default function CreateUser() {
           password,
           full_name: fullName,
           role,
-          permissions: role === 'admin' ? permissions : [],
+          permissions: role === 'admin' || role === 'hr' ? permissions : [],
         }),
       }
     );
@@ -238,13 +238,17 @@ export default function CreateUser() {
         </View>
       </View>
 
-      {/* Permissions only apply to admin — technicians and HR use their
-          own fixed screens and don't need this. */}
-      {role === 'admin' && (
+      {/* Permissions apply to admin AND hr — technicians use their own
+          fixed screens and don't need this. HR reuses the exact same
+          permission set as admin rather than having its own separate
+          list. Note: HR's own dashboard doesn't currently gate any of
+          its cards on these permissions the way admin's does — this
+          just makes the same picker available for HR accounts too. */}
+      {(role === 'admin' || role === 'hr') && (
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Permissions</Text>
           <Text style={[styles.sectionSubtitle, { color: theme.subtext }]}>
-            Control what this admin can access. Checking both Callout options shows both the
+            Control what this user can access. Checking both Callout options shows both the
             admin management view and the technician job-accepting view on their dashboard.
           </Text>
 
