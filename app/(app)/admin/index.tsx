@@ -111,7 +111,7 @@ export default function AdminDashboard() {
   icon: CheckCircle,
   description: 'Requests waiting for your approval',
   route: '/(app)/shared/my-approvals',
-  permission: null,
+  permission: 'can_approve',
 },
     {
       id: 'team',
