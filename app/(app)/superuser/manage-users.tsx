@@ -28,10 +28,9 @@ const colors = {
 type Profile = {
   id: string;
   full_name: string;
-  role: 'superuser' | 'admin' | 'technician';
+  role: 'superuser' | 'admin' | 'technician' | 'hr';
   site_id: string | null;
 };
-
 export default function ManageUsers() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
@@ -116,23 +115,26 @@ async function deleteUser(userId: string, name: string) {
   }
 }
 
-  function getRoleIcon(role: string) {
-    if (role === 'admin') return <Shield color={colors.yellow} size={18} />;
-    return <Wrench color={colors.yellow} size={18} />;
-  }
+function getRoleIcon(role: string) {
+  if (role === 'admin') return <Shield color={colors.yellow} size={18} />;
+  if (role === 'hr') return <User color={colors.yellow} size={18} />;
+  return <Wrench color={colors.yellow} size={18} />;
+}
 
-  function getRoleBadgeColor(role: string) {
-    if (role === 'admin') return isDark ? '#1e3a5f' : '#dbeafe';
-    return isDark ? '#1a2e1a' : '#d1fae5';
-  }
+function getRoleBadgeColor(role: string) {
+  if (role === 'admin') return isDark ? '#1e3a5f' : '#dbeafe';
+  if (role === 'hr') return isDark ? '#4a1d5f' : '#f3e8ff';
+  return isDark ? '#1a2e1a' : '#d1fae5';
+}
 
-  function getRoleTextColor(role: string) {
-    if (role === 'admin') return '#3b82f6';
-    return '#10b981';
-  }
-
-  const admins = users.filter(u => u.role === 'admin');
-  const technicians = users.filter(u => u.role === 'technician');
+function getRoleTextColor(role: string) {
+  if (role === 'admin') return '#3b82f6';
+  if (role === 'hr') return '#a855f7';
+  return '#10b981';
+}
+const admins = users.filter(u => u.role === 'admin');
+const technicians = users.filter(u => u.role === 'technician');
+const hrUsers = users.filter(u => u.role === 'hr');
 
   if (loading) {
     return (
@@ -185,6 +187,32 @@ async function deleteUser(userId: string, name: string) {
           ))
         )}
       </View>
+
+      {/* HR Section */}
+<View style={styles.section}>
+  <Text style={[styles.sectionTitle, { color: theme.text }]}>
+    HR ({hrUsers.length})
+  </Text>
+  {hrUsers.length === 0 ? (
+    <View style={[styles.emptyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Text style={[styles.emptyText, { color: theme.subtext }]}>No HR users yet</Text>
+    </View>
+  ) : (
+    hrUsers.map(user => (
+      <UserCard
+        key={user.id}
+        user={user}
+        theme={theme}
+        isDark={isDark}
+        getRoleIcon={getRoleIcon}
+        getRoleBadgeColor={getRoleBadgeColor}
+        getRoleTextColor={getRoleTextColor}
+        onEdit={() => router.push({ pathname: '/(app)/superuser/edit-user', params: { id: user.id } } as any)}
+        onDelete={() => deleteUser(user.id, user.full_name)}
+      />
+    ))
+  )}
+</View>
 
       {/* Technicians Section */}
       <View style={styles.section}>
