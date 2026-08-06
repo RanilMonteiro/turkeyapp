@@ -66,32 +66,31 @@ export default function Employees() {
     }, [])
   );
 
-  async function fetchData() {
-    const [{ data: emps }, { data: siteData }] = await Promise.all([
-      supabase
-        .from('profiles')
-        .select('*, sites(name)')
-        .neq('role', 'superuser')
-        .order('full_name', { ascending: true }),
-      supabase
-        .from('sites')
-        .select('*')
-        .order('name', { ascending: true }),
-    ]);
+async function fetchData() {
+  const [{ data: emps }, { data: siteData }] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('*, sites(name)')
+      .order('full_name', { ascending: true }),
+    supabase
+      .from('sites')
+      .select('*')
+      .order('name', { ascending: true }),
+  ]);
 
-    if (emps) setEmployees(emps);
-    if (siteData) setSites(siteData);
-    setLoading(false);
+  if (emps) setEmployees(emps);
+  if (siteData) setSites(siteData);
+  setLoading(false);
+}
+
+function getRoleBadgeColor(role: string) {
+  switch (role) {
+    case 'superuser': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
+    case 'admin': return { bg: isDark ? '#1e3a5f' : '#dbeafe', text: '#3b82f6' };
+    case 'hr': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
+    default: return { bg: isDark ? '#1a2e1a' : '#d1fae5', text: '#10b981' };
   }
-
-  function getRoleBadgeColor(role: string) {
-    switch (role) {
-      case 'admin': return { bg: isDark ? '#1e3a5f' : '#dbeafe', text: '#3b82f6' };
-      case 'hr': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
-      default: return { bg: isDark ? '#1a2e1a' : '#d1fae5', text: '#10b981' };
-    }
-  }
-
+}
   const filtered = employees.filter(e =>
     e.full_name?.toLowerCase().includes(search.toLowerCase()) ||
     e.job_title?.toLowerCase().includes(search.toLowerCase()) ||
