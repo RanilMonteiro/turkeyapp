@@ -32,39 +32,47 @@ const colors = {
 // standalone Documents, and standalone Approval Chains are gone —
 // Documents and Approval Chains now live inside each employee's own
 // profile page, and Forms (the generic builder) was discarded.
-const navByRole: Record<string, { label: string; icon: any; route: string }[]> = {
+// Each nav item can carry a `permission` key. null means always visible
+// for that role; a string means the item only shows if the logged-in
+// user has that permission granted (checked against user_permissions,
+// same source of truth as the dashboard grids). This keeps the sidebar
+// in sync with what a given admin can actually do — previously it
+// listed every admin nav item unconditionally regardless of what
+// permissions that specific admin had.
+const navByRole: Record<string, { label: string; icon: any; route: string; permission: string | null }[]> = {
   superuser: [
-    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/superuser' },
-    { label: 'Manage Users', icon: Users, route: '/(app)/superuser/manage-users' },
-    { label: 'Callouts', icon: FileText, route: '/(app)/callouts/(admin)/dashboard' },
-    { label: 'Employees', icon: Users, route: '/(app)/hr/employees' },
-    { label: 'Requests', icon: FileText, route: '/(app)/hr/requests' },
-    { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals' },
-    { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites' },
+    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/superuser', permission: null },
+    { label: 'Manage Users', icon: Users, route: '/(app)/superuser/manage-users', permission: null },
+    { label: 'Callouts', icon: FileText, route: '/(app)/callouts/(admin)/dashboard', permission: null },
+    { label: 'Employees', icon: Users, route: '/(app)/hr/employees', permission: null },
+    { label: 'Requests', icon: FileText, route: '/(app)/hr/requests', permission: null },
+    { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: null },
+    { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites', permission: null },
   ],
   hr: [
-    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/hr' },
-    { label: 'Employees', icon: Users, route: '/(app)/hr/employees' },
-    { label: 'Requests', icon: FileText, route: '/(app)/hr/requests' },
-    { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals' },
-    { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites' },
+    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/hr', permission: null },
+    { label: 'Employees', icon: Users, route: '/(app)/hr/employees', permission: null },
+    { label: 'Requests', icon: FileText, route: '/(app)/hr/requests', permission: null },
+    { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: null },
+    { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites', permission: null },
   ],
   admin: [
-    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/admin' },
-    { label: 'Callouts', icon: FileText, route: '/(app)/callouts/(admin)/dashboard' },
-    { label: 'Calendar', icon: Calendar, route: '/(app)/callouts/(admin)/calendar' },
-    { label: 'Technicians', icon: Users, route: '/(app)/callouts/(admin)/technicians' },
-    { label: 'Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals' },
-    { label: 'Forms', icon: ClipboardList, route: '/(app)/shared/forms' },
-    { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests' },
-    { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents' },
+    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/admin', permission: null },
+    { label: 'Callouts', icon: FileText, route: '/(app)/callouts/(admin)/dashboard', permission: 'view_callouts' },
+    { label: 'Callouts (Technician)', icon: Wrench, route: '/(app)/callouts/(technician)/jobs', permission: 'view_callouts_tech' },
+    { label: 'Calendar', icon: Calendar, route: '/(app)/callouts/(admin)/calendar', permission: 'view_calendar' },
+    { label: 'Technicians', icon: Users, route: '/(app)/callouts/(admin)/technicians', permission: 'manage_team' },
+    { label: 'Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: 'can_approve' },
+    { label: 'Forms', icon: ClipboardList, route: '/(app)/shared/forms', permission: null },
+    { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests', permission: null },
+    { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents', permission: null },
   ],
   technician: [
-    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/technician' },
-    { label: 'Callouts', icon: Wrench, route: '/(app)/callouts/(technician)/jobs' },
-    { label: 'Forms', icon: ClipboardList, route: '/(app)/shared/forms' },
-    { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests' },
-    { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents' },
+    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/technician', permission: null },
+    { label: 'Callouts', icon: Wrench, route: '/(app)/callouts/(technician)/jobs', permission: null },
+    { label: 'Forms', icon: ClipboardList, route: '/(app)/shared/forms', permission: null },
+    { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests', permission: null },
+    { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents', permission: null },
   ],
 };
 
