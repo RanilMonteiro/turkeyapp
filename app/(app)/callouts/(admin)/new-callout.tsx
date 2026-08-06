@@ -2,13 +2,14 @@ import { useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, TextInput, useColorScheme,
-  Alert, ActivityIndicator, Linking, Platform,
-  Modal
+  ActivityIndicator, Linking, Platform
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Navigation, Calendar, Clock, MapPin } from 'lucide-react-native';
+import { ArrowLeft, Navigation, MapPin } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { notify } from '../../../../lib/notify';
+import DatePickerField from '../../../../components/DatepickerField';
+import TimePickerField from '../../../../components/TimePickerField';
 
 const colors = {
   yellow: '#fbbf24',
@@ -26,6 +27,15 @@ const colors = {
   }
 };
 
+function todayDateString(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+function nowTimeString(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export default function NewCallout() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
@@ -38,10 +48,8 @@ export default function NewCallout() {
   const [longitude, setLongitude] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedTime, setSelectedTime] = useState(new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [dateStr, setDateStr] = useState(todayDateString());
+  const [timeStr, setTimeStr] = useState(nowTimeString());
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -51,18 +59,20 @@ export default function NewCallout() {
     text: isDark ? colors.white : colors.gray[800],
     subtext: isDark ? colors.gray[400] : colors.gray[500],
     label: isDark ? colors.gray[400] : colors.gray[500],
+    muted: isDark ? colors.gray[400] : colors.gray[500],
   };
 
-  const formattedDate = selectedDate.toLocaleDateString('en-ZA', {
-    weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
-  });
+  const formattedDateDisplay = dateStr
+    ? new Date(dateStr + 'T00:00:00').toLocaleDateString('en-ZA', {
+        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+      })
+    : '';
 
-  const formattedTime = selectedTime.toLocaleTimeString('en-ZA', {
-    hour: '2-digit', minute: '2-digit', hour12: false
-  });
-
-  const dbDate = selectedDate.toISOString().split('T')[0];
-  const dbTime = formattedTime;
+  // dbDate/dbTime are exactly what's stored — dateStr and timeStr are
+  // already in the right format ('YYYY-MM-DD' and 'HH:MM'), so no
+  // conversion needed at submit time like the old Date-object version.
+  const dbDate = dateStr;
+  const dbTime = timeStr;
 
   function parseCoordinates(text: string) {
     const patterns = [
@@ -117,7 +127,7 @@ export default function NewCallout() {
 
   async function handleSubmit() {
     if (!title || !siteName || !address) {
-      Alert.alert('Missing fields', 'Please fill in title, site name and address.');
+      notify('Missing fields', 'Please fill in title, site name and address.');
       return;
     }
 
@@ -138,16 +148,14 @@ export default function NewCallout() {
     });
 
     if (error) {
-      Alert.alert('Error', error.message);
+      notify('Error', error.message);
       setLoading(false);
       return;
     }
 
     await sendPushNotifications(title);
     setLoading(false);
-    Alert.alert('Callout created', 'All technicians have been notified.', [
-      { text: 'OK', onPress: () => router.back() }
-    ]);
+    notify('Callout created', 'All technicians have been notified.', () => router.back());
   }
 
   return (
@@ -247,25 +255,24 @@ export default function NewCallout() {
         {/* Date */}
         <View style={styles.fieldGroup}>
           <Text style={[styles.label, { color: theme.label }]}>DATE *</Text>
-          <TouchableOpacity
-            style={[styles.inputRow, { backgroundColor: theme.input, borderColor: theme.border }]}
-            onPress={() => setShowDatePicker(true)}
-          >
-            <Calendar size={16} color={colors.yellow} />
-            <Text style={[styles.pickerText, { color: theme.text }]}>{formattedDate}</Text>
-          </TouchableOpacity>
+          <DatePickerField
+            value={dateStr}
+            onChange={setDateStr}
+            placeholder={formattedDateDisplay}
+            isDark={isDark}
+            theme={theme}
+          />
         </View>
 
         {/* Time */}
         <View style={styles.fieldGroup}>
           <Text style={[styles.label, { color: theme.label }]}>TIME *</Text>
-          <TouchableOpacity
-            style={[styles.inputRow, { backgroundColor: theme.input, borderColor: theme.border }]}
-            onPress={() => setShowTimePicker(true)}
-          >
-            <Clock size={16} color={colors.yellow} />
-            <Text style={[styles.pickerText, { color: theme.text }]}>{formattedTime}</Text>
-          </TouchableOpacity>
+          <TimePickerField
+            value={timeStr}
+            onChange={setTimeStr}
+            isDark={isDark}
+            theme={theme}
+          />
         </View>
 
         {/* Submit */}
@@ -280,82 +287,6 @@ export default function NewCallout() {
           }
         </TouchableOpacity>
       </View>
-
-      {/* Date Picker */}
-      {showDatePicker && (
-        Platform.OS === 'ios' ? (
-          <Modal transparent animationType="slide">
-            <View style={styles.modalOverlay}>
-              <View style={[styles.pickerModal, { backgroundColor: theme.card }]}>
-                <View style={styles.pickerHeader}>
-                  <Text style={[styles.pickerTitle, { color: theme.text }]}>Select Date</Text>
-                  <TouchableOpacity onPress={() => setShowDatePicker(false)}>
-                    <Text style={{ color: colors.yellow, fontWeight: '600' }}>Done</Text>
-                  </TouchableOpacity>
-                </View>
-                <DateTimePicker
-                  value={selectedDate}
-                  mode="date"
-                  display="spinner"
-                  minimumDate={new Date()}
-                  onChange={(_, date) => { if (date) setSelectedDate(date); }}
-                  themeVariant={isDark ? 'dark' : 'light'}
-                  style={{ width: '100%' }}
-                />
-              </View>
-            </View>
-          </Modal>
-        ) : (
-          <DateTimePicker
-            value={selectedDate}
-            mode="date"
-            display="calendar"
-            minimumDate={new Date()}
-            onChange={(_, date) => {
-              setShowDatePicker(false);
-              if (date) setSelectedDate(date);
-            }}
-          />
-        )
-      )}
-
-      {/* Time Picker */}
-      {showTimePicker && (
-        Platform.OS === 'ios' ? (
-          <Modal transparent animationType="slide">
-            <View style={styles.modalOverlay}>
-              <View style={[styles.pickerModal, { backgroundColor: theme.card }]}>
-                <View style={styles.pickerHeader}>
-                  <Text style={[styles.pickerTitle, { color: theme.text }]}>Select Time</Text>
-                  <TouchableOpacity onPress={() => setShowTimePicker(false)}>
-                    <Text style={{ color: colors.yellow, fontWeight: '600' }}>Done</Text>
-                  </TouchableOpacity>
-                </View>
-                <DateTimePicker
-                  value={selectedTime}
-                  mode="time"
-                  display="spinner"
-                  is24Hour={true}
-                  onChange={(_, time) => { if (time) setSelectedTime(time); }}
-                  themeVariant={isDark ? 'dark' : 'light'}
-                  style={{ width: '100%' }}
-                />
-              </View>
-            </View>
-          </Modal>
-        ) : (
-          <DateTimePicker
-            value={selectedTime}
-            mode="time"
-            display="clock"
-            is24Hour={true}
-            onChange={(_, time) => {
-              setShowTimePicker(false);
-              if (time) setSelectedTime(time);
-            }}
-          />
-        )
-      )}
     </ScrollView>
   );
 }
@@ -402,16 +333,6 @@ const styles = StyleSheet.create({
     minHeight: 100,
     paddingTop: 12,
   },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 52,
-    gap: 10,
-  },
-  pickerText: { flex: 1, fontSize: 15 },
   coordsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -447,22 +368,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.3,
   },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  pickerModal: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 40,
-  },
-  pickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  pickerTitle: { fontSize: 16, fontWeight: '600' },
 });
