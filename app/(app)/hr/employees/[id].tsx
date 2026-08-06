@@ -345,12 +345,33 @@ export default function EmployeeProfile() {
     const toUpdate = editableCustomFields.filter(f => f.id && f.field_name.trim());
     const toBroadcast = editableCustomFields.filter(f => !f.id && f.field_name.trim());
 
-    for (const f of toUpdate) {
-      await supabase
-        .from('employee_custom_fields')
-        .update({ field_name: f.field_name.trim(), field_value: f.field_value })
-        .eq('id', f.id);
-    }
+  for (const f of toUpdate) {
+  const original = customFields.find(orig => orig.id === f.id);
+  const nameChanged = original && original.field_name !== f.field_name.trim();
+
+  if (nameChanged) {
+    // Rename broadcasts to every employee's row with the OLD name,
+    // so "Address" becomes "Home Address" everywhere — but only this
+    // person's actual value changes here, since we .eq('id', f.id)
+    // for the value, and separately rename by field_name for everyone.
+    await supabase
+      .from('employee_custom_fields')
+      .update({ field_name: f.field_name.trim() })
+      .eq('field_name', original!.field_name);
+
+    // Now update this specific person's value on their own row
+    await supabase
+      .from('employee_custom_fields')
+      .update({ field_value: f.field_value })
+      .eq('id', f.id);
+  } else {
+    // No rename — just update this person's value as before
+    await supabase
+      .from('employee_custom_fields')
+      .update({ field_name: f.field_name.trim(), field_value: f.field_value })
+      .eq('id', f.id);
+  }
+}
 
     if (toBroadcast.length > 0) {
       const { data: allEmployees } = await supabase
