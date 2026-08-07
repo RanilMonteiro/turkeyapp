@@ -2,10 +2,10 @@ import { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Linking, Platform, Alert, Image
+  Linking, Platform, Alert, Image, Modal, TextInput
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, MapPin, Navigation, Clock, User, Wrench } from 'lucide-react-native';
+import { ArrowLeft, MapPin, Navigation, Clock, User, Wrench, Edit3, X } from 'lucide-react-native';
 import { supabase } from '../../../../../lib/supabase';
 
 const colors = {
@@ -13,6 +13,7 @@ const colors = {
   white: '#ffffff',
   black: '#000000',
   gray: {
+    50: '#f8fafc',
     200: '#e2e8f0',
     400: '#94a3b8',
     500: '#64748b',
@@ -48,12 +49,23 @@ export default function CalloutDetail() {
   const [callout, setCallout] = useState<Callout | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [editModal, setEditModal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editSiteName, setEditSiteName] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
+
   const theme = {
     background: isDark ? colors.black : '#f8fafc',
     card: isDark ? colors.gray[900] : colors.white,
     border: isDark ? colors.gray[700] : colors.gray[200],
+    input: isDark ? colors.gray[800] : colors.gray[50],
     text: isDark ? colors.white : '#1e293b',
     subtext: isDark ? colors.gray[400] : colors.gray[500],
+    muted: isDark ? colors.gray[500] : colors.gray[400],
   };
 
   useEffect(() => {
@@ -71,10 +83,78 @@ export default function CalloutDetail() {
     setLoading(false);
   }
 
+  function openEditModal() {
+    if (!callout) return;
+    setEditTitle(callout.title);
+    setEditDescription(callout.description ?? '');
+    setEditSiteName(callout.site_name);
+    setEditAddress(callout.address);
+    setEditDate(callout.date);
+    setEditTime(callout.time);
+    setEditModal(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!editTitle.trim() || !editSiteName.trim() || !editAddress.trim() || !editDate.trim() || !editTime.trim()) {
+      Alert.alert('Missing fields', 'Please fill in all required fields.');
+      return;
+    }
+
+    setSaving(true);
+
+    const { error } = await supabase
+      .from('callouts')
+      .update({
+        title: editTitle.trim(),
+        description: editDescription.trim() || null,
+        site_name: editSiteName.trim(),
+        address: editAddress.trim(),
+        date: editDate.trim(),
+        time: editTime.trim(),
+      })
+      .eq('id', id);
+
+    setSaving(false);
+
+    if (error) {
+      Alert.alert('Error', error.message);
+      return;
+    }
+
+    setEditModal(false);
+    fetchCallout();
+  }
+
+  function cancelCallout() {
+    Alert.alert(
+      'Cancel Callout',
+      'Are you sure you want to cancel this callout? It will no longer be active or available to accept.',
+      [
+        { text: 'No, keep it', style: 'cancel' },
+        {
+          text: 'Yes, cancel it',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await supabase
+              .from('callouts')
+              .update({ status: 'cancelled' })
+              .eq('id', id);
+
+            if (error) {
+              Alert.alert('Error', error.message);
+            } else {
+              fetchCallout();
+            }
+          }
+        }
+      ]
+    );
+  }
+
   async function deleteCallout() {
     Alert.alert(
       'Delete Callout',
-      'Are you sure you want to delete this callout?',
+      'Are you sure you want to delete this callout? This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -103,6 +183,7 @@ export default function CalloutDetail() {
       case 'pending': return '#f59e0b';
       case 'accepted': return '#3b82f6';
       case 'completed': return '#10b981';
+      case 'cancelled': return '#ef4444';
       default: return colors.gray[400];
     }
   }
@@ -113,6 +194,7 @@ export default function CalloutDetail() {
         case 'pending': return '#78350f';
         case 'accepted': return '#1e3a5f';
         case 'completed': return '#064e3b';
+        case 'cancelled': return '#3b1a1a';
         default: return colors.gray[800];
       }
     } else {
@@ -120,6 +202,7 @@ export default function CalloutDetail() {
         case 'pending': return '#fef3c7';
         case 'accepted': return '#dbeafe';
         case 'completed': return '#d1fae5';
+        case 'cancelled': return '#fee2e2';
         default: return colors.gray[200];
       }
     }
@@ -141,6 +224,8 @@ export default function CalloutDetail() {
     );
   }
 
+  const canEditOrCancel = callout.status === 'pending' || callout.status === 'accepted';
+
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Header */}
@@ -149,7 +234,13 @@ export default function CalloutDetail() {
           <ArrowLeft color={colors.yellow} size={24} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: theme.text }]}>Callout Details</Text>
-        <View style={{ width: 24 }} />
+        {canEditOrCancel ? (
+          <TouchableOpacity onPress={openEditModal}>
+            <Edit3 color={colors.yellow} size={22} />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 24 }} />
+        )}
       </View>
 
       <View style={styles.content}>
@@ -256,6 +347,17 @@ export default function CalloutDetail() {
           </View>
         )}
 
+        {/* Cancel — pending or accepted only */}
+        {canEditOrCancel && (
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={cancelCallout}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.cancelButtonText}>Cancel Callout</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Delete — only if pending */}
         {callout.status === 'pending' && (
           <TouchableOpacity
@@ -268,6 +370,101 @@ export default function CalloutDetail() {
         )}
 
       </View>
+
+      {/* Edit Modal */}
+      <Modal visible={editModal} animationType="slide" transparent={false} onRequestClose={() => setEditModal(false)}>
+        <ScrollView
+          style={[styles.modalContainer, { backgroundColor: theme.background }]}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+            <TouchableOpacity onPress={() => setEditModal(false)}>
+              <X color={theme.muted} size={24} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Edit Callout</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TITLE *</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                value={editTitle}
+                onChangeText={setEditTitle}
+                placeholder="Callout title"
+                placeholderTextColor={theme.muted}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DESCRIPTION</Text>
+              <TextInput
+                style={[styles.input, styles.textArea, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                value={editDescription}
+                onChangeText={setEditDescription}
+                placeholder="Optional description"
+                placeholderTextColor={theme.muted}
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SITE NAME *</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                value={editSiteName}
+                onChangeText={setEditSiteName}
+                placeholder="Site name"
+                placeholderTextColor={theme.muted}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>ADDRESS *</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                value={editAddress}
+                onChangeText={setEditAddress}
+                placeholder="Address"
+                placeholderTextColor={theme.muted}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DATE * (YYYY-MM-DD)</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                value={editDate}
+                onChangeText={setEditDate}
+                placeholder="2026-08-15"
+                placeholderTextColor={theme.muted}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TIME * (HH:MM)</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                value={editTime}
+                onChangeText={setEditTime}
+                placeholder="14:00"
+                placeholderTextColor={theme.muted}
+              />
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+            onPress={handleSaveEdit}
+            disabled={saving}
+          >
+            {saving ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Changes</Text>}
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
     </ScrollView>
   );
 }
@@ -338,6 +535,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     backgroundColor: colors.white,
   },
+  cancelButton: {
+    backgroundColor: '#f59e0b',
+    borderRadius: 14,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonText: { color: colors.black, fontSize: 16, fontWeight: '700' },
   deleteButton: {
     backgroundColor: '#ef4444',
     borderRadius: 14,
@@ -346,4 +551,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   deleteButtonText: { color: colors.white, fontSize: 16, fontWeight: '700' },
+  modalContainer: { flex: 1 },
+  modalContent: { paddingBottom: 48 },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700' },
+  formCard: { margin: 16, borderRadius: 20, padding: 20, borderWidth: 1 },
+  fieldGroup: { marginBottom: 16 },
+  fieldLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.8, marginBottom: 8 },
+  input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
+  textArea: { minHeight: 80, textAlignVertical: 'top' },
+  saveBtn: {
+    backgroundColor: colors.yellow,
+    borderRadius: 14,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    margin: 16,
+  },
+  saveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
 });

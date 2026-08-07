@@ -87,7 +87,7 @@ export default function TechnicianJobs() {
       .from('callouts')
       .select('*')
       .eq('assigned_to', uid)
-      .neq('status', 'completed')
+       .not('status', 'in', '(completed,cancelled)')
       .order('date', { ascending: true });
 
     if (available) setCallouts(available);

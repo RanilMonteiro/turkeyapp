@@ -19,7 +19,7 @@
       }
     },
     "android": {
-      "package": "com.turnkey",
+      "package": "com.turnkey.turnkeyapp",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
