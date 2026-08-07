@@ -3,13 +3,14 @@ import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, RefreshControl,
   ActivityIndicator, Alert, Linking, Platform,
-  Modal
+  Modal,TextInput, Image
 } from 'react-native';
 import { Navigation, CheckCircle, Clock, ChevronDown } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import SignatureCanvas from 'react-native-signature-canvas';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as ImagePicker from 'expo-image-picker';
 
 const colors = {
   yellow: '#fbbf24',
@@ -59,6 +60,11 @@ export default function TechnicianJobs() {
   const [signature, setSignature] = useState<string | null>(null);
   const [showSignature, setShowSignature] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [closedOnTam, setClosedOnTam] = useState(false);
+const [tamJobNumber, setTamJobNumber] = useState('');
+const [slipImage, setSlipImage] = useState<{ uri: string; mimeType?: string } | null>(null);
+
+
 
   const signatureRef = useRef<any>(null);
 
@@ -130,19 +136,34 @@ export default function TechnicianJobs() {
     );
   }
 
-  function openCompletionModal(callout: Callout) {
-    setSelectedCallout(callout);
-    setTimeIn(new Date());
-    setTimeOut(new Date());
-    setMachineCount(null);
-    setSignature(null);
-    setCompletionModal(true);
-  }
+ function openCompletionModal(callout: Callout) {
+  setSelectedCallout(callout);
+  setTimeIn(new Date());
+  setTimeOut(new Date());
+  setMachineCount(null);
+  setSignature(null);
+  setClosedOnTam(false);
+  setTamJobNumber('');
+  setSlipImage(null);
+  setCompletionModal(true);
+}
 
   function formatTime(t: Date) {
     return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
   }
-
+async function fileToUint8Array(uri: string): Promise<Uint8Array> {
+  if (Platform.OS === 'web') {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const buffer = await blob.arrayBuffer();
+    return new Uint8Array(buffer);
+  }
+  const FileSystem = require('expo-file-system/legacy');
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+}
   async function uploadSignature(base64: string, calloutId: string): Promise<string | null> {
     try {
       const base64Data = base64.replace('data:image/png;base64,', '');
@@ -161,44 +182,92 @@ export default function TechnicianJobs() {
       return null;
     }
   }
-
-  async function handleComplete() {
-    if (!machineCount) {
-      Alert.alert('Missing info', 'Please select the number of machines tested.');
-      return;
-    }
-    if (!signature) {
-      Alert.alert('Missing signature', 'Please provide a signature before completing.');
-      return;
-    }
-    if (!selectedCallout) return;
-
-    setSubmitting(true);
-
-    const signatureUrl = await uploadSignature(signature, selectedCallout.id);
-
-    const { error } = await supabase
-      .from('callouts')
-      .update({
-        status: 'completed',
-        time_in: formatTime(timeIn),
-        time_out: formatTime(timeOut),
-        machines_tested: machineCount,
-        signature_url: signatureUrl,
-      })
-      .eq('id', selectedCallout.id);
-
-    setSubmitting(false);
-
-    if (error) {
-      Alert.alert('Error', error.message);
-    } else {
-      setCompletionModal(false);
-      Alert.alert('Done!', 'Callout marked as completed.');
-      fetchData();
-    }
+  async function pickSlipImage() {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    Alert.alert('Permission needed', 'Please allow photo access to attach a slip.');
+    return;
   }
 
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    quality: 0.7,
+  });
+
+  if (!result.canceled && result.assets[0]) {
+    setSlipImage({ uri: result.assets[0].uri, mimeType: result.assets[0].mimeType });
+  }
+}
+
+async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Promise<string | null> {
+  try {
+    const arrayBuffer = await fileToUint8Array(uri);
+    const ext = mimeType?.split('/')[1] ?? 'jpg';
+    const fileName = `slip_${calloutId}_${Date.now()}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from('slips')
+      .upload(fileName, arrayBuffer, { contentType: mimeType ?? 'image/jpeg' });
+
+    if (error) return null;
+
+    const { data } = supabase.storage.from('slips').getPublicUrl(fileName);
+    return data.publicUrl;
+  } catch {
+    return null;
+  }
+}
+
+  async function handleComplete() {
+  if (!machineCount) {
+    Alert.alert('Missing info', 'Please select the number of machines tested.');
+    return;
+  }
+  if (!signature) {
+    Alert.alert('Missing signature', 'Please provide a signature before completing.');
+    return;
+  }
+  if (!tamJobNumber.trim()) {
+    Alert.alert('Missing TAM job number', 'Please enter the TAM job number.');
+    return;
+  }
+  if (!closedOnTam) {
+    Alert.alert('Confirm TAM closure', 'Please confirm the job was closed on TAM before continuing.');
+    return;
+  }
+  if (!selectedCallout) return;
+
+  setSubmitting(true);
+
+  const signatureUrl = await uploadSignature(signature, selectedCallout.id);
+  const slipUrl = slipImage
+    ? await uploadSlip(slipImage.uri, selectedCallout.id, slipImage.mimeType)
+    : null;
+
+  const { error } = await supabase
+    .from('callouts')
+    .update({
+      status: 'completed',
+      time_in: formatTime(timeIn),
+      time_out: formatTime(timeOut),
+      machines_tested: machineCount,
+      signature_url: signatureUrl,
+      closed_on_tam: closedOnTam,
+      tam_job_number: tamJobNumber.trim(),
+      slip_url: slipUrl,
+    })
+    .eq('id', selectedCallout.id);
+
+  setSubmitting(false);
+
+  if (error) {
+    Alert.alert('Error', error.message);
+  } else {
+    setCompletionModal(false);
+    Alert.alert('Done!', 'Callout marked as completed.');
+    fetchData();
+  }
+}
   function openInMaps(lat: number, lng: number, address: string) {
     const url = Platform.select({
       ios: `maps:${lat},${lng}?q=${address}`,
@@ -469,6 +538,61 @@ export default function TechnicianJobs() {
             )}
           </View>
 
+          {/* TAM Job Closure */}
+<View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+  <Text style={[styles.formSectionTitle, { color: theme.text }]}>TAM Job Closure</Text>
+
+  <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TAM JOB NUMBER *</Text>
+  <TextInput
+    style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, marginBottom: 16 }]}
+    placeholder="e.g. TAM-12345"
+    placeholderTextColor={theme.subtext}
+    value={tamJobNumber}
+    onChangeText={setTamJobNumber}
+  />
+
+  <TouchableOpacity
+    style={[
+      styles.tamCheckRow,
+      { borderColor: closedOnTam ? '#10b981' : theme.border, backgroundColor: closedOnTam ? '#10b98115' : theme.input },
+    ]}
+    onPress={() => setClosedOnTam(!closedOnTam)}
+  >
+    <View style={[styles.tamCheckbox, { borderColor: closedOnTam ? '#10b981' : theme.subtext, backgroundColor: closedOnTam ? '#10b981' : 'transparent' }]}>
+      {closedOnTam && <CheckCircle color={colors.white} size={16} />}
+    </View>
+    <Text style={[styles.tamCheckLabel, { color: closedOnTam ? '#10b981' : theme.text }]}>
+      I confirm this job was closed on TAM
+    </Text>
+  </TouchableOpacity>
+</View>
+
+{/* Slip Photo (optional) */}
+<View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+  <Text style={[styles.formSectionTitle, { color: theme.text }]}>Slip Photo (Optional)</Text>
+
+  {slipImage ? (
+    <View>
+      <Image source={{ uri: slipImage.uri }} style={styles.slipPreview} resizeMode="cover" />
+      <TouchableOpacity
+        style={[styles.clearSignatureBtn, { borderColor: theme.border }]}
+        onPress={() => setSlipImage(null)}
+      >
+        <Text style={[styles.clearSignatureText, { color: theme.subtext }]}>Remove photo</Text>
+      </TouchableOpacity>
+    </View>
+  ) : (
+    <TouchableOpacity
+      style={[styles.signatureBox, { borderColor: colors.yellow }]}
+      onPress={pickSlipImage}
+    >
+      <Text style={[styles.signaturePrompt, { color: colors.yellow }]}>
+        Tap to attach a photo of the slip
+      </Text>
+    </TouchableOpacity>
+  )}
+</View>
+
           {/* Signature */}
           <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.formSectionTitle, { color: theme.text }]}>Signature</Text>
@@ -500,19 +624,25 @@ export default function TechnicianJobs() {
             )}
           </View>
 
-          {/* Submit */}
-          <TouchableOpacity
-            style={[styles.submitBtn, submitting && { opacity: 0.6 }]}
-            onPress={handleComplete}
-            disabled={submitting}
-          >
-            {submitting
-              ? <ActivityIndicator color={colors.black} />
-              : <Text style={styles.submitBtnText}>Mark as Complete</Text>
-            }
-          </TouchableOpacity>
-        </ScrollView>
-
+         {/* Submit */}
+<View style={{ position: 'relative' }}>
+  <TouchableOpacity
+    style={[styles.submitBtn, (submitting || !closedOnTam) && { opacity: 0.6 }]}
+    onPress={handleComplete}
+    disabled={submitting || !closedOnTam}
+  >
+    {submitting
+      ? <ActivityIndicator color={colors.black} />
+      : <Text style={styles.submitBtnText}>Mark as Complete</Text>
+    }
+  </TouchableOpacity>
+  {!closedOnTam && (
+    <View style={styles.submitBlurOverlay} pointerEvents="none">
+      <Text style={styles.submitBlurText}>Confirm TAM closure above to continue</Text>
+    </View>
+  )}
+</View>
+  </ScrollView>
         {/* Signature Canvas Modal */}
         <Modal
           visible={showSignature}
@@ -728,4 +858,51 @@ const styles = StyleSheet.create({
     fontSize: 14,
     padding: 12,
   },
+  tamCheckRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 12,
+  borderWidth: 1.5,
+  borderRadius: 12,
+  padding: 14,
+},
+tamCheckbox: {
+  width: 24,
+  height: 24,
+  borderRadius: 6,
+  borderWidth: 2,
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+tamCheckLabel: { fontSize: 14, fontWeight: '600', flex: 1 },
+slipPreview: {
+  width: '100%',
+  height: 160,
+  borderRadius: 12,
+  marginBottom: 8,
+},
+submitBlurOverlay: {
+  position: 'absolute',
+  top: 0, left: 0, right: 0, bottom: 0,
+  backgroundColor: 'rgba(148,163,184,0.35)',
+  borderRadius: 14,
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+input: {
+  borderWidth: 1,
+  borderRadius: 12,
+  paddingHorizontal: 14,
+  height: 52,
+  fontSize: 15,
+},
+submitBlurText: {
+  color: colors.black,
+  fontSize: 12,
+  fontWeight: '700',
+  backgroundColor: colors.white,
+  paddingHorizontal: 10,
+  paddingVertical: 4,
+  borderRadius: 8,
+},
 });

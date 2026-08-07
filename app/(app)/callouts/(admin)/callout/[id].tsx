@@ -40,6 +40,10 @@ type Callout = {
   time_out: string | null;
   machines_tested: number | null;
   signature_url: string | null;
+   invoice_number: string | null;
+  closed_on_tam: boolean;
+  tam_job_number: string | null;
+  slip_url: string | null;
 };
 
 export default function CalloutDetail() {
@@ -57,6 +61,9 @@ export default function CalloutDetail() {
   const [editAddress, setEditAddress] = useState('');
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
+  const [invoiceModal, setInvoiceModal] = useState(false);
+const [editInvoiceNumber, setEditInvoiceNumber] = useState('');
+const [savingInvoice, setSavingInvoice] = useState(false);
 
   const theme = {
     background: isDark ? colors.black : '#f8fafc',
@@ -93,6 +100,30 @@ export default function CalloutDetail() {
     setEditTime(callout.time);
     setEditModal(true);
   }
+
+function openInvoiceModal() {
+  setEditInvoiceNumber(callout?.invoice_number ?? '');
+  setInvoiceModal(true);
+}
+
+async function handleSaveInvoice() {
+  setSavingInvoice(true);
+
+  const { error } = await supabase
+    .from('callouts')
+    .update({ invoice_number: editInvoiceNumber.trim() || null })
+    .eq('id', id);
+
+  setSavingInvoice(false);
+
+  if (error) {
+    Alert.alert('Error', error.message);
+    return;
+  }
+
+  setInvoiceModal(false);
+  fetchCallout();
+}
 
   async function handleSaveEdit() {
     if (!editTitle.trim() || !editSiteName.trim() || !editAddress.trim() || !editDate.trim() || !editTime.trim()) {
@@ -360,6 +391,47 @@ async function deleteCallout() {
           </View>
         )}
 
+        {/* Invoice & TAM Info */}
+<View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+  <View style={styles.titleRow}>
+    <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Invoice & TAM</Text>
+    <TouchableOpacity onPress={openInvoiceModal}>
+      <Edit3 color={colors.yellow} size={18} />
+    </TouchableOpacity>
+  </View>
+
+  <View style={[styles.detailRow, { marginTop: 12 }]}>
+    <Text style={[styles.detailText, { color: theme.subtext }]}>
+      Invoice Number: {callout.invoice_number ?? 'Not set'}
+    </Text>
+  </View>
+
+  {callout.tam_job_number && (
+    <View style={styles.detailRow}>
+      <Text style={[styles.detailText, { color: theme.subtext }]}>
+        TAM Job Number: {callout.tam_job_number}
+      </Text>
+    </View>
+  )}
+
+  <View style={styles.detailRow}>
+    <Text style={[styles.detailText, { color: callout.closed_on_tam ? '#10b981' : '#ef4444' }]}>
+      {callout.closed_on_tam ? '✓ Closed on TAM' : '✗ Not closed on TAM'}
+    </Text>
+  </View>
+
+  {callout.slip_url && (
+    <View style={styles.signatureSection}>
+      <Text style={[styles.signatureLabel, { color: theme.subtext }]}>Slip Photo</Text>
+      <Image
+        source={{ uri: callout.slip_url }}
+        style={[styles.signatureImage, { borderColor: theme.border }]}
+        resizeMode="contain"
+      />
+    </View>
+  )}
+</View>
+
         {/* Cancel — pending or accepted only */}
         {canEditOrCancel && (
           <TouchableOpacity
@@ -383,7 +455,42 @@ async function deleteCallout() {
         )}
 
       </View>
+<Modal visible={invoiceModal} animationType="slide" transparent={false} onRequestClose={() => setInvoiceModal(false)}>
+  <ScrollView
+    style={[styles.modalContainer, { backgroundColor: theme.background }]}
+    contentContainerStyle={styles.modalContent}
+    keyboardShouldPersistTaps="handled"
+  >
+    <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+      <TouchableOpacity onPress={() => setInvoiceModal(false)}>
+        <X color={theme.muted} size={24} />
+      </TouchableOpacity>
+      <Text style={[styles.modalTitle, { color: theme.text }]}>Invoice Number</Text>
+      <View style={{ width: 24 }} />
+    </View>
 
+    <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <View style={styles.fieldGroup}>
+        <Text style={[styles.fieldLabel, { color: theme.subtext }]}>INVOICE NUMBER</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+          value={editInvoiceNumber}
+          onChangeText={setEditInvoiceNumber}
+          placeholder="e.g. INV-2026-0142"
+          placeholderTextColor={theme.muted}
+        />
+      </View>
+    </View>
+
+    <TouchableOpacity
+      style={[styles.saveBtn, savingInvoice && { opacity: 0.6 }]}
+      onPress={handleSaveInvoice}
+      disabled={savingInvoice}
+    >
+      {savingInvoice ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Invoice Number</Text>}
+    </TouchableOpacity>
+  </ScrollView>
+</Modal>
       {/* Edit Modal */}
       <Modal visible={editModal} animationType="slide" transparent={false} onRequestClose={() => setEditModal(false)}>
         <ScrollView
@@ -479,8 +586,11 @@ async function deleteCallout() {
         </ScrollView>
       </Modal>
     </ScrollView>
+    
   );
+  
 }
+
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
