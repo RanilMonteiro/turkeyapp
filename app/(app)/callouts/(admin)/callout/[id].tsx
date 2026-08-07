@@ -125,50 +125,63 @@ export default function CalloutDetail() {
     fetchCallout();
   }
 
-  function cancelCallout() {
+ function cancelCallout() {
+  const message = 'Are you sure you want to cancel this callout? It will no longer be active or available to accept.';
+
+  const performCancel = async () => {
+    const { error } = await supabase
+      .from('callouts')
+      .update({ status: 'cancelled' })
+      .eq('id', id);
+
+    if (error) {
+      if (Platform.OS === 'web') {
+        window.alert(`Error: ${error.message}`);
+      } else {
+        Alert.alert('Error', error.message);
+      }
+    } else {
+      fetchCallout();
+    }
+  };
+
+  if (Platform.OS === 'web') {
+    const confirmed = window.confirm(message);
+    if (confirmed) performCancel();
+  } else {
     Alert.alert(
       'Cancel Callout',
-      'Are you sure you want to cancel this callout? It will no longer be active or available to accept.',
+      message,
       [
         { text: 'No, keep it', style: 'cancel' },
-        {
-          text: 'Yes, cancel it',
-          style: 'destructive',
-          onPress: async () => {
-            const { error } = await supabase
-              .from('callouts')
-              .update({ status: 'cancelled' })
-              .eq('id', id);
-
-            if (error) {
-              Alert.alert('Error', error.message);
-            } else {
-              fetchCallout();
-            }
-          }
-        }
+        { text: 'Yes, cancel it', style: 'destructive', onPress: performCancel },
       ]
     );
   }
+}
 
-  async function deleteCallout() {
+async function deleteCallout() {
+  const message = 'Are you sure you want to delete this callout? This cannot be undone.';
+
+  const performDelete = async () => {
+    await supabase.from('callouts').delete().eq('id', id);
+    router.back();
+  };
+
+  if (Platform.OS === 'web') {
+    const confirmed = window.confirm(message);
+    if (confirmed) await performDelete();
+  } else {
     Alert.alert(
       'Delete Callout',
-      'Are you sure you want to delete this callout? This cannot be undone.',
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            await supabase.from('callouts').delete().eq('id', id);
-            router.back();
-          }
-        }
+        { text: 'Delete', style: 'destructive', onPress: performDelete },
       ]
     );
   }
-
+}
   function openInMaps() {
     if (!callout?.latitude || !callout?.longitude) return;
     const url = Platform.select({
