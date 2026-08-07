@@ -61,6 +61,7 @@ const navByRole: Record<string, { label: string; icon: any; route: string; permi
     { label: 'Callouts', icon: FileText, route: '/(app)/callouts/(admin)/dashboard', permission: 'view_callouts' },
     { label: 'Callouts (Technician)', icon: Wrench, route: '/(app)/callouts/(technician)/jobs', permission: 'view_callouts_tech' },
      { label: 'Forms', icon: ClipboardList, route: '/(app)/shared/forms', permission: null },
+     { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: 'can_approve' },
     { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests', permission: null },
     { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents', permission: null },
   ],
