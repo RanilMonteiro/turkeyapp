@@ -47,6 +47,7 @@ export default function NewCallout() {
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
   const [loading, setLoading] = useState(false);
+  const [invoiceNumber, setInvoiceNumber] = useState('');
 
   const [dateStr, setDateStr] = useState(todayDateString());
   const [timeStr, setTimeStr] = useState(nowTimeString());
@@ -135,17 +136,18 @@ export default function NewCallout() {
     const { data: userData } = await supabase.auth.getUser();
 
     const { error } = await supabase.from('callouts').insert({
-      title,
-      site_name: siteName,
-      description,
-      address,
-      latitude: latitude ? parseFloat(latitude) : null,
-      longitude: longitude ? parseFloat(longitude) : null,
-      date: dbDate,
-      time: dbTime,
-      status: 'pending',
-      created_by: userData.user?.id,
-    });
+  title,
+  site_name: siteName,
+  description,
+  address,
+  latitude: latitude ? parseFloat(latitude) : null,
+  longitude: longitude ? parseFloat(longitude) : null,
+  date: dbDate,
+  time: dbTime,
+  status: 'pending',
+  created_by: userData.user?.id,
+  invoice_number: invoiceNumber.trim() || null,
+});
 
     if (error) {
       notify('Error', error.message);
@@ -225,6 +227,18 @@ export default function NewCallout() {
             onChangeText={setAddress}
           />
         </View>
+
+        {/* Invoice Number */}
+<View style={styles.fieldGroup}>
+  <Text style={[styles.label, { color: theme.label }]}>INVOICE NUMBER (OPTIONAL)</Text>
+  <TextInput
+    style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+    placeholder="e.g. INV-2026-0142"
+    placeholderTextColor={theme.subtext}
+    value={invoiceNumber}
+    onChangeText={setInvoiceNumber}
+  />
+</View>
 
         {/* Location Pin */}
         <View style={styles.fieldGroup}>
