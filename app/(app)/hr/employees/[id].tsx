@@ -85,6 +85,7 @@ type Document = {
   file_url: string;
   created_at: string;
   document_date: string | null;
+  expiry_date: string | null;
   visible_to_employee: boolean;
 };
 type FormTemplateOption = { id: string; name: string; category: string | null };
@@ -148,6 +149,10 @@ const [activeChainTemplateId, setActiveChainTemplateId] = useState<string | null
   const [showDocDatePicker, setShowDocDatePicker] = useState(false);
   const [docSearch, setDocSearch] = useState('');
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [docExpiryDate, setDocExpiryDate] = useState('');
+  const [docDateFilterFrom, setDocDateFilterFrom] = useState('');
+const [docDateFilterTo, setDocDateFilterTo] = useState('');
+const [showDocDateFilter, setShowDocDateFilter] = useState(false);
 
   // Form visibility (per-employee)
   const [allTemplates, setAllTemplates] = useState<FormTemplateOption[]>([]);
@@ -301,6 +306,14 @@ const [activeChainTemplateId, setActiveChainTemplateId] = useState<string | null
     ]);
     if (admins_) setAdminUsers(admins_);
     if (grants) setDocGrants(grants as any);
+  }
+
+  function matchesDateFilter(doc: Document): boolean {
+    if (!docDateFilterFrom && !docDateFilterTo) return true;
+    const docDateValue = doc.document_date ?? doc.created_at.split('T')[0];
+    if (docDateFilterFrom && docDateValue < docDateFilterFrom) return false;
+    if (docDateFilterTo && docDateValue > docDateFilterTo) return false;
+    return true;
   }
 
   // ---------- Profile edit + custom fields ----------
@@ -706,27 +719,29 @@ function deleteChain(templateId: string, templateName: string) {
   // list across all categories instead of the folder breakdown.
   const docSearchActive = docSearch.trim().length > 0;
 
-  const filteredFlatDocuments = documents.filter(d =>
-    d.name.toLowerCase().includes(docSearch.trim().toLowerCase())
-  );
+ const filteredFlatDocuments = documents.filter(d =>
+  d.name.toLowerCase().includes(docSearch.trim().toLowerCase()) && matchesDateFilter(d)
+);
 
   // Only categories that actually have at least one document show up
   // as a folder — no empty subfolders.
-  const docsByCategory = documents.reduce((acc, doc) => {
-    (acc[doc.category] ??= []).push(doc);
-    return acc;
-  }, {} as Record<string, Document[]>);
+const docsByCategory = documents.reduce((acc, doc) => {
+  if (!matchesDateFilter(doc)) return acc;
+  (acc[doc.category] ??= []).push(doc);
+  return acc;
+}, {} as Record<string, Document[]>);
 
   const categoriesWithDocs = DOC_CATEGORIES.filter(c => (docsByCategory[c.value]?.length ?? 0) > 0);
 
-  function openDocModal() {
-    setDocName('');
-    setDocCategory('');
-    setSelectedFile(null);
-    setVisibleToEmployee(true);
-    setDocDate('');
-    setDocModalVisible(true);
-  }
+function openDocModal() {
+  setDocName('');
+  setDocCategory('');
+  setSelectedFile(null);
+  setVisibleToEmployee(true);
+  setDocDate('');
+  setDocExpiryDate('');
+  setDocModalVisible(true);
+}
 
   async function pickDocFile() {
     try {
@@ -779,7 +794,7 @@ function deleteChain(templateId: string, templateName: string) {
 
       const { data: urlData } = supabase.storage.from('documents').getPublicUrl(fileName);
 
-      const { error: dbError } = await supabase.from('documents').insert({
+     const { error: dbError } = await supabase.from('documents').insert({
         name: docName.trim(),
         category: docCategory,
         file_url: urlData.publicUrl,
@@ -788,6 +803,7 @@ function deleteChain(templateId: string, templateName: string) {
         uploaded_by: userData.user?.id,
         visible_to_employee: visibleToEmployee,
         document_date: docDate || null,
+        expiry_date: docExpiryDate || null,
       });
 
       if (dbError) {
@@ -801,6 +817,15 @@ function deleteChain(templateId: string, templateName: string) {
     }
 
     setUploadingDoc(false);
+  }
+
+  function getExpiryStatus(expiryDate: string | null): { label: string; color: string } {
+  if (!expiryDate) return { label: 'No expiry set', color: theme.muted };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const expiry = new Date(expiryDate + 'T00:00:00');
+  if (expiry < today) return { label: 'Expired', color: '#ef4444' };
+  return { label: `Expires ${expiry.toLocaleDateString('en-ZA')}`, color: '#f59e0b' };
   }
 
   function deleteDocument(doc: Document) {
@@ -1063,6 +1088,46 @@ function deleteChain(templateId: string, templateName: string) {
             />
           </View>
 
+          <TouchableOpacity
+  style={[styles.dateFilterToggle, { borderColor: theme.border }]}
+  onPress={() => setShowDocDateFilter(!showDocDateFilter)}
+>
+  <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>
+    {showDocDateFilter ? 'Hide date filter' : 'Filter by date'}
+    {(docDateFilterFrom || docDateFilterTo) ? ' (active)' : ''}
+  </Text>
+</TouchableOpacity>
+
+{showDocDateFilter && (
+  <View style={{ marginBottom: 12, gap: 10 }}>
+    <View>
+      <Text style={[styles.fieldLabel, { color: theme.subtext }]}>FROM</Text>
+      <DatePickerField
+        value={docDateFilterFrom}
+        onChange={setDocDateFilterFrom}
+        placeholder="Any"
+        isDark={isDark}
+        theme={theme}
+      />
+    </View>
+    <View>
+      <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TO</Text>
+      <DatePickerField
+        value={docDateFilterTo}
+        onChange={setDocDateFilterTo}
+        placeholder="Any"
+        isDark={isDark}
+        theme={theme}
+      />
+    </View>
+    {(docDateFilterFrom || docDateFilterTo) && (
+      <TouchableOpacity onPress={() => { setDocDateFilterFrom(''); setDocDateFilterTo(''); }}>
+        <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '600' }}>Clear date filter</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+)}
+
           {documents.length === 0 ? (
             <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No documents for this employee yet.</Text>
           ) : docSearchActive ? (
@@ -1071,7 +1136,7 @@ function deleteChain(templateId: string, templateName: string) {
               <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No documents match your search.</Text>
             ) : (
               filteredFlatDocuments.map(doc => (
-                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} deleteDocument={deleteDocument} />
+                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} getExpiryStatus={getExpiryStatus} deleteDocument={deleteDocument} />
               ))
             )
           ) : expandedCategory ? (
@@ -1087,7 +1152,7 @@ function deleteChain(templateId: string, templateName: string) {
                 {DOC_CATEGORIES.find(c => c.value === expandedCategory)?.label ?? expandedCategory}
               </Text>
               {(docsByCategory[expandedCategory] ?? []).map(doc => (
-                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} deleteDocument={deleteDocument} />
+                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} getExpiryStatus={getExpiryStatus} deleteDocument={deleteDocument} />
               ))}
             </View>
           ) : (
@@ -1417,6 +1482,19 @@ function deleteChain(templateId: string, templateName: string) {
               />
             </View>
 
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
+                EXPIRY DATE (OPTIONAL)
+              </Text>
+              <DatePickerField
+                value={docExpiryDate}
+                onChange={setDocExpiryDate}
+                placeholder="No expiry set"
+                isDark={isDark}
+                theme={theme}
+              />
+            </View>
+
             <View style={styles.switchRow}>
               <View style={styles.switchInfo}>
                 <Text style={[styles.switchLabel, { color: theme.text }]}>Visible to Employee</Text>
@@ -1580,8 +1658,9 @@ function deleteChain(templateId: string, templateName: string) {
   );
 }
 
-function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument }: any) {
+function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument, getExpiryStatus }: any) {
   const cat = getDocCategoryColor(doc.category);
+  const expiry = getExpiryStatus(doc.expiry_date);
   return (
     <View style={[styles.docRow, { borderColor: theme.border }]}>
       <View style={{ flex: 1 }}>
@@ -1596,6 +1675,9 @@ function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument }: any) {
               : new Date(doc.created_at).toLocaleDateString('en-ZA')}
           </Text>
         </View>
+        <Text style={{ fontSize: 11, fontWeight: '600', color: expiry.color, marginTop: 4 }}>
+          {expiry.label}
+        </Text>
       </View>
       <TouchableOpacity
         style={styles.docActionBtn}
@@ -1758,6 +1840,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', borderWidth: 1,
     borderRadius: 12, paddingHorizontal: 12, height: 48, gap: 8,
   },
+  dateFilterToggle: {
+  borderWidth: 1,
+  borderRadius: 10,
+  paddingVertical: 8,
+  paddingHorizontal: 12,
+  alignSelf: 'flex-start',
+  marginBottom: 12,
+},
   filePicker: {
     borderWidth: 2, borderRadius: 14, borderStyle: 'dashed',
     padding: 24, alignItems: 'center', gap: 10, marginBottom: 20,
