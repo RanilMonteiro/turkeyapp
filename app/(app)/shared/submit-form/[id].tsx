@@ -245,11 +245,12 @@ export default function SubmitForm() {
 
     // Create approval steps if needed
     if (template?.requires_approval) {
-      const { data: chain } = await supabase
-        .from('approval_chains')
-        .select('*')
-        .eq('employee_id', userData.user?.id)
-        .order('approval_order');
+    const { data: chain } = await supabase
+  .from('approval_chains')
+  .select('*')
+  .eq('employee_id', userData.user?.id)
+  .eq('template_id', id)  // id = the current form's template id from useLocalSearchParams
+  .order('approval_order');
 
       if (chain && chain.length > 0) {
         const approvalRows = chain.map((c: any) => ({

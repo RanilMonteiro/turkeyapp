@@ -72,8 +72,7 @@ type Employee = {
 type Site = { id: string; name: string };
 type Profile = { id: string; full_name: string; role: string };
 type CustomField = { id: string; field_name: string; field_value: string | null; field_order: number };
-type ApprovalChainRow = { id: string; approver_id: string; approval_order: number; approver: { full_name: string } | null };
-type Submission = {
+type ApprovalChainRow = { id: string; approver_id: string; approval_order: number; template_id: string | null; approver: { full_name: string } | null };type Submission = {
   id: string;
   status: string;
   submitted_at: string;
@@ -126,6 +125,8 @@ export default function EmployeeProfile() {
   const [editableApprovers, setEditableApprovers] = useState<(Profile | null)[]>([null]);
   const [showApproverDropdown, setShowApproverDropdown] = useState<number | null>(null);
   const [savingChain, setSavingChain] = useState(false);
+  const [chainsByTemplate, setChainsByTemplate] = useState<Record<string, ApprovalChainRow[]>>({});
+const [activeChainTemplateId, setActiveChainTemplateId] = useState<string | null>(null);
 
   // Submissions (search + filter)
   const [submissions, setSubmissions] = useState<Submission[]>([]);
@@ -220,22 +221,37 @@ export default function EmployeeProfile() {
     if (data) setCustomFields(data);
   }
 
-  async function fetchChain() {
-    const [{ data: chainData }, { data: adminData }] = await Promise.all([
-      supabase
-        .from('approval_chains')
-        .select('id, approver_id, approval_order, approver:approver_id(full_name)')
-        .eq('employee_id', id)
-        .order('approval_order'),
-      supabase
-        .from('profiles')
-        .select('id, full_name, role')
-        .in('role', ['admin', 'hr', 'superuser'])
-        .order('full_name'),
-    ]);
-    if (chainData) setChainApprovers(chainData as any);
-    if (adminData) setAdmins(adminData);
+ async function fetchChain() {
+  const [{ data: chainData }, { data: adminData }, { data: templateData }] = await Promise.all([
+    supabase
+      .from('approval_chains')
+      .select('id, approver_id, approval_order, template_id, approver:approver_id(full_name)')
+      .eq('employee_id', id)
+      .order('approval_order'),
+    supabase
+      .from('profiles')
+      .select('id, full_name, role')
+      .in('role', ['admin', 'hr', 'superuser'])
+      .order('full_name'),
+    supabase
+      .from('form_templates')
+      .select('id, name, category')
+      .eq('is_active', true)
+      .order('name'),
+  ]);
+
+  if (adminData) setAdmins(adminData);
+  if (templateData) setAllTemplates(templateData);
+
+  if (chainData) {
+    const grouped: Record<string, ApprovalChainRow[]> = {};
+    (chainData as any[]).forEach(row => {
+      const key = row.template_id ?? '__general__';
+      (grouped[key] ??= []).push(row);
+    });
+    setChainsByTemplate(grouped);
   }
+}
 
   async function fetchSubmissions() {
     const { data } = await supabase
@@ -411,16 +427,18 @@ export default function EmployeeProfile() {
   }
   // ---------- Approval chain (scoped to this employee) ----------
 
-  function openChainModal() {
-    if (chainApprovers.length > 0) {
-      setEditableApprovers(
-        chainApprovers.map(c => admins.find(a => a.id === c.approver_id) ?? null)
-      );
-    } else {
-      setEditableApprovers([null]);
-    }
-    setChainModalVisible(true);
+function openChainModal(templateId: string) {
+  const existing = chainsByTemplate[templateId] ?? [];
+  if (existing.length > 0) {
+    setEditableApprovers(
+      existing.map(c => admins.find(a => a.id === c.approver_id) ?? null)
+    );
+  } else {
+    setEditableApprovers([null]);
   }
+  setActiveChainTemplateId(templateId);
+  setChainModalVisible(true);
+}
 
   function addApproverSlot() {
     if (editableApprovers.length >= 4) {
@@ -443,51 +461,61 @@ export default function EmployeeProfile() {
     setShowApproverDropdown(null);
   }
 
-  async function handleSaveChain() {
-    if (editableApprovers.some(a => a === null)) {
-      notify('Missing approvers', 'Please select all approvers.');
-      return;
-    }
-
-    setSavingChain(true);
-
-    await supabase.from('approval_chains').delete().eq('employee_id', id);
-
-    const { data: userData } = await supabase.auth.getUser();
-    const rows = editableApprovers.map((approver, index) => ({
-      employee_id: id,
-      approver_id: approver!.id,
-      approval_order: index + 1,
-      created_by: userData.user?.id,
-    }));
-
-    const { error } = await supabase.from('approval_chains').insert(rows);
-
-    setSavingChain(false);
-
-    if (error) {
-      notify('Error', error.message);
-      return;
-    }
-
-    setChainModalVisible(false);
-    fetchChain();
+ async function handleSaveChain() {
+  if (editableApprovers.some(a => a === null) || !activeChainTemplateId) {
+    notify('Missing approvers', 'Please select all approvers.');
+    return;
   }
 
-  function deleteChain() {
-    confirm(
-      'Remove Approval Chain',
-      `Remove the approval chain for ${employee?.full_name}?`,
-      async () => {
-        const { error } = await supabase.from('approval_chains').delete().eq('employee_id', id);
-        if (error) {
-          notify('Error', error.message);
-        } else {
-          fetchChain();
-        }
+  setSavingChain(true);
+
+  await supabase
+    .from('approval_chains')
+    .delete()
+    .eq('employee_id', id)
+    .eq('template_id', activeChainTemplateId);
+
+  const { data: userData } = await supabase.auth.getUser();
+  const rows = editableApprovers.map((approver, index) => ({
+    employee_id: id,
+    approver_id: approver!.id,
+    approval_order: index + 1,
+    template_id: activeChainTemplateId,
+    created_by: userData.user?.id,
+  }));
+
+  const { error } = await supabase.from('approval_chains').insert(rows);
+
+  setSavingChain(false);
+
+  if (error) {
+    notify('Error', error.message);
+    return;
+  }
+
+  setChainModalVisible(false);
+  setActiveChainTemplateId(null);
+  fetchChain();
+}
+
+function deleteChain(templateId: string, templateName: string) {
+  confirm(
+    'Remove Approval Chain',
+    `Remove the approval chain for "${templateName}"?`,
+    async () => {
+      const { error } = await supabase
+        .from('approval_chains')
+        .delete()
+        .eq('employee_id', id)
+        .eq('template_id', templateId);
+      if (error) {
+        notify('Error', error.message);
+      } else {
+        fetchChain();
       }
-    );
-  }
+    }
+  );
+}
 
   // ---------- Form visibility (which forms this employee can see) ----------
 
@@ -883,41 +911,52 @@ export default function EmployeeProfile() {
           ))}
         </View>
 
-        {/* Approval Chain (scoped to this employee) */}
-        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <View style={styles.cardHeaderRow}>
-            <View style={styles.cardHeaderLeft}>
-              <GitBranch color={colors.yellow} size={18} />
-              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Approval Chain</Text>
+       {/* Approval Chains (per form template) */}
+<View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+  <View style={styles.cardHeaderLeft}>
+    <GitBranch color={colors.yellow} size={18} />
+    <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Approval Chains</Text>
+  </View>
+  <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
+    Set a specific approver chain per form type for {employee.full_name}.
+  </Text>
+
+  {allTemplates.length === 0 ? (
+    <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No forms exist yet.</Text>
+  ) : (
+    allTemplates.map(t => {
+      const chain = chainsByTemplate[t.id] ?? [];
+      return (
+        <View key={t.id} style={styles.docAccessBlock}>
+          <View style={styles.switchRow}>
+            <View style={styles.switchInfo}>
+              <Text style={[styles.switchLabel, { color: theme.text }]}>{t.name}</Text>
+              <Text style={[styles.switchDesc, { color: theme.subtext }]}>
+                {chain.length === 0
+                  ? 'No approvers set'
+                  : chain
+                      .sort((a, b) => a.approval_order - b.approval_order)
+                      .map(c => c.approver?.full_name)
+                      .filter(Boolean)
+                      .join(' → ')}
+              </Text>
             </View>
-            {chainApprovers.length > 0 && (
-              <TouchableOpacity onPress={deleteChain}>
-                <Trash2 color="#ef4444" size={18} />
+            {chain.length > 0 && (
+              <TouchableOpacity onPress={() => deleteChain(t.id, t.name)} style={{ marginRight: 12 }}>
+                <Trash2 color="#ef4444" size={16} />
               </TouchableOpacity>
             )}
+            <TouchableOpacity onPress={() => openChainModal(t.id)}>
+              <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>
+                {chain.length === 0 ? 'Set Up' : 'Edit'}
+              </Text>
+            </TouchableOpacity>
           </View>
-
-          {chainApprovers.length === 0 ? (
-            <Text style={[styles.emptyInlineText, { color: theme.muted }]}>
-              No approvers set up for {employee.full_name} yet.
-            </Text>
-          ) : (
-            chainApprovers.map(a => (
-              <View key={a.id} style={styles.chainRow}>
-                <View style={[styles.orderBadge, { backgroundColor: `${colors.yellow}20` }]}>
-                  <Text style={[styles.orderText, { color: colors.yellow }]}>{a.approval_order}</Text>
-                </View>
-                <Text style={[styles.chainApproverName, { color: theme.text }]}>{a.approver?.full_name}</Text>
-              </View>
-            ))
-          )}
-
-          <TouchableOpacity style={[styles.inlineActionBtn, { borderColor: colors.yellow }]} onPress={openChainModal}>
-            <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>
-              {chainApprovers.length === 0 ? 'Set Up Approvers' : 'Edit Approvers'}
-            </Text>
-          </TouchableOpacity>
         </View>
+      );
+    })
+  )}
+</View>
 
         {/* Form Access (which forms this employee can/can't see) */}
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -1214,7 +1253,9 @@ export default function EmployeeProfile() {
             <TouchableOpacity onPress={() => setChainModalVisible(false)}>
               <X color={theme.muted} size={24} />
             </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>Approvers for {employee.full_name}</Text>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>
+              Approvers for {allTemplates.find(t => t.id === activeChainTemplateId)?.name ?? 'Form'}
+            </Text>
             <View style={{ width: 24 }} />
           </View>
 
