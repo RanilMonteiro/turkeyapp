@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  TextInput, Modal, Platform
+  TextInput, Modal, Platform, Image
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, ChevronDown, Paperclip, X, CheckCircle } from 'lucide-react-native';
@@ -36,6 +36,7 @@ type Field = {
   placeholder: string | null;
   options: string[] | null;
   field_order: number;
+  image_url: string | null;
 };
 
 type Template = {
@@ -245,7 +246,7 @@ export default function SubmitForm() {
 
     // Create approval steps if needed
     if (template?.requires_approval) {
-    const { data: chain } = await supabase
+     const { data: chain } = await supabase
   .from('approval_chains')
   .select('*')
   .eq('employee_id', userData.user?.id)
@@ -325,6 +326,18 @@ export default function SubmitForm() {
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
                 {field.label.toUpperCase()}{isFieldRequired(field) ? ' *' : ''}
               </Text>
+
+            <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
+              {field.label.toUpperCase()}{isFieldRequired(field) ? ' *' : ''}
+            </Text>
+
+            {field.image_url && (
+              <Image
+                source={{ uri: field.image_url }}
+                style={styles.fieldImage}
+                resizeMode="contain"
+              />
+            )}
 
               {/* Text */}
               {field.field_type === 'text' && (
@@ -564,6 +577,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 12, fontSize: 15,
   },
+  fieldImage: {
+  width: '100%',
+  height: 180,
+  borderRadius: 12,
+  marginBottom: 12,
+  backgroundColor: '#ffffff',
+},
   textarea: { minHeight: 100, paddingTop: 12 },
   pickerBtn: {
     flexDirection: 'row', alignItems: 'center',
