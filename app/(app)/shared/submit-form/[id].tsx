@@ -327,9 +327,7 @@ export default function SubmitForm() {
                 {field.label.toUpperCase()}{isFieldRequired(field) ? ' *' : ''}
               </Text>
 
-            <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
-              {field.label.toUpperCase()}{isFieldRequired(field) ? ' *' : ''}
-            </Text>
+            
 
             {field.image_url && (
               <Image
