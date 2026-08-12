@@ -1013,6 +1013,12 @@ function openDocModal() {
             value={submissionSearch}
             onChangeText={setSubmissionSearch}
           />
+          <TouchableOpacity
+              style={[styles.inlineActionBtn, { borderColor: colors.yellow, marginTop: 8 }]}
+              onPress={() => router.push(`/(app)/hr/employees/${id}/fill-form` as any)}
+            >
+              <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Fill a Form for {employee.full_name}</Text>
+            </TouchableOpacity>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
             {(['all', 'pending', 'in_review', 'approved', 'declined'] as const).map(f => (
