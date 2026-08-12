@@ -144,30 +144,16 @@ export default function SubmitForm() {
   // rather than a hardcoded template/field id — so this generalizes to
   // any future form with the same "Type of Leave" + attachment shape.
 
-  function selectedLeaveType(): string | null {
-    const leaveTypeField = fields.find(f => f.label.toLowerCase().includes('type of leave'));
-    if (!leaveTypeField) return null;
-    const val = formData[leaveTypeField.id];
-    return typeof val === 'string' ? val : null;
-  }
 
-  function isFieldRequired(field: Field): boolean {
-    if (field.field_type === 'attachment') {
-      const leaveType = selectedLeaveType();
-      if (leaveType && leaveType.toLowerCase().includes('sick leave')) return true;
-      return field.required;
-    }
-    return field.required;
-  }
+
+ function isFieldRequired(field: Field): boolean {
+  return field.required;
+}
 
   function attachmentHint(field: Field): string | null {
-    if (field.field_type !== 'attachment') return null;
-    const hasLeaveTypeSibling = fields.some(f => f.label.toLowerCase().includes('type of leave'));
-    if (!hasLeaveTypeSibling) return field.required ? 'Required' : 'Optional';
-    return isFieldRequired(field)
-      ? 'Required for Sick Leave.'
-      : 'Optional for this leave type — required only for Sick Leave.';
-  }
+  if (field.field_type !== 'attachment') return null;
+  return field.required ? 'Required' : 'Optional';
+}
 
   // ---------- Attachment upload ----------
 
@@ -230,19 +216,12 @@ export default function SubmitForm() {
   }
 
   async function handleSubmit() {
-    // Validate required fields (attachment uses the dynamic
-    // Sick-Leave-dependent requirement, not the raw DB flag)
-    for (const field of fields) {
-      if (isFieldRequired(field) && !formData[field.id]) {
-        notify(
-          'Missing field',
-          field.field_type === 'attachment'
-            ? `A supporting document is required for Sick Leave.`
-            : `"${field.label}" is required.`
-        );
-        return;
-      }
-    }
+  for (const field of fields) {
+  if (isFieldRequired(field) && !formData[field.id]) {
+    notify('Missing field', `"${field.label}" is required.`);
+    return;
+  }
+}
 
     setSubmitting(true);
     const { data: userData } = await supabase.auth.getUser();
