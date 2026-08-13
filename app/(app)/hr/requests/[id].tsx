@@ -280,31 +280,56 @@ export default function SubmissionDetail() {
   }
 
   function getStatusColor(status: string) {
-    switch (status) {
-      case 'approved': return '#10b981';
-      case 'declined': return '#ef4444';
-      case 'in_review': return '#3b82f6';
-      default: return '#f59e0b';
-    }
+  switch (status) {
+    case 'approved': return '#10b981';
+    case 'declined': return '#ef4444';
+    case 'in_review': return '#3b82f6';
+    case 'cancelled': return '#94a3b8';
+    default: return '#f59e0b';
   }
+}
 
-  function getStatusBg(status: string) {
-    if (isDark) {
-      switch (status) {
-        case 'approved': return '#064e3b';
-        case 'declined': return '#3b1a1a';
-        case 'in_review': return '#1e3a5f';
-        default: return '#78350f';
-      }
-    } else {
-      switch (status) {
-        case 'approved': return '#d1fae5';
-        case 'declined': return '#fee2e2';
-        case 'in_review': return '#dbeafe';
-        default: return '#fef3c7';
-      }
+function getStatusBg(status: string) {
+  if (isDark) {
+    switch (status) {
+      case 'approved': return '#064e3b';
+      case 'declined': return '#3b1a1a';
+      case 'in_review': return '#1e3a5f';
+      case 'cancelled': return '#334155';
+      default: return '#78350f';
+    }
+  } else {
+    switch (status) {
+      case 'approved': return '#d1fae5';
+      case 'declined': return '#fee2e2';
+      case 'in_review': return '#dbeafe';
+      case 'cancelled': return '#e2e8f0';
+      default: return '#fef3c7';
     }
   }
+}
+
+const isHrOrSuperuser = currentUserRole === 'hr' || currentUserRole === 'superuser';
+
+function cancelSubmission() {
+  confirm(
+    'Cancel Submission',
+    `Cancel this ${submission?.template?.name ?? 'form'} request? This can be done at any stage.`,
+    async () => {
+      const { error } = await supabase
+        .from('form_submissions')
+        .update({ status: 'cancelled' })
+        .eq('id', id);
+
+      if (error) {
+        notify('Error', error.message);
+      } else {
+        notify('Cancelled', 'The submission has been cancelled.', () => fetchData());
+      }
+    },
+    'Cancel Submission'
+  );
+}
 
   // Renders a single field's answer. Pulled out of the JSX map so the
   // "attachment" branch (which needs its own tap handler) doesn't have
@@ -598,6 +623,30 @@ export default function SubmissionDetail() {
                 hour: '2-digit', minute: '2-digit'
               })}
             </Text>
+
+            {isHrOrSuperuser && (
+  <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+    <Text style={[styles.sectionTitle, { color: theme.text }]}>HR / Superuser Controls</Text>
+    <Text style={[styles.actionHint, { color: theme.subtext }]}>
+      Edit this submission's answers or cancel it at any stage, regardless of approval status.
+    </Text>
+    <View style={styles.actionBtns}>
+      <TouchableOpacity
+        style={[styles.declineBtn, { backgroundColor: '#64748b' }]}
+        onPress={cancelSubmission}
+      >
+        <XCircle color={colors.white} size={18} />
+        <Text style={styles.declineBtnText}>Cancel Submission</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.approveBtn, { backgroundColor: colors.yellow }]}
+        onPress={() => router.push(`/(app)/hr/edit-submission/${id}` as any)}
+      >
+        <Text style={styles.approveBtnText}>Edit Submission</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+)}
 
             <TouchableOpacity
               style={[styles.downloadPdfBtn, { borderColor: colors.yellow }, downloadingPdf && { opacity: 0.6 }]}
