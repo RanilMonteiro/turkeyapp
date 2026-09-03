@@ -195,16 +195,23 @@ export default function LeaveCalendar() {
 
   // Build marked dates for the calendar — a dot per day a leave spans,
   // colored by status. Multiple leaves on one day get multiple dots.
-  function expandDateRange(from: string, to: string): string[] {
-    const dates: string[] = [];
-    let current = new Date(from + 'T00:00:00');
-    const end = new Date(to + 'T00:00:00');
-    while (current <= end) {
-      dates.push(current.toISOString().split('T')[0]);
-      current.setDate(current.getDate() + 1);
-    }
-    return dates;
+ function toDateString(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function expandDateRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  let current = new Date(from + 'T00:00:00');
+  const end = new Date(to + 'T00:00:00');
+  while (current <= end) {
+    dates.push(toDateString(current));
+    current.setDate(current.getDate() + 1);
   }
+  return dates;
+}
 
   const markedDates: Record<string, any> = {};
   filteredEntries.forEach(entry => {
