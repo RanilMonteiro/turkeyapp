@@ -57,6 +57,7 @@ const navByRole: Record<string, { label: string; icon: any; route: string; permi
     { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: null },
     { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites', permission: null },
     { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
+    { label: 'Leave Access', icon: Users, route: '/(app)/hr/leave-access', permission: null },
   ],
   admin: [
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/admin', permission: null },
