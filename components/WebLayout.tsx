@@ -48,6 +48,7 @@ const navByRole: Record<string, { label: string; icon: any; route: string; permi
     { label: 'Requests', icon: FileText, route: '/(app)/hr/requests', permission: null },
     { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: null },
     { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites', permission: null },
+    { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
   ],
   hr: [
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/hr', permission: null },
@@ -55,6 +56,7 @@ const navByRole: Record<string, { label: string; icon: any; route: string; permi
     { label: 'Requests', icon: FileText, route: '/(app)/hr/requests', permission: null },
     { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: null },
     { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites', permission: null },
+    { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
   ],
   admin: [
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/admin', permission: null },
@@ -64,6 +66,7 @@ const navByRole: Record<string, { label: string; icon: any; route: string; permi
      { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: 'can_approve' },
     { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests', permission: null },
     { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents', permission: null },
+    { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
   ],
   technician: [
     { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/technician', permission: null },
@@ -71,6 +74,7 @@ const navByRole: Record<string, { label: string; icon: any; route: string; permi
     { label: 'Forms', icon: ClipboardList, route: '/(app)/shared/forms', permission: null },
     { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests', permission: null },
     { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents', permission: null },
+    { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
   ],
 };
 
