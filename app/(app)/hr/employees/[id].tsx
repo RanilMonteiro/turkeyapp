@@ -91,6 +91,9 @@ type Document = {
 type FormTemplateOption = { id: string; name: string; category: string | null };
 type DocGrant = { admin_id: string; categories: string[] | null; admin: { full_name: string } | null };
 type EditableGrant = { granted: boolean; categories: string[] | null };
+// Leave calendar access: this employee (when they're an admin) can be
+// granted visibility into whole sites and/or specific individuals.
+type LeavePerson = { id: string; full_name: string; site_id: string | null };
 
 export default function EmployeeProfile() {
   const router = useRouter();
@@ -168,6 +171,18 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
   const [editableGrants, setEditableGrants] = useState<Record<string, EditableGrant>>({});
   const [savingDocAccess, setSavingDocAccess] = useState(false);
 
+  // Leave calendar access (only meaningful when this employee is an admin) —
+  // which sites and/or individual people they're allowed to see on the
+  // leave calendar. Loaded state mirrors doc access grants above; the
+  // editable copies are only populated when the modal is opened.
+  const [leavePeople, setLeavePeople] = useState<LeavePerson[]>([]);
+  const [leaveGrantedSiteIds, setLeaveGrantedSiteIds] = useState<Set<string>>(new Set());
+  const [leaveOverrides, setLeaveOverrides] = useState<Record<string, boolean>>({});
+  const [leaveAccessModalVisible, setLeaveAccessModalVisible] = useState(false);
+  const [editableLeaveSiteIds, setEditableLeaveSiteIds] = useState<Set<string>>(new Set());
+  const [editableLeaveOverrides, setEditableLeaveOverrides] = useState<Record<string, boolean>>({});
+  const [savingLeaveAccess, setSavingLeaveAccess] = useState(false);
+
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
     card: isDark ? colors.gray[900] : colors.white,
@@ -194,6 +209,7 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
       fetchDocuments(),
       fetchFormVisibility(),
       fetchDocAccess(),
+      fetchLeaveAccess(),
     ]);
     setLoading(false);
   }
@@ -306,6 +322,26 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
     ]);
     if (admins_) setAdminUsers(admins_);
     if (grants) setDocGrants(grants as any);
+  }
+
+  // This employee's leave-calendar visibility, when they are an admin:
+  // which sites they see everyone from, plus per-person overrides on
+  // top of that. Fetched regardless of role since it's cheap and the
+  // section itself is only rendered for admins.
+  async function fetchLeaveAccess() {
+    const [{ data: siteGrants }, { data: personOverrides }, { data: peopleData }] = await Promise.all([
+      supabase.from('leave_calendar_site_grants').select('site_id').eq('admin_id', id),
+      supabase.from('leave_calendar_person_overrides').select('employee_id, included').eq('admin_id', id),
+      supabase.from('profiles').select('id, full_name, site_id').neq('role', 'superuser').order('full_name'),
+    ]);
+
+    setLeaveGrantedSiteIds(new Set((siteGrants ?? []).map((s: { site_id: string }) => s.site_id)));
+    const overrideMap: Record<string, boolean> = {};
+    (personOverrides ?? []).forEach((o: { employee_id: string; included: boolean }) => {
+      overrideMap[o.employee_id] = o.included;
+    });
+    setLeaveOverrides(overrideMap);
+    if (peopleData) setLeavePeople(peopleData);
   }
 
   function matchesDateFilter(doc: Document): boolean {
@@ -658,6 +694,86 @@ function deleteChain(templateId: string, templateName: string) {
     setSavingDocAccess(false);
     setDocAccessModalVisible(false);
     fetchDocAccess();
+  }
+
+  // ---------- Leave calendar access (this employee's admin visibility) ----------
+
+  function openLeaveAccessModal() {
+    setEditableLeaveSiteIds(new Set(leaveGrantedSiteIds));
+    setEditableLeaveOverrides({ ...leaveOverrides });
+    setLeaveAccessModalVisible(true);
+  }
+
+  function toggleLeaveSite(siteId: string) {
+    setEditableLeaveSiteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(siteId)) next.delete(siteId); else next.add(siteId);
+      return next;
+    });
+  }
+
+  // Cycles a person through: default (no override) -> always show ->
+  // always hide -> back to default.
+  function cycleLeavePersonOverride(personId: string) {
+    setEditableLeaveOverrides(prev => {
+      const current = prev[personId];
+      const next = { ...prev };
+      if (current === undefined) {
+        next[personId] = true; // default -> always show
+      } else if (current === true) {
+        next[personId] = false; // always show -> always hide
+      } else {
+        delete next[personId]; // always hide -> back to default
+      }
+      return next;
+    });
+  }
+
+  function isLeaveSiteDefaultVisible(person: LeavePerson): boolean {
+    return !!person.site_id && editableLeaveSiteIds.has(person.site_id);
+  }
+
+  function leaveEffectiveLabel(person: LeavePerson): { label: string; color: string } {
+    const override = editableLeaveOverrides[person.id];
+    if (override === true) return { label: 'Always shown', color: '#10b981' };
+    if (override === false) return { label: 'Always hidden', color: '#ef4444' };
+    return isLeaveSiteDefaultVisible(person)
+      ? { label: 'Shown (via site)', color: colors.yellow }
+      : { label: 'Not visible', color: colors.gray[400] };
+  }
+
+  async function handleSaveLeaveAccess() {
+    setSavingLeaveAccess(true);
+
+    await supabase.from('leave_calendar_site_grants').delete().eq('admin_id', id);
+    await supabase.from('leave_calendar_person_overrides').delete().eq('admin_id', id);
+
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (editableLeaveSiteIds.size > 0) {
+      const siteRows = Array.from(editableLeaveSiteIds).map(siteId => ({
+        admin_id: id,
+        site_id: siteId,
+        granted_by: userData.user?.id,
+      }));
+      await supabase.from('leave_calendar_site_grants').insert(siteRows);
+    }
+
+    const overrideEntries = Object.entries(editableLeaveOverrides);
+    if (overrideEntries.length > 0) {
+      const overrideRows = overrideEntries.map(([employeeId, included]) => ({
+        admin_id: id,
+        employee_id: employeeId,
+        included,
+        granted_by: userData.user?.id,
+      }));
+      await supabase.from('leave_calendar_person_overrides').insert(overrideRows);
+    }
+
+    setSavingLeaveAccess(false);
+    setLeaveAccessModalVisible(false);
+    notify('Saved', `Leave calendar access updated for ${employee?.full_name}.`);
+    fetchLeaveAccess();
   }
 
   // ---------- Submissions search/filter ----------
@@ -1203,6 +1319,24 @@ function openDocModal() {
             <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Manage Document Access</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Leave Calendar Access — only relevant when this employee is an admin */}
+        {employee.role === 'admin' && (
+          <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.cardHeaderLeft}>
+              <Calendar color={colors.yellow} size={18} />
+              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Leave Calendar Access</Text>
+            </View>
+            <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
+              {leaveGrantedSiteIds.size === 0 && Object.keys(leaveOverrides).length === 0
+                ? `${employee.full_name} can only see their own leave on the calendar.`
+                : `Sees leave for ${leaveGrantedSiteIds.size} site${leaveGrantedSiteIds.size === 1 ? '' : 's'}, with ${Object.keys(leaveOverrides).length} individual override${Object.keys(leaveOverrides).length === 1 ? '' : 's'}.`}
+            </Text>
+            <TouchableOpacity style={[styles.inlineActionBtn, { borderColor: colors.yellow }]} onPress={openLeaveAccessModal}>
+              <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Manage Leave Calendar Access</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
 
       {/* Edit Profile Modal */}
@@ -1660,6 +1794,82 @@ function openDocModal() {
           </TouchableOpacity>
         </ScrollView>
       </Modal>
+
+      {/* Leave Calendar Access Modal — sites this admin sees by default,
+          plus per-person overrides on top of that. */}
+      <Modal visible={leaveAccessModalVisible} animationType="slide" transparent={false} onRequestClose={() => setLeaveAccessModalVisible(false)}>
+        <ScrollView
+          style={[styles.modalContainer, { backgroundColor: theme.background }]}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+            <TouchableOpacity onPress={() => setLeaveAccessModalVisible(false)}>
+              <X color={theme.muted} size={24} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Leave Calendar Access</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <Text style={[styles.fieldHint, { color: theme.muted, marginHorizontal: 16, marginTop: 16 }]}>
+            Choose which sites and/or specific people {employee.full_name} can see on the leave
+            calendar. They always see their own leave regardless of these settings.
+          </Text>
+
+          {/* Sites */}
+          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.cardHeaderLeft}>
+              <MapPin color={colors.yellow} size={18} />
+              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Sites</Text>
+            </View>
+            <Text style={[styles.fieldHint, { color: theme.subtext, marginBottom: 12 }]}>
+              Everyone at a checked site is visible by default — override specific people below.
+            </Text>
+            {sites.map(site => {
+              const checked = editableLeaveSiteIds.has(site.id);
+              return (
+                <View key={site.id} style={styles.switchRow}>
+                  <Text style={[styles.switchLabel, { color: theme.text }]}>{site.name}</Text>
+                  <TouchableOpacity
+                    style={[styles.toggle, { backgroundColor: checked ? colors.yellow : theme.input, borderColor: theme.border }]}
+                    onPress={() => toggleLeaveSite(site.id)}
+                  >
+                    <View style={[styles.toggleThumb, { backgroundColor: colors.white, transform: [{ translateX: checked ? 20 : 2 }] }]} />
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Individual overrides */}
+          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.cardHeaderLeft}>
+              <User color={colors.yellow} size={18} />
+              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Individual Overrides</Text>
+            </View>
+            <Text style={[styles.fieldHint, { color: theme.subtext, marginBottom: 12 }]}>
+              Tap a person to cycle: Default → Always shown → Always hidden → Default.
+            </Text>
+            {leavePeople.filter(p => p.id !== id).map(person => {
+              const effective = leaveEffectiveLabel(person);
+              return (
+                <TouchableOpacity
+                  key={person.id}
+                  style={[styles.leavePersonRow, { borderBottomColor: theme.border }]}
+                  onPress={() => cycleLeavePersonOverride(person.id)}
+                >
+                  <Text style={[styles.switchLabel, { color: theme.text }]}>{person.full_name}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: effective.color }}>{effective.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <TouchableOpacity style={[styles.saveBtn, savingLeaveAccess && { opacity: 0.6 }]} onPress={handleSaveLeaveAccess} disabled={savingLeaveAccess}>
+            {savingLeaveAccess ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Leave Access</Text>}
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
     </View>
   );
 }
@@ -1807,6 +2017,11 @@ const styles = StyleSheet.create({
   docAccessBlock: { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(148,163,184,0.2)' },
   categoryChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 },
   categoryChip: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
+  // Leave calendar access — individual override row
+  leavePersonRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 12, borderBottomWidth: 1,
+  },
   // Approver picker modal
   pickerOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
