@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1069582600620",
+    "project_id": "turnkey-35820",
+    "storage_bucket": "turnkey-35820.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1069582600620:android:4d8621b991b747b5f75209",
+        "android_client_info": {
+          "package_name": "com.turnkey.turnkeyapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuDvkmCuFla8niFN4Ss5U3ma0T1rwPKao"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
