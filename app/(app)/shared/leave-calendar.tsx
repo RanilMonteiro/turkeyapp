@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, useColorScheme, ActivityIndicator, Modal
+  StyleSheet, useColorScheme, ActivityIndicator, Modal, Platform
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, ChevronDown, MapPin, User, Tag } from 'lucide-react-native';
+import { ArrowLeft, ChevronDown, MapPin, User, Tag, ChevronLeft, ChevronRight, X, FileDown } from 'lucide-react-native';
 import { Calendar } from 'react-native-calendars';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import { notify } from '../../../lib/notify';
 
 const colors = {
   yellow: '#fbbf24',
@@ -42,6 +45,19 @@ type LeaveEntry = {
 type Site = { id: string; name: string };
 type PersonOption = { id: string; full_name: string };
 
+// One row per leave record, clipped to whichever month is being
+// reported on. If someone has both paid and unpaid leave in the same
+// month, that's two separate rows here (not merged) — matching how
+// the calendar itself treats each submission as its own entry.
+type MonthlyReportRow = {
+  employeeName: string;
+  leaveType: string;
+  fromDate: string;
+  toDate: string;
+  days: number;
+  status: string;
+};
+
 export default function LeaveCalendar() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
@@ -63,6 +79,15 @@ export default function LeaveCalendar() {
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  // Monthly report modal — separate from the day-click detail view.
+  // Lets you page through months and export a flat list to PDF.
+  const [monthReportVisible, setMonthReportVisible] = useState(false);
+  const [reportMonth, setReportMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() }; // month is 0-indexed
+  });
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -195,7 +220,7 @@ export default function LeaveCalendar() {
 
   // Build marked dates for the calendar — a dot per day a leave spans,
   // colored by status. Multiple leaves on one day get multiple dots.
- function toDateString(d: Date): string {
+  function toDateString(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -237,6 +262,121 @@ function expandDateRange(from: string, to: string): string[] {
   const showSiteFilter = role === 'hr' || role === 'superuser' || role === 'admin';
   const showPersonFilter = role === 'hr' || role === 'superuser' || role === 'admin';
   const showTypeFilter = role !== null; // everyone can filter by type, including technicians (their own leaves)
+
+  // Monthly report (with PDF download) is restricted to HR and superuser.
+  // Admins and technicians never see the button or the modal, regardless
+  // of what filters are otherwise open to them.
+  const canViewMonthlyReport = role === 'hr' || role === 'superuser';
+
+  // ---------- Monthly report ----------
+
+  function getMonthBounds(year: number, month: number): { start: Date; end: Date } {
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0); // last day of the month
+    return { start, end };
+  }
+
+  function daysBetweenInclusive(a: Date, b: Date): number {
+    const ms = b.getTime() - a.getTime();
+    return Math.round(ms / (1000 * 60 * 60 * 24)) + 1;
+  }
+
+  // Flat, one-row-per-leave-record list clipped to the chosen month.
+  // Sorted by name then start date, so paid/unpaid leave for the same
+  // person sit next to each other as separate rows rather than merging.
+  function buildMonthlyReport(year: number, month: number): MonthlyReportRow[] {
+    const { start, end } = getMonthBounds(year, month);
+    const rows: MonthlyReportRow[] = [];
+
+    filteredEntries.forEach(entry => {
+      const entryFrom = new Date(entry.fromDate + 'T00:00:00');
+      const entryTo = new Date(entry.toDate + 'T00:00:00');
+
+      if (entryTo < start || entryFrom > end) return; // no overlap with this month
+
+      const clippedFrom = entryFrom < start ? start : entryFrom;
+      const clippedTo = entryTo > end ? end : entryTo;
+
+      rows.push({
+        employeeName: entry.employeeName,
+        leaveType: entry.leaveType ?? 'Leave',
+        fromDate: toDateString(clippedFrom),
+        toDate: toDateString(clippedTo),
+        days: daysBetweenInclusive(clippedFrom, clippedTo),
+        status: entry.status,
+      });
+    });
+
+    rows.sort((a, b) => {
+      const nameCompare = a.employeeName.localeCompare(b.employeeName);
+      return nameCompare !== 0 ? nameCompare : a.fromDate.localeCompare(b.fromDate);
+    });
+
+    return rows;
+  }
+
+  function goToPreviousMonth() {
+    setReportMonth(prev => (prev.month === 0 ? { year: prev.year - 1, month: 11 } : { year: prev.year, month: prev.month - 1 }));
+  }
+
+  function goToNextMonth() {
+    setReportMonth(prev => (prev.month === 11 ? { year: prev.year + 1, month: 0 } : { year: prev.year, month: prev.month + 1 }));
+  }
+
+  function escapeHtml(str: string): string {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  async function handleExportPdf(rows: MonthlyReportRow[], year: number, month: number) {
+    setGeneratingPdf(true);
+    try {
+      const monthLabel = new Date(year, month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
+
+      const tableRows = rows.map(r => `
+        <tr>
+          <td>${escapeHtml(r.employeeName)}</td>
+          <td>${escapeHtml(r.leaveType)}</td>
+          <td>${r.fromDate} - ${r.toDate}</td>
+          <td style="text-align:center;">${r.days}</td>
+          <td style="text-transform:capitalize;">${escapeHtml(r.status.replace('_', ' '))}</td>
+        </tr>`).join('');
+
+      const html = `
+        <html><head><meta charset="utf-8" />
+          <style>
+            body { font-family: -apple-system, Helvetica, Arial, sans-serif; padding: 24px; color: #1e293b; }
+            h1 { font-size: 20px; margin-bottom: 4px; }
+            p.sub { color: #64748b; margin-top: 0; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border-bottom: 1px solid #e2e8f0; padding: 8px 10px; font-size: 13px; text-align: left; }
+            th { background: #f8fafc; font-weight: 700; }
+          </style>
+        </head><body>
+          <h1>Leave Report — ${monthLabel}</h1>
+          <p class="sub">${rows.length} leave record${rows.length === 1 ? '' : 's'}</p>
+          <table>
+            <thead><tr><th>Employee</th><th>Leave Type</th><th>Dates</th><th>Days</th><th>Status</th></tr></thead>
+            <tbody>${tableRows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;">No leave recorded this month.</td></tr>'}</tbody>
+          </table>
+        </body></html>`;
+
+      const { uri } = await Print.printToFileAsync({ html });
+
+      if (Platform.OS === 'web') {
+        const { Linking } = require('react-native');
+        Linking.openURL(uri);
+      } else if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: `Leave Report - ${monthLabel}` });
+      } else {
+        notify('PDF ready', `Saved to ${uri}`);
+      }
+    } catch (e: any) {
+      notify('Error', e.message ?? 'Could not generate PDF.');
+    }
+    setGeneratingPdf(false);
+  }
+
+  const monthlyReportRows = buildMonthlyReport(reportMonth.year, reportMonth.month);
 
   if (loading) {
     return (
@@ -301,6 +441,17 @@ function expandDateRange(from: string, to: string): string[] {
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Monthly report entry point — HR and superuser only */}
+        {canViewMonthlyReport && (
+          <TouchableOpacity
+            style={[styles.reportOpenBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+            onPress={() => setMonthReportVisible(true)}
+          >
+            <FileDown color={colors.yellow} size={16} />
+            <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>Monthly Report</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Legend */}
         <View style={styles.legendRow}>
@@ -432,6 +583,66 @@ function expandDateRange(from: string, to: string): string[] {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Monthly Report modal — month picker + flat list + PDF export.
+          Gated a second time here (not just the button) so it can't be
+          shown even if monthReportVisible somehow got set to true. */}
+      <Modal visible={monthReportVisible && canViewMonthlyReport} animationType="slide" transparent={false} onRequestClose={() => setMonthReportVisible(false)}>
+        <View style={[styles.modalContainer, { backgroundColor: theme.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+            <TouchableOpacity onPress={() => setMonthReportVisible(false)}>
+              <X color={theme.muted} size={24} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Monthly Leave Report</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <View style={styles.monthNavRow}>
+            <TouchableOpacity onPress={goToPreviousMonth} style={styles.monthNavBtn}>
+              <ChevronLeft color={colors.yellow} size={22} />
+            </TouchableOpacity>
+            <Text style={[styles.monthNavLabel, { color: theme.text }]}>
+              {new Date(reportMonth.year, reportMonth.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
+            </Text>
+            <TouchableOpacity onPress={goToNextMonth} style={styles.monthNavBtn}>
+              <ChevronRight color={colors.yellow} size={22} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+            {monthlyReportRows.length === 0 ? (
+              <Text style={[styles.emptyText, { color: theme.muted, textAlign: 'center', marginTop: 24 }]}>
+                No leave recorded for this month.
+              </Text>
+            ) : (
+              monthlyReportRows.map((row, i) => (
+                <View key={i} style={[styles.reportRow, { borderColor: theme.border }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.reportName, { color: theme.text }]}>{row.employeeName}</Text>
+                    <Text style={[styles.reportMeta, { color: theme.subtext }]}>
+                      {row.leaveType} · {row.fromDate} → {row.toDate}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={[styles.reportDays, { color: colors.yellow }]}>{row.days}d</Text>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: STATUS_COLORS[row.status] ?? colors.gray[400], textTransform: 'capitalize' }}>
+                      {row.status.replace('_', ' ')}
+                    </Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </ScrollView>
+
+          <TouchableOpacity
+            style={[styles.saveBtn, (generatingPdf || monthlyReportRows.length === 0) && { opacity: 0.6 }, styles.stickyBottomBtn]}
+            onPress={() => handleExportPdf(monthlyReportRows, reportMonth.year, reportMonth.month)}
+            disabled={generatingPdf || monthlyReportRows.length === 0}
+          >
+            {generatingPdf ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Export as PDF</Text>}
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -452,6 +663,11 @@ const styles = StyleSheet.create({
   },
   filterChipText: { fontSize: 13, fontWeight: '600' },
   clearFiltersBtn: { justifyContent: 'center', paddingHorizontal: 8 },
+  reportOpenBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
+    marginHorizontal: 16, marginBottom: 12,
+  },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingHorizontal: 16, marginBottom: 12 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
@@ -471,4 +687,27 @@ const styles = StyleSheet.create({
   pickerTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
   dropdownItem: { padding: 14, borderBottomWidth: 1 },
   dropdownItemText: { fontSize: 15 },
+  // Monthly report modal
+  modalContainer: { flex: 1 },
+  modalHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16, borderBottomWidth: 1,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700' },
+  monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 14 },
+  monthNavBtn: { padding: 8 },
+  monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },
+  reportRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 12, borderBottomWidth: 1,
+  },
+  reportName: { fontSize: 14, fontWeight: '600' },
+  reportMeta: { fontSize: 12, marginTop: 2 },
+  reportDays: { fontSize: 14, fontWeight: '700' },
+  saveBtn: {
+    backgroundColor: colors.yellow, borderRadius: 14, height: 56,
+    alignItems: 'center', justifyContent: 'center', margin: 16,
+  },
+  saveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
+  stickyBottomBtn: { position: 'absolute', bottom: 0, left: 0, right: 0 },
 });
