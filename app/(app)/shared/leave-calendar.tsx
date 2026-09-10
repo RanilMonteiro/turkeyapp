@@ -360,12 +360,24 @@ function expandDateRange(from: string, to: string): string[] {
           </table>
         </body></html>`;
 
-      const { uri } = await Print.printToFileAsync({ html });
-
       if (Platform.OS === 'web') {
-        const { Linking } = require('react-native');
-        Linking.openURL(uri);
-      } else if (await Sharing.isAvailableAsync()) {
+        // On web, printToFileAsync doesn't reliably return a uri — use
+        // printAsync instead, which opens the browser's native print
+        // dialog directly (the user can "Save as PDF" from there).
+        await Print.printAsync({ html });
+        setGeneratingPdf(false);
+        return;
+      }
+
+      const result = await Print.printToFileAsync({ html });
+      if (!result?.uri) {
+        notify('Error', 'Could not generate the PDF file.');
+        setGeneratingPdf(false);
+        return;
+      }
+      const { uri } = result;
+
+      if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: `Leave Report - ${monthLabel}` });
       } else {
         notify('PDF ready', `Saved to ${uri}`);
