@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, FileText, LogOut, ClipboardList, FolderOpen } from 'lucide-react-native';
+import { User, FileText, LogOut, ClipboardList, FolderOpen, Calendar } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 
 const colors = {
@@ -90,6 +90,17 @@ export default function TechnicianDashboard() {
   route: '/(app)/shared/my-requests',
   permission: null,
 },
+    {
+      // Technicians always see their own operational calendar,
+      // read-only — the screen itself hides edit controls for this
+      // role, so no permission gating is needed here.
+      id: 'operational-calendar',
+      title: 'My Calendar',
+      icon: Calendar,
+      description: 'View your job schedule',
+      route: '/(app)/calender',
+      permission: null,
+    },
     
   ];
 

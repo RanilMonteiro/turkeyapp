@@ -90,6 +90,19 @@ export default function AdminDashboard() {
       permission: 'view_calendar',
     },
     {
+      // Separate from the callout schedule above — this is the
+      // per-technician job/mine schedule (Operational Calendar).
+      // Always visible; whether the admin can EDIT vs just VIEW is
+      // decided inside the screen itself via user_permissions
+      // ('can_edit_operational_calendar'), not gated here.
+      id: 'operational-calendar',
+      title: 'Operational Calendar',
+      icon: Calendar,
+      description: 'View technician job schedules',
+      route: '/(app)/calender',
+      permission: null,
+    },
+    {
   id: 'forms',
   title: 'Forms',
   icon: ClipboardList,

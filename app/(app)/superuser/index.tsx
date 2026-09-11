@@ -70,6 +70,15 @@ export default function SuperuserDashboard() {
     description: 'Manage company sites',
     route: '/(app)/hr/sites',
   },
+  {
+    // Superuser always has full edit rights on this calendar (checked
+    // inside the screen itself), so no permission gating needed here.
+    id: 'operational-calendar',
+    title: 'Operational Calendar',
+    icon: Calendar,
+    description: 'Manage technician job schedules',
+    route: '/(app)/calender',
+  },
 ];
 
   async function handleLogout() {
