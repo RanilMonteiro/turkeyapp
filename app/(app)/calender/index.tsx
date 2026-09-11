@@ -1,11 +1,10 @@
 import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput
+  StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput, useWindowDimensions
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, User, ChevronDown, X, Plus, Trash2, MapPin, Phone, MessageSquare, Hash } from 'lucide-react-native';
-import { Calendar } from 'react-native-calendars';
+import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
@@ -24,9 +23,11 @@ const colors = {
 const TESTING_TYPE_COLOR = { bg: '#d1fae5', text: '#059669' };
 const TAM_STATUS_COLOR = { bg: '#fef3c7', text: '#b45309' };
 const INVOICE_COLOR = '#dc2626';
+const DAY_HEADER_BG = '#1e293b';
 
 const TESTING_TYPE_OPTIONS = ['Brake Testing', 'Lux Testing', 'Brake and Lux Testing', 'Inspections'];
 const TAM_STATUS_OPTIONS = ['On TAM', 'Not On TAM', 'Brake and Inspection'];
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 type Technician = { id: string; full_name: string };
 
@@ -43,9 +44,34 @@ type CalendarEntry = {
   invoice_number: string | null;
 };
 
+function toDateString(year: number, month: number, day: number): string {
+  const mm = String(month + 1).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  return `${year}-${mm}-${dd}`;
+}
+
+// Builds a Sun-Sat grid of week rows for the given month, padding the
+// leading/trailing gaps with null so every row has exactly 7 slots —
+// mirrors how the spreadsheet lays a month out across fixed columns.
+function buildMonthGrid(year: number, month: number): (string | null)[][] {
+  const firstDay = new Date(year, month, 1);
+  const startWeekday = firstDay.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const cells: (string | null)[] = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(toDateString(year, month, d));
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const weeks: (string | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
 export default function OperationalCalendar() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
+  const { width } = useWindowDimensions();
 
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -57,11 +83,20 @@ export default function OperationalCalendar() {
   const [showTechDropdown, setShowTechDropdown] = useState(false);
 
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [viewDate, setViewDate] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+
+  // Day detail modal (tap a filled day — shows everything including
+  // comments, plus Edit/Delete if permitted)
+  const [detailEntry, setDetailEntry] = useState<CalendarEntry | null>(null);
+  const [detailDate, setDetailDate] = useState<string | null>(null);
 
   // Entry edit modal
   const [entryModalVisible, setEntryModalVisible] = useState(false);
   const [editingEntry, setEditingEntry] = useState<CalendarEntry | null>(null);
+  const [editingDate, setEditingDate] = useState<string | null>(null);
   const [mineName, setMineName] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   const [contactNumber, setContactNumber] = useState('');
@@ -83,6 +118,10 @@ export default function OperationalCalendar() {
     muted: isDark ? colors.gray[500] : colors.gray[400],
   };
 
+  // Cell width: full available width split 7 ways, so the grid always
+  // fills the screen edge-to-edge like the spreadsheet's fixed columns.
+  const cellWidth = (width - 4) / 7;
+
   useFocusEffect(
     useCallback(() => {
       fetchAll();
@@ -102,8 +141,6 @@ export default function OperationalCalendar() {
     const myRole = profile?.role ?? null;
     setRole(myRole);
 
-    // Who can edit: superuser/hr always; admin only if explicitly
-    // granted via operational_calendar_permissions; technicians never.
     let editable = false;
     if (myRole === 'superuser' || myRole === 'hr') {
       editable = true;
@@ -118,8 +155,6 @@ export default function OperationalCalendar() {
     }
     setCanEdit(editable);
 
-    // Technician list: technicians only ever see themselves. Everyone
-    // else (with view or edit rights) can browse all technicians.
     if (myRole === 'technician') {
       setSelectedTechnicianId(uid);
       const { data: me } = await supabase.from('profiles').select('id, full_name').eq('id', uid).single();
@@ -152,32 +187,34 @@ export default function OperationalCalendar() {
     if (data) setEntries(data);
   }
 
-  const markedDates: Record<string, any> = {};
-  entries.forEach(entry => {
-    markedDates[entry.entry_date] = {
-      marked: true,
-      dotColor: colors.yellow,
-    };
-  });
-  if (selectedDate) {
-    markedDates[selectedDate] = {
-      ...(markedDates[selectedDate] ?? {}),
-      selected: true,
-      selectedColor: `${colors.yellow}40`,
-    };
-  }
-
-  const entryForSelectedDate = selectedDate
-    ? entries.find(e => e.entry_date === selectedDate) ?? null
-    : null;
+  const entriesByDate: Record<string, CalendarEntry> = {};
+  entries.forEach(e => { entriesByDate[e.entry_date] = e; });
 
   const selectedTechnician = technicians.find(t => t.id === selectedTechnicianId);
+  const weeks = buildMonthGrid(viewDate.year, viewDate.month);
+
+  function goToPreviousMonth() {
+    setViewDate(prev => (prev.month === 0 ? { year: prev.year - 1, month: 11 } : { year: prev.year, month: prev.month - 1 }));
+  }
+  function goToNextMonth() {
+    setViewDate(prev => (prev.month === 11 ? { year: prev.year + 1, month: 0 } : { year: prev.year, month: prev.month + 1 }));
+  }
+
+  function handleDayPress(dateStr: string) {
+    const entry = entriesByDate[dateStr];
+    if (entry) {
+      setDetailEntry(entry);
+      setDetailDate(dateStr);
+    } else if (canEdit) {
+      openNewEntryModal(dateStr);
+    }
+  }
 
   // ---------- Entry modal ----------
 
-  function openNewEntryModal() {
-    if (!selectedDate) return;
+  function openNewEntryModal(dateStr: string) {
     setEditingEntry(null);
+    setEditingDate(dateStr);
     setMineName('');
     setContactPerson('');
     setContactNumber('');
@@ -190,6 +227,7 @@ export default function OperationalCalendar() {
 
   function openEditEntryModal(entry: CalendarEntry) {
     setEditingEntry(entry);
+    setEditingDate(entry.entry_date);
     setMineName(entry.mine_name);
     setContactPerson(entry.contact_person ?? '');
     setContactNumber(entry.contact_number ?? '');
@@ -197,6 +235,7 @@ export default function OperationalCalendar() {
     setTestingType(entry.testing_type);
     setTamStatus(entry.tam_status);
     setInvoiceNumber(entry.invoice_number ?? '');
+    setDetailEntry(null);
     setEntryModalVisible(true);
   }
 
@@ -205,14 +244,14 @@ export default function OperationalCalendar() {
       notify('Missing mine name', 'Please enter a mine name.');
       return;
     }
-    if (!selectedDate || !selectedTechnicianId) return;
+    if (!editingDate || !selectedTechnicianId) return;
 
     setSaving(true);
     const { data: userData } = await supabase.auth.getUser();
 
     const payload = {
       technician_id: selectedTechnicianId,
-      entry_date: selectedDate,
+      entry_date: editingDate,
       mine_name: mineName.trim(),
       contact_person: contactPerson.trim() || null,
       contact_number: contactNumber.trim() || null,
@@ -247,6 +286,7 @@ export default function OperationalCalendar() {
         if (error) {
           notify('Error', error.message);
         } else if (selectedTechnicianId) {
+          setDetailEntry(null);
           fetchEntries(selectedTechnicianId);
         }
       }
@@ -263,7 +303,7 @@ export default function OperationalCalendar() {
 
   return (
     <>
-      <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={styles.content}>
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <ArrowLeft color={colors.yellow} size={24} />
@@ -272,7 +312,6 @@ export default function OperationalCalendar() {
           <View style={{ width: 24 }} />
         </View>
 
-        {/* Technician picker — hidden for technicians, who only see their own */}
         {role !== 'technician' && (
           <TouchableOpacity
             style={[styles.techPicker, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -287,106 +326,93 @@ export default function OperationalCalendar() {
         )}
 
         {!canEdit && (
-          <Text style={[styles.readOnlyNote, { color: theme.muted }]}>
-            View only — you don't have permission to edit this calendar.
-          </Text>
+          <Text style={[styles.readOnlyNote, { color: theme.muted }]}>View only</Text>
         )}
 
-        {/* Calendar */}
-        <View style={[styles.calendarCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Calendar
-            markedDates={markedDates}
-            onDayPress={(day) => setSelectedDate(day.dateString)}
-            theme={{
-              calendarBackground: theme.card,
-              dayTextColor: theme.text,
-              monthTextColor: theme.text,
-              textDisabledColor: theme.muted,
-              todayTextColor: colors.yellow,
-              arrowColor: colors.yellow,
-            }}
-          />
+        {/* Month nav */}
+        <View style={styles.monthNavRow}>
+          <TouchableOpacity onPress={goToPreviousMonth} style={styles.monthNavBtn}>
+            <ChevronLeft color={colors.yellow} size={22} />
+          </TouchableOpacity>
+          <Text style={[styles.monthNavLabel, { color: theme.text }]}>
+            {new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
+          </Text>
+          <TouchableOpacity onPress={goToNextMonth} style={styles.monthNavBtn}>
+            <ChevronRight color={colors.yellow} size={22} />
+          </TouchableOpacity>
         </View>
 
-        {/* Selected day details */}
-        {selectedDate && (
-          <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <View style={styles.dayCardHeader}>
-              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>
-                {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-              </Text>
-              {canEdit && !entryForSelectedDate && (
-                <TouchableOpacity style={styles.smallAddBtn} onPress={openNewEntryModal}>
-                  <Plus color={colors.black} size={16} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {!entryForSelectedDate ? (
-              <Text style={[styles.emptyText, { color: theme.muted }]}>No entry for this day.</Text>
-            ) : (
-              <View>
-                <Text style={[styles.mineName, { color: theme.text }]}>{entryForSelectedDate.mine_name}</Text>
-
-                {(entryForSelectedDate.contact_person || entryForSelectedDate.contact_number) && (
-                  <View style={styles.metaRow}>
-                    {entryForSelectedDate.contact_person && (
-                      <View style={styles.metaItem}>
-                        <User color={theme.subtext} size={13} />
-                        <Text style={[styles.metaText, { color: theme.subtext }]}>{entryForSelectedDate.contact_person}</Text>
-                      </View>
-                    )}
-                    {entryForSelectedDate.contact_number && (
-                      <View style={styles.metaItem}>
-                        <Phone color={theme.subtext} size={13} />
-                        <Text style={[styles.metaText, { color: theme.subtext }]}>{entryForSelectedDate.contact_number}</Text>
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {entryForSelectedDate.comments && (
-                  <View style={[styles.metaItem, { marginTop: 6 }]}>
-                    <MessageSquare color={theme.subtext} size={13} />
-                    <Text style={[styles.metaText, { color: theme.subtext, flex: 1 }]}>{entryForSelectedDate.comments}</Text>
-                  </View>
-                )}
-
-                <View style={styles.pillRow}>
-                  {entryForSelectedDate.testing_type && (
-                    <View style={[styles.pill, { backgroundColor: TESTING_TYPE_COLOR.bg }]}>
-                      <Text style={[styles.pillText, { color: TESTING_TYPE_COLOR.text }]}>{entryForSelectedDate.testing_type}</Text>
-                    </View>
-                  )}
-                  {entryForSelectedDate.tam_status && (
-                    <View style={[styles.pill, { backgroundColor: TAM_STATUS_COLOR.bg }]}>
-                      <Text style={[styles.pillText, { color: TAM_STATUS_COLOR.text }]}>{entryForSelectedDate.tam_status}</Text>
-                    </View>
-                  )}
-                </View>
-
-                {entryForSelectedDate.invoice_number && (
-                  <View style={styles.metaItem}>
-                    <Hash color={INVOICE_COLOR} size={13} />
-                    <Text style={[styles.invoiceText]}>{entryForSelectedDate.invoice_number}</Text>
-                  </View>
-                )}
-
-                {canEdit && (
-                  <View style={styles.entryActionsRow}>
-                    <TouchableOpacity onPress={() => openEditEntryModal(entryForSelectedDate)}>
-                      <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDeleteEntry(entryForSelectedDate)}>
-                      <Trash2 color="#ef4444" size={16} />
-                    </TouchableOpacity>
-                  </View>
-                )}
+        <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+          {/* Weekday header row */}
+          <View style={styles.weekRow}>
+            {WEEKDAY_LABELS.map(label => (
+              <View key={label} style={[styles.weekdayHeaderCell, { width: cellWidth, backgroundColor: DAY_HEADER_BG }]}>
+                <Text style={styles.weekdayHeaderText}>{label}</Text>
               </View>
-            )}
+            ))}
           </View>
-        )}
-      </ScrollView>
+
+          {/* Grid */}
+          {weeks.map((week, wi) => (
+            <View key={wi} style={styles.weekRow}>
+              {week.map((dateStr, di) => {
+                if (!dateStr) {
+                  return <View key={di} style={[styles.dayCell, { width: cellWidth, backgroundColor: theme.background, borderColor: theme.border }]} />;
+                }
+                const entry = entriesByDate[dateStr];
+                const dayNum = parseInt(dateStr.split('-')[2], 10);
+                return (
+                  <TouchableOpacity
+                    key={di}
+                    style={[styles.dayCell, { width: cellWidth, backgroundColor: theme.card, borderColor: theme.border }]}
+                    onPress={() => handleDayPress(dateStr)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.dayNumber, { color: theme.text }]}>{dayNum}</Text>
+
+                    {entry && (
+                      <View style={styles.dayCellContent}>
+                        <Text style={[styles.cellMineName, { color: theme.text }]} numberOfLines={2}>
+                          {entry.mine_name}
+                        </Text>
+                        {entry.contact_person && (
+                          <Text style={[styles.cellSubText, { color: theme.subtext }]} numberOfLines={1}>
+                            {entry.contact_person}
+                          </Text>
+                        )}
+                        {entry.contact_number && (
+                          <Text style={[styles.cellSubText, { color: theme.subtext }]} numberOfLines={1}>
+                            {entry.contact_number}
+                          </Text>
+                        )}
+                        {entry.testing_type && (
+                          <View style={[styles.cellPill, { backgroundColor: TESTING_TYPE_COLOR.bg }]}>
+                            <Text style={[styles.cellPillText, { color: TESTING_TYPE_COLOR.text }]} numberOfLines={1}>
+                              {entry.testing_type}
+                            </Text>
+                          </View>
+                        )}
+                        {entry.tam_status && (
+                          <View style={[styles.cellPill, { backgroundColor: TAM_STATUS_COLOR.bg }]}>
+                            <Text style={[styles.cellPillText, { color: TAM_STATUS_COLOR.text }]} numberOfLines={1}>
+                              {entry.tam_status}
+                            </Text>
+                          </View>
+                        )}
+                        {entry.invoice_number && (
+                          <Text style={styles.cellInvoiceText} numberOfLines={1}>
+                            {entry.invoice_number}
+                          </Text>
+                        )}
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ))}
+        </ScrollView>
+      </View>
 
       {/* Technician picker modal */}
       <Modal visible={showTechDropdown} transparent animationType="fade" onRequestClose={() => setShowTechDropdown(false)}>
@@ -398,13 +424,88 @@ export default function OperationalCalendar() {
                 <TouchableOpacity
                   key={t.id}
                   style={[styles.dropdownItem, { borderBottomColor: theme.border }, selectedTechnicianId === t.id && { backgroundColor: `${colors.yellow}20` }]}
-                  onPress={() => { setSelectedTechnicianId(t.id); setSelectedDate(null); setShowTechDropdown(false); }}
+                  onPress={() => { setSelectedTechnicianId(t.id); setShowTechDropdown(false); }}
                 >
                   <Text style={[styles.dropdownItemText, { color: selectedTechnicianId === t.id ? colors.yellow : theme.text }]}>{t.full_name}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
           </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Day detail modal — tapping a filled day shows everything,
+          including comments, which don't fit in the grid cell itself */}
+      <Modal visible={!!detailEntry} transparent animationType="fade" onRequestClose={() => setDetailEntry(null)}>
+        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setDetailEntry(null)}>
+          <TouchableOpacity activeOpacity={1} style={[styles.detailSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            {detailEntry && (
+              <>
+                <View style={styles.detailHeaderRow}>
+                  <Text style={[styles.detailDate, { color: theme.subtext }]}>
+                    {detailDate ? new Date(detailDate + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' }) : ''}
+                  </Text>
+                  <TouchableOpacity onPress={() => setDetailEntry(null)}>
+                    <X color={theme.muted} size={20} />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={[styles.mineName, { color: theme.text }]}>{detailEntry.mine_name}</Text>
+
+                {(detailEntry.contact_person || detailEntry.contact_number) && (
+                  <View style={styles.metaRow}>
+                    {detailEntry.contact_person && (
+                      <View style={styles.metaItem}>
+                        <User color={theme.subtext} size={13} />
+                        <Text style={[styles.metaText, { color: theme.subtext }]}>{detailEntry.contact_person}</Text>
+                      </View>
+                    )}
+                    {detailEntry.contact_number && (
+                      <View style={styles.metaItem}>
+                        <Phone color={theme.subtext} size={13} />
+                        <Text style={[styles.metaText, { color: theme.subtext }]}>{detailEntry.contact_number}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {detailEntry.comments && (
+                  <View style={[styles.metaItem, { marginTop: 6, alignItems: 'flex-start' }]}>
+                    <MessageSquare color={theme.subtext} size={13} />
+                    <Text style={[styles.metaText, { color: theme.subtext, flex: 1 }]}>{detailEntry.comments}</Text>
+                  </View>
+                )}
+
+                <View style={styles.pillRow}>
+                  {detailEntry.testing_type && (
+                    <View style={[styles.pill, { backgroundColor: TESTING_TYPE_COLOR.bg }]}>
+                      <Text style={[styles.pillText, { color: TESTING_TYPE_COLOR.text }]}>{detailEntry.testing_type}</Text>
+                    </View>
+                  )}
+                  {detailEntry.tam_status && (
+                    <View style={[styles.pill, { backgroundColor: TAM_STATUS_COLOR.bg }]}>
+                      <Text style={[styles.pillText, { color: TAM_STATUS_COLOR.text }]}>{detailEntry.tam_status}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {detailEntry.invoice_number && (
+                  <Text style={styles.invoiceText}>{detailEntry.invoice_number}</Text>
+                )}
+
+                {canEdit && (
+                  <View style={styles.entryActionsRow}>
+                    <TouchableOpacity onPress={() => openEditEntryModal(detailEntry)}>
+                      <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleDeleteEntry(detailEntry)}>
+                      <Trash2 color="#ef4444" size={16} />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </>
+            )}
+          </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
 
@@ -547,28 +648,42 @@ export default function OperationalCalendar() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  content: { paddingBottom: 48 },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16,
+    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 12,
   },
   headerTitle: { fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
   techPicker: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, height: 46,
-    marginHorizontal: 16, marginBottom: 10,
+    marginHorizontal: 16, marginBottom: 8,
   },
   techPickerText: { flex: 1, fontSize: 14, fontWeight: '600' },
-  readOnlyNote: { fontSize: 12, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 10 },
-  calendarCard: { marginHorizontal: 16, borderRadius: 16, borderWidth: 1, overflow: 'hidden', marginBottom: 16 },
-  card: { marginHorizontal: 16, borderRadius: 16, borderWidth: 1, padding: 16 },
-  dayCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  sectionTitle: { fontSize: 15, fontWeight: '700' },
-  emptyText: { fontSize: 13, fontStyle: 'italic' },
-  smallAddBtn: {
-    backgroundColor: colors.yellow, width: 28, height: 28, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center',
+  readOnlyNote: { fontSize: 12, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
+  monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },
+  monthNavBtn: { padding: 8 },
+  monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },
+  weekRow: { flexDirection: 'row' },
+  weekdayHeaderCell: { paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
+  weekdayHeaderText: { color: colors.white, fontSize: 11, fontWeight: '700' },
+  dayCell: {
+    minHeight: 110, borderWidth: 0.5, padding: 4,
   },
+  dayCellContent: { marginTop: 2, gap: 2 },
+  dayNumber: { fontSize: 11, fontWeight: '700' },
+  cellMineName: { fontSize: 9, fontWeight: '700', lineHeight: 11 },
+  cellSubText: { fontSize: 7.5, lineHeight: 9 },
+  cellPill: { borderRadius: 6, paddingHorizontal: 3, paddingVertical: 1, marginTop: 2 },
+  cellPillText: { fontSize: 7, fontWeight: '700', textAlign: 'center' },
+  cellInvoiceText: { fontSize: 7, fontWeight: '700', color: INVOICE_COLOR, marginTop: 2 },
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  pickerSheet: { width: '100%', maxWidth: 420, borderRadius: 16, borderWidth: 1, padding: 16 },
+  pickerTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  dropdownItem: { padding: 14, borderBottomWidth: 1 },
+  dropdownItemText: { fontSize: 15 },
+  detailSheet: { width: '100%', maxWidth: 420, borderRadius: 16, borderWidth: 1, padding: 20 },
+  detailHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  detailDate: { fontSize: 13, fontWeight: '600' },
   mineName: { fontSize: 17, fontWeight: '700', marginBottom: 6 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginBottom: 4 },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -578,11 +693,6 @@ const styles = StyleSheet.create({
   pillText: { fontSize: 12, fontWeight: '700' },
   invoiceText: { fontSize: 13, fontWeight: '700', color: INVOICE_COLOR },
   entryActionsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 },
-  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  pickerSheet: { width: '100%', maxWidth: 420, borderRadius: 16, borderWidth: 1, padding: 16 },
-  pickerTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
-  dropdownItem: { padding: 14, borderBottomWidth: 1 },
-  dropdownItemText: { fontSize: 15 },
   modalContainer: { flex: 1 },
   modalContent: { paddingBottom: 48 },
   modalHeader: {
