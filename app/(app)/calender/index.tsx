@@ -8,6 +8,7 @@ import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Pho
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
+import DatePickerField from '../../../components/DatepickerField';
 
 const colors = {
   yellow: '#fbbf24',
@@ -31,6 +32,12 @@ const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 type Technician = { id: string; full_name: string };
 
+type MinePreset = {
+  mine_name: string;
+  contact_person: string | null;
+  contact_number: string | null;
+};
+
 type CalendarEntry = {
   id: string;
   technician_id: string;
@@ -48,6 +55,22 @@ function toDateString(year: number, month: number, day: number): string {
   const mm = String(month + 1).padStart(2, '0');
   const dd = String(day).padStart(2, '0');
   return `${year}-${mm}-${dd}`;
+}
+
+// Every date string between from/to inclusive — used to spread one
+// entry across multiple days when the person sets a date range.
+function expandDateRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  let current = new Date(from + 'T00:00:00');
+  const end = new Date(to + 'T00:00:00');
+  while (current <= end) {
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, '0');
+    const d = String(current.getDate()).padStart(2, '0');
+    dates.push(`${y}-${m}-${d}`);
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
 }
 
 // Builds a Sun-Sat grid of week rows for the given month, padding the
@@ -83,6 +106,8 @@ export default function OperationalCalendar() {
   const [showTechDropdown, setShowTechDropdown] = useState(false);
 
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
+  const [minePresets, setMinePresets] = useState<MinePreset[]>([]);
+  const [showMineSuggestions, setShowMineSuggestions] = useState(false);
   const [viewDate, setViewDate] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
@@ -96,7 +121,8 @@ export default function OperationalCalendar() {
   // Entry edit modal
   const [entryModalVisible, setEntryModalVisible] = useState(false);
   const [editingEntry, setEditingEntry] = useState<CalendarEntry | null>(null);
-  const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [mineName, setMineName] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   const [contactNumber, setContactNumber] = useState('');
@@ -125,6 +151,7 @@ export default function OperationalCalendar() {
   useFocusEffect(
     useCallback(() => {
       fetchAll();
+      fetchMinePresets();
     }, [])
   );
 
@@ -172,6 +199,14 @@ export default function OperationalCalendar() {
     setLoading(false);
   }
 
+  async function fetchMinePresets() {
+    const { data } = await supabase
+      .from('operational_calendar_mine_presets')
+      .select('mine_name, contact_person, contact_number')
+      .order('mine_name');
+    if (data) setMinePresets(data);
+  }
+
   useFocusEffect(
     useCallback(() => {
       if (selectedTechnicianId) fetchEntries(selectedTechnicianId);
@@ -214,7 +249,8 @@ export default function OperationalCalendar() {
 
   function openNewEntryModal(dateStr: string) {
     setEditingEntry(null);
-    setEditingDate(dateStr);
+    setDateFrom(dateStr);
+    setDateTo(dateStr);
     setMineName('');
     setContactPerson('');
     setContactNumber('');
@@ -222,12 +258,14 @@ export default function OperationalCalendar() {
     setTestingType(null);
     setTamStatus(null);
     setInvoiceNumber('');
+    setShowMineSuggestions(false);
     setEntryModalVisible(true);
   }
 
   function openEditEntryModal(entry: CalendarEntry) {
     setEditingEntry(entry);
-    setEditingDate(entry.entry_date);
+    setDateFrom(entry.entry_date);
+    setDateTo(entry.entry_date);
     setMineName(entry.mine_name);
     setContactPerson(entry.contact_person ?? '');
     setContactNumber(entry.contact_number ?? '');
@@ -235,8 +273,20 @@ export default function OperationalCalendar() {
     setTestingType(entry.testing_type);
     setTamStatus(entry.tam_status);
     setInvoiceNumber(entry.invoice_number ?? '');
+    setShowMineSuggestions(false);
     setDetailEntry(null);
     setEntryModalVisible(true);
+  }
+
+  const filteredMineSuggestions = mineName.trim().length > 0
+    ? minePresets.filter(p => p.mine_name.toLowerCase().includes(mineName.trim().toLowerCase())).slice(0, 6)
+    : [];
+
+  function selectMinePreset(preset: MinePreset) {
+    setMineName(preset.mine_name);
+    setContactPerson(preset.contact_person ?? '');
+    setContactNumber(preset.contact_number ?? '');
+    setShowMineSuggestions(false);
   }
 
   async function handleSaveEntry() {
@@ -244,14 +294,41 @@ export default function OperationalCalendar() {
       notify('Missing mine name', 'Please enter a mine name.');
       return;
     }
-    if (!editingDate || !selectedTechnicianId) return;
+    if (!dateFrom || !selectedTechnicianId) return;
 
+    if (!editingEntry && dateTo < dateFrom) {
+      notify('Invalid range', '"Date To" can\'t be before "Date From".');
+      return;
+    }
+
+    const targetDates = editingEntry ? [dateFrom] : expandDateRange(dateFrom, dateTo);
+
+    // Warn before silently overwriting days that already have an
+    // entry — only relevant for a fresh multi/single-day save (this
+    // branch only runs when editingEntry is null, so any existing
+    // entry on a target day is necessarily a different one).
+    const overlapping = editingEntry
+      ? []
+      : targetDates.filter(d => !!entriesByDate[d]);
+
+    if (overlapping.length > 0) {
+      confirm(
+        'Overwrite existing entries?',
+        `${overlapping.length} day${overlapping.length === 1 ? '' : 's'} in this range already ${overlapping.length === 1 ? 'has' : 'have'} an entry. Saving will replace ${overlapping.length === 1 ? 'it' : 'them'}.`,
+        () => performSave(targetDates)
+      );
+    } else {
+      performSave(targetDates);
+    }
+  }
+
+  async function performSave(targetDates: string[]) {
     setSaving(true);
     const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
 
-    const payload = {
+    const basePayload = {
       technician_id: selectedTechnicianId,
-      entry_date: editingDate,
       mine_name: mineName.trim(),
       contact_person: contactPerson.trim() || null,
       contact_number: contactNumber.trim() || null,
@@ -259,22 +336,47 @@ export default function OperationalCalendar() {
       testing_type: testingType,
       tam_status: tamStatus,
       invoice_number: invoiceNumber.trim() || null,
-      updated_by: userData.user?.id,
+      updated_by: uid,
     };
 
-    const { error } = editingEntry
-      ? await supabase.from('operational_calendar_entries').update(payload).eq('id', editingEntry.id)
-      : await supabase.from('operational_calendar_entries').insert({ ...payload, created_by: userData.user?.id });
-
-    setSaving(false);
+    let error;
+    if (editingEntry) {
+      ({ error } = await supabase
+        .from('operational_calendar_entries')
+        .update({ ...basePayload, entry_date: targetDates[0] })
+        .eq('id', editingEntry.id));
+    } else {
+      const rows = targetDates.map(entry_date => ({ ...basePayload, entry_date, created_by: uid }));
+      ({ error } = await supabase
+        .from('operational_calendar_entries')
+        .upsert(rows, { onConflict: 'technician_id,entry_date' }));
+    }
 
     if (error) {
+      setSaving(false);
       notify('Error', error.message);
       return;
     }
 
+    // Remember this mine's contact info for next time, regardless of
+    // whether this was a new entry or an edit.
+    await supabase
+      .from('operational_calendar_mine_presets')
+      .upsert(
+        {
+          mine_name: mineName.trim(),
+          contact_person: contactPerson.trim() || null,
+          contact_number: contactNumber.trim() || null,
+          updated_by: uid,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'mine_name_key' }
+      );
+
+    setSaving(false);
     setEntryModalVisible(false);
-    fetchEntries(selectedTechnicianId);
+    if (selectedTechnicianId) fetchEntries(selectedTechnicianId);
+    fetchMinePresets();
   }
 
   function handleDeleteEntry(entry: CalendarEntry) {
@@ -527,6 +629,47 @@ export default function OperationalCalendar() {
           </View>
 
           <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            {editingEntry ? (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DATE</Text>
+                <DatePickerField
+                  value={dateFrom}
+                  onChange={(v: string) => { setDateFrom(v); setDateTo(v); }}
+                  placeholder="Select date"
+                  isDark={isDark}
+                  theme={theme}
+                />
+              </View>
+            ) : (
+              <View style={styles.dateRangeRow}>
+                <View style={[styles.fieldGroup, { flex: 1 }]}>
+                  <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DATE FROM</Text>
+                  <DatePickerField
+                    value={dateFrom}
+                    onChange={(v: string) => { setDateFrom(v); if (dateTo < v) setDateTo(v); }}
+                    placeholder="Select date"
+                    isDark={isDark}
+                    theme={theme}
+                  />
+                </View>
+                <View style={[styles.fieldGroup, { flex: 1 }]}>
+                  <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DATE TO</Text>
+                  <DatePickerField
+                    value={dateTo}
+                    onChange={setDateTo}
+                    placeholder="Select date"
+                    isDark={isDark}
+                    theme={theme}
+                  />
+                </View>
+              </View>
+            )}
+            {!editingEntry && dateTo !== dateFrom && (
+              <Text style={[styles.rangeHint, { color: theme.subtext }]}>
+                This will fill every day from {dateFrom} to {dateTo}.
+              </Text>
+            )}
+
             <View style={styles.fieldGroup}>
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>MINE NAME *</Text>
               <TextInput
@@ -534,8 +677,27 @@ export default function OperationalCalendar() {
                 placeholder="e.g. Redpath Mining"
                 placeholderTextColor={theme.muted}
                 value={mineName}
-                onChangeText={setMineName}
+                onChangeText={(v) => { setMineName(v); setShowMineSuggestions(true); }}
+                onFocus={() => setShowMineSuggestions(true)}
               />
+              {showMineSuggestions && filteredMineSuggestions.length > 0 && (
+                <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  {filteredMineSuggestions.map(preset => (
+                    <TouchableOpacity
+                      key={preset.mine_name}
+                      style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
+                      onPress={() => selectMinePreset(preset)}
+                    >
+                      <Text style={[styles.dropdownItemText, { color: theme.text }]}>{preset.mine_name}</Text>
+                      {(preset.contact_person || preset.contact_number) && (
+                        <Text style={[styles.dropdownItemSub, { color: theme.subtext }]}>
+                          {[preset.contact_person, preset.contact_number].filter(Boolean).join(' · ')}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
 
             <View style={styles.fieldGroup}>
@@ -710,6 +872,9 @@ const styles = StyleSheet.create({
   },
   dropdownBtnText: { flex: 1, fontSize: 15 },
   dropdown: { borderWidth: 1, borderRadius: 12, marginTop: 4, overflow: 'hidden' },
+  dropdownItemSub: { fontSize: 12, marginTop: 2 },
+  dateRangeRow: { flexDirection: 'row', gap: 12 },
+  rangeHint: { fontSize: 12, fontStyle: 'italic', marginTop: -8, marginBottom: 16 },
   saveBtn: {
     backgroundColor: colors.yellow, borderRadius: 14, height: 56,
     alignItems: 'center', justifyContent: 'center', margin: 16,
