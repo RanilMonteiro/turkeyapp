@@ -1,7 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput, useWindowDimensions
+  StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput, useWindowDimensions,
+  PanResponder, GestureResponderEvent,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare } from 'lucide-react-native';
@@ -26,9 +27,35 @@ const TAM_STATUS_COLOR = { bg: '#fef3c7', text: '#b45309' };
 const INVOICE_COLOR = '#dc2626';
 const DAY_HEADER_BG = '#1e293b';
 
+// Fixed colors for the calendar grid itself — these are intentionally NOT
+// theme-aware, so the calendar always looks the same (white/green) whether
+// the app is in light or dark mode, matching the reference spreadsheet.
+const CELL_EMPTY_BG = '#ffffff';
+const CELL_FILLED_BG = '#d9ead3';
+const CELL_BORDER = '#94a3b8';
+const CELL_TEXT_DARK = '#0f172a';
+const CELL_SUBTEXT_DARK = '#334155';
+const COMMENT_BG = '#fff176';
+const COMMENT_BORDER = '#000000';
+const DRAG_FILL_BORDER = '#2563eb';
+const DRAG_FILL_TINT = 'rgba(37, 99, 235, 0.18)';
+const DRAG_DELETE_BORDER = '#dc2626';
+const DRAG_DELETE_TINT = 'rgba(220, 38, 38, 0.22)';
+const DRAG_SOURCE_BORDER = '#b45309';
+
 const TESTING_TYPE_OPTIONS = ['Brake Testing', 'Lux Testing', 'Brake and Lux Testing', 'Inspections'];
 const TAM_STATUS_OPTIONS = ['On TAM', 'Not On TAM', 'Brake and Inspection'];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// Fixed row height for the grid — needed so drag gestures can work out
+// which day is under the finger using simple math instead of measuring
+// every cell. If you change dayCell's height in the styles below, update
+// this too.
+const ROW_HEIGHT = 140;
+
+// Whether dragging one day onto others also copies its invoice number.
+// Off by default since invoice numbers are usually unique per job.
+const COPY_INVOICE_ON_FILL = false;
 
 type Technician = { id: string; full_name: string };
 
@@ -51,6 +78,10 @@ type CalendarEntry = {
   invoice_number: string | null;
 };
 
+type DragInfo =
+  | { type: 'fill'; sourceDate: string; dates: string[] }
+  | { type: 'delete'; dates: string[] };
+
 function toDateString(year: number, month: number, day: number): string {
   const mm = String(month + 1).padStart(2, '0');
   const dd = String(day).padStart(2, '0');
@@ -58,7 +89,8 @@ function toDateString(year: number, month: number, day: number): string {
 }
 
 // Every date string between from/to inclusive — used to spread one
-// entry across multiple days when the person sets a date range.
+// entry across multiple days when the person sets a date range, and
+// to work out which days a fill-drag gesture passed over.
 function expandDateRange(from: string, to: string): string[] {
   const dates: string[] = [];
   let current = new Date(from + 'T00:00:00');
@@ -71,6 +103,10 @@ function expandDateRange(from: string, to: string): string[] {
     current.setDate(current.getDate() + 1);
   }
   return dates;
+}
+
+function computeRangeDates(a: string, b: string): string[] {
+  return a <= b ? expandDateRange(a, b) : expandDateRange(b, a);
 }
 
 // Builds a Sun-Sat grid of week rows for the given month, padding the
@@ -89,6 +125,16 @@ function buildMonthGrid(year: number, month: number): (string | null)[][] {
   const weeks: (string | null)[][] = [];
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
   return weeks;
+}
+
+// The grid cell background only knows "has an entry" vs "empty" right now
+// (matches the green look in the reference screenshot). The screenshot
+// also shows one manually orange-highlighted mine — there's no field in
+// the data that would drive that automatically, so it isn't reproduced
+// here. Adding a `highlight_color` column + a color picker in the entry
+// form would be the way to support that.
+function getCellBackground(entry: CalendarEntry | undefined): string {
+  return entry ? CELL_FILLED_BG : CELL_EMPTY_BG;
 }
 
 export default function OperationalCalendar() {
@@ -133,6 +179,29 @@ export default function OperationalCalendar() {
   const [showTestingTypeDropdown, setShowTestingTypeDropdown] = useState(false);
   const [showTamStatusDropdown, setShowTamStatusDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // ---------- Drag-to-fill / drag-to-delete ----------
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragInfo, setDragInfo] = useState<DragInfo | null>(null);
+
+  const gridRef = useRef<View>(null);
+  const gridOriginRef = useRef({ pageX: 0, pageY: 0 });
+  const dragInfoRef = useRef<DragInfo | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartDateRef = useRef<string | null>(null);
+
+  // Mirrors the latest state into a ref so the PanResponder (created once
+  // and never recreated) can always read fresh values instead of the
+  // stale ones captured on its first render.
+  const liveRef = useRef({
+    canEdit: false,
+    deleteMode: false,
+    weeks: [] as (string | null)[][],
+    cellWidth: 0,
+    entriesByDate: {} as Record<string, CalendarEntry>,
+    selectedTechnicianId: null as string | null,
+  });
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -228,6 +297,15 @@ export default function OperationalCalendar() {
   const selectedTechnician = technicians.find(t => t.id === selectedTechnicianId);
   const weeks = buildMonthGrid(viewDate.year, viewDate.month);
 
+  // Keep the live ref in sync every render so gesture handlers (bound
+  // once) always see current data.
+  liveRef.current.canEdit = canEdit;
+  liveRef.current.deleteMode = deleteMode;
+  liveRef.current.weeks = weeks;
+  liveRef.current.cellWidth = cellWidth;
+  liveRef.current.entriesByDate = entriesByDate;
+  liveRef.current.selectedTechnicianId = selectedTechnicianId;
+
   function goToPreviousMonth() {
     setViewDate(prev => (prev.month === 0 ? { year: prev.year - 1, month: 11 } : { year: prev.year, month: prev.month - 1 }));
   }
@@ -235,15 +313,197 @@ export default function OperationalCalendar() {
     setViewDate(prev => (prev.month === 11 ? { year: prev.year + 1, month: 0 } : { year: prev.year, month: prev.month + 1 }));
   }
 
-  function handleDayPress(dateStr: string) {
-    const entry = entriesByDate[dateStr];
+  function handleDayPress(dateStr: string | null) {
+    if (!dateStr) return;
+    const entry = liveRef.current.entriesByDate[dateStr];
     if (entry) {
       setDetailEntry(entry);
       setDetailDate(dateStr);
-    } else if (canEdit) {
+    } else if (liveRef.current.canEdit) {
       openNewEntryModal(dateStr);
     }
   }
+
+  // ---------- Drag gesture ----------
+
+  function dateAtTouch(evt: GestureResponderEvent): string | null {
+    const { pageX, pageY } = evt.nativeEvent;
+    const localX = pageX - gridOriginRef.current.pageX;
+    const localY = pageY - gridOriginRef.current.pageY;
+    if (localX < 0 || localY < 0) return null;
+    const { weeks: liveWeeks, cellWidth: liveCellWidth } = liveRef.current;
+    if (!liveCellWidth) return null;
+    const col = Math.floor(localX / liveCellWidth);
+    const row = Math.floor(localY / ROW_HEIGHT);
+    if (col < 0 || col > 6) return null;
+    const week = liveWeeks[row];
+    if (!week) return null;
+    return week[col] ?? null;
+  }
+
+  function measureGridOrigin() {
+    gridRef.current?.measure((_x, _y, _w, _h, pageX, pageY) => {
+      gridOriginRef.current = { pageX, pageY };
+    });
+  }
+
+  async function performFillSave(sourceEntry: CalendarEntry, targetDates: string[]) {
+    const technicianId = liveRef.current.selectedTechnicianId;
+    if (!technicianId) return;
+    setSaving(true);
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
+
+    const rows = targetDates.map(entry_date => ({
+      technician_id: technicianId,
+      entry_date,
+      mine_name: sourceEntry.mine_name,
+      contact_person: sourceEntry.contact_person,
+      contact_number: sourceEntry.contact_number,
+      comments: sourceEntry.comments,
+      testing_type: sourceEntry.testing_type,
+      tam_status: sourceEntry.tam_status,
+      invoice_number: COPY_INVOICE_ON_FILL ? sourceEntry.invoice_number : null,
+      updated_by: uid,
+      created_by: uid,
+    }));
+
+    const { error } = await supabase
+      .from('operational_calendar_entries')
+      .upsert(rows, { onConflict: 'technician_id,entry_date' });
+
+    setSaving(false);
+    if (error) {
+      notify('Error', error.message);
+      return;
+    }
+    fetchEntries(technicianId);
+  }
+
+  function finishFillDrag(info: Extract<DragInfo, { type: 'fill' }>) {
+    const sourceEntry = liveRef.current.entriesByDate[info.sourceDate];
+    if (!sourceEntry) return;
+    const targetDates = info.dates.filter(d => d !== info.sourceDate);
+    if (targetDates.length === 0) return;
+
+    const overlapping = targetDates.filter(d => !!liveRef.current.entriesByDate[d]);
+    const apply = () => performFillSave(sourceEntry, targetDates);
+
+    if (overlapping.length > 0) {
+      confirm(
+        'Overwrite existing entries?',
+        `${overlapping.length} day${overlapping.length === 1 ? '' : 's'} in this range already ${overlapping.length === 1 ? 'has' : 'have'} an entry. Filling will replace ${overlapping.length === 1 ? 'it' : 'them'}.`,
+        apply
+      );
+    } else {
+      apply();
+    }
+  }
+
+  async function deleteEntriesForDates(dates: string[]) {
+    const ids = dates
+      .map(d => liveRef.current.entriesByDate[d]?.id)
+      .filter((id): id is string => !!id);
+    if (ids.length === 0) return;
+
+    setSaving(true);
+    const { error } = await supabase.from('operational_calendar_entries').delete().in('id', ids);
+    setSaving(false);
+
+    if (error) {
+      notify('Error', error.message);
+      return;
+    }
+    const technicianId = liveRef.current.selectedTechnicianId;
+    if (technicianId) fetchEntries(technicianId);
+  }
+
+  function finishDeleteDrag(info: Extract<DragInfo, { type: 'delete' }>) {
+    const targets = info.dates.filter(d => !!liveRef.current.entriesByDate[d]);
+    if (targets.length === 0) return;
+    confirm(
+      'Delete Entries',
+      `Delete ${targets.length} entr${targets.length === 1 ? 'y' : 'ies'}? This can't be undone.`,
+      () => deleteEntriesForDates(targets)
+    );
+  }
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponderCapture: () => liveRef.current.canEdit,
+      onStartShouldSetPanResponder: () => liveRef.current.canEdit,
+      onPanResponderGrant: (evt) => {
+        measureGridOrigin();
+        const startDate = dateAtTouch(evt);
+        touchStartDateRef.current = startDate;
+
+        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = setTimeout(() => {
+          if (!startDate) return;
+          if (liveRef.current.deleteMode) {
+            if (liveRef.current.entriesByDate[startDate]) {
+              const info: DragInfo = { type: 'delete', dates: [startDate] };
+              dragInfoRef.current = info;
+              setDragInfo(info);
+              setIsDragging(true);
+            }
+          } else if (liveRef.current.entriesByDate[startDate]) {
+            const info: DragInfo = { type: 'fill', sourceDate: startDate, dates: [startDate] };
+            dragInfoRef.current = info;
+            setDragInfo(info);
+            setIsDragging(true);
+          }
+        }, 350);
+      },
+      onPanResponderMove: (evt) => {
+        if (!dragInfoRef.current) return;
+        const dateStr = dateAtTouch(evt);
+        if (!dateStr) return;
+        const current = dragInfoRef.current;
+
+        if (current.type === 'fill') {
+          const dates = computeRangeDates(current.sourceDate, dateStr);
+          const next: DragInfo = { ...current, dates };
+          dragInfoRef.current = next;
+          setDragInfo(next);
+        } else {
+          if (!current.dates.includes(dateStr) && liveRef.current.entriesByDate[dateStr]) {
+            const next: DragInfo = { ...current, dates: [...current.dates, dateStr] };
+            dragInfoRef.current = next;
+            setDragInfo(next);
+          }
+        }
+      },
+      onPanResponderRelease: () => {
+        if (longPressTimerRef.current) {
+          clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
+        }
+        const info = dragInfoRef.current;
+        dragInfoRef.current = null;
+        setDragInfo(null);
+        setIsDragging(false);
+
+        if (info) {
+          if (info.type === 'fill') finishFillDrag(info);
+          else finishDeleteDrag(info);
+        } else if (touchStartDateRef.current) {
+          handleDayPress(touchStartDateRef.current);
+        }
+        touchStartDateRef.current = null;
+      },
+      onPanResponderTerminate: () => {
+        if (longPressTimerRef.current) {
+          clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
+        }
+        dragInfoRef.current = null;
+        setDragInfo(null);
+        setIsDragging(false);
+        touchStartDateRef.current = null;
+      },
+    })
+  ).current;
 
   // ---------- Entry modal ----------
 
@@ -411,7 +671,16 @@ export default function OperationalCalendar() {
             <ArrowLeft color={colors.yellow} size={24} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: theme.text }]}>Operational Calendar</Text>
-          <View style={{ width: 24 }} />
+          {canEdit ? (
+            <TouchableOpacity
+              onPress={() => setDeleteMode(d => !d)}
+              style={[styles.deleteModeBtn, deleteMode && styles.deleteModeBtnActive]}
+            >
+              <Trash2 color={deleteMode ? '#ffffff' : theme.muted} size={18} />
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 24 }} />
+          )}
         </View>
 
         {role !== 'technician' && (
@@ -431,6 +700,14 @@ export default function OperationalCalendar() {
           <Text style={[styles.readOnlyNote, { color: theme.muted }]}>View only</Text>
         )}
 
+        {canEdit && (
+          <Text style={[styles.dragHint, { color: theme.subtext }]}>
+            {deleteMode
+              ? 'Delete mode: press & drag across days to select, then confirm to delete.'
+              : 'Tip: press & hold a filled day, then drag to copy it across other days.'}
+          </Text>
+        )}
+
         {/* Month nav */}
         <View style={styles.monthNavRow}>
           <TouchableOpacity onPress={goToPreviousMonth} style={styles.monthNavBtn}>
@@ -444,7 +721,7 @@ export default function OperationalCalendar() {
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 24 }} scrollEnabled={!isDragging}>
           {/* Weekday header row */}
           <View style={styles.weekRow}>
             {WEEKDAY_LABELS.map(label => (
@@ -454,65 +731,96 @@ export default function OperationalCalendar() {
             ))}
           </View>
 
-          {/* Grid */}
-          {weeks.map((week, wi) => (
-            <View key={wi} style={styles.weekRow}>
-              {week.map((dateStr, di) => {
-                if (!dateStr) {
-                  return <View key={di} style={[styles.dayCell, { width: cellWidth, backgroundColor: theme.background, borderColor: theme.border }]} />;
-                }
-                const entry = entriesByDate[dateStr];
-                const dayNum = parseInt(dateStr.split('-')[2], 10);
-                return (
-                  <TouchableOpacity
-                    key={di}
-                    style={[styles.dayCell, { width: cellWidth, backgroundColor: theme.card, borderColor: theme.border }]}
-                    onPress={() => handleDayPress(dateStr)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.dayNumber, { color: theme.text }]}>{dayNum}</Text>
+          {/* Grid — wrapped in a single view carrying the drag gesture so
+              we can work out which day is under the finger with simple
+              row/col math instead of measuring every cell. */}
+          <View
+            ref={gridRef}
+            onLayout={measureGridOrigin}
+            {...panResponder.panHandlers}
+          >
+            {weeks.map((week, wi) => (
+              <View key={wi} style={styles.weekRow}>
+                {week.map((dateStr, di) => {
+                  if (!dateStr) {
+                    return (
+                      <View
+                        key={di}
+                        style={[styles.dayCell, { width: cellWidth, backgroundColor: CELL_EMPTY_BG, borderColor: CELL_BORDER }]}
+                      />
+                    );
+                  }
+                  const entry = entriesByDate[dateStr];
+                  const dayNum = parseInt(dateStr.split('-')[2], 10);
 
-                    {entry && (
-                      <View style={styles.dayCellContent}>
-                        <Text style={[styles.cellMineName, { color: theme.text }]} numberOfLines={2}>
-                          {entry.mine_name}
-                        </Text>
-                        {entry.contact_person && (
-                          <Text style={[styles.cellSubText, { color: theme.subtext }]} numberOfLines={1}>
-                            {entry.contact_person}
+                  const isFillHighlighted = dragInfo?.type === 'fill' && dragInfo.dates.includes(dateStr);
+                  const isDragSource = dragInfo?.type === 'fill' && dragInfo.sourceDate === dateStr;
+                  const isDeleteHighlighted = dragInfo?.type === 'delete' && dragInfo.dates.includes(dateStr);
+
+                  return (
+                    <TouchableOpacity
+                      key={di}
+                      activeOpacity={canEdit ? 1 : 0.7}
+                      onPress={canEdit ? undefined : () => handleDayPress(dateStr)}
+                      style={[
+                        styles.dayCell,
+                        { width: cellWidth, backgroundColor: getCellBackground(entry), borderColor: CELL_BORDER },
+                        isFillHighlighted && !isDragSource && styles.dayCellFillHighlight,
+                        isDragSource && styles.dayCellDragSource,
+                        isDeleteHighlighted && styles.dayCellDeleteHighlight,
+                      ]}
+                    >
+                      <Text style={styles.dayNumber}>{dayNum}</Text>
+
+                      {entry && (
+                        <View style={styles.dayCellContent}>
+                          <Text style={styles.cellMineName} numberOfLines={2}>
+                            {entry.mine_name}
                           </Text>
-                        )}
-                        {entry.contact_number && (
-                          <Text style={[styles.cellSubText, { color: theme.subtext }]} numberOfLines={1}>
-                            {entry.contact_number}
-                          </Text>
-                        )}
-                        {entry.testing_type && (
-                          <View style={[styles.cellPill, { backgroundColor: TESTING_TYPE_COLOR.bg }]}>
-                            <Text style={[styles.cellPillText, { color: TESTING_TYPE_COLOR.text }]} numberOfLines={1}>
-                              {entry.testing_type}
+                          {entry.contact_person && (
+                            <Text style={styles.cellSubText} numberOfLines={1}>
+                              {entry.contact_person}
                             </Text>
-                          </View>
-                        )}
-                        {entry.tam_status && (
-                          <View style={[styles.cellPill, { backgroundColor: TAM_STATUS_COLOR.bg }]}>
-                            <Text style={[styles.cellPillText, { color: TAM_STATUS_COLOR.text }]} numberOfLines={1}>
-                              {entry.tam_status}
+                          )}
+                          {entry.contact_number && (
+                            <Text style={styles.cellSubText} numberOfLines={1}>
+                              {entry.contact_number}
                             </Text>
-                          </View>
-                        )}
-                        {entry.invoice_number && (
-                          <Text style={styles.cellInvoiceText} numberOfLines={1}>
-                            {entry.invoice_number}
-                          </Text>
-                        )}
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ))}
+                          )}
+                          {entry.comments && (
+                            <View style={styles.cellCommentBox}>
+                              <Text style={styles.cellCommentText} numberOfLines={2}>
+                                {entry.comments}
+                              </Text>
+                            </View>
+                          )}
+                          {entry.testing_type && (
+                            <View style={[styles.cellPill, { backgroundColor: TESTING_TYPE_COLOR.bg }]}>
+                              <Text style={[styles.cellPillText, { color: TESTING_TYPE_COLOR.text }]} numberOfLines={1}>
+                                {entry.testing_type}
+                              </Text>
+                            </View>
+                          )}
+                          {entry.tam_status && (
+                            <View style={[styles.cellPill, { backgroundColor: TAM_STATUS_COLOR.bg }]}>
+                              <Text style={[styles.cellPillText, { color: TAM_STATUS_COLOR.text }]} numberOfLines={1}>
+                                {entry.tam_status}
+                              </Text>
+                            </View>
+                          )}
+                          {entry.invoice_number && (
+                            <Text style={styles.cellInvoiceText} numberOfLines={1}>
+                              {entry.invoice_number}
+                            </Text>
+                          )}
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
         </ScrollView>
       </View>
 
@@ -815,6 +1123,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingTop: 60, paddingBottom: 12,
   },
   headerTitle: { fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
+  deleteModeBtn: {
+    width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+  },
+  deleteModeBtnActive: { backgroundColor: '#ef4444' },
   techPicker: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, height: 46,
@@ -822,6 +1134,7 @@ const styles = StyleSheet.create({
   },
   techPickerText: { flex: 1, fontSize: 14, fontWeight: '600' },
   readOnlyNote: { fontSize: 12, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
+  dragHint: { fontSize: 11.5, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },
   monthNavBtn: { padding: 8 },
   monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },
@@ -829,12 +1142,20 @@ const styles = StyleSheet.create({
   weekdayHeaderCell: { paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
   weekdayHeaderText: { color: colors.white, fontSize: 11, fontWeight: '700' },
   dayCell: {
-    minHeight: 110, borderWidth: 0.5, padding: 4,
+    height: ROW_HEIGHT, borderWidth: 1, padding: 4, overflow: 'hidden',
   },
+  dayCellFillHighlight: { borderWidth: 2, borderColor: DRAG_FILL_BORDER, backgroundColor: DRAG_FILL_TINT },
+  dayCellDragSource: { borderWidth: 2, borderColor: DRAG_SOURCE_BORDER },
+  dayCellDeleteHighlight: { borderWidth: 2, borderColor: DRAG_DELETE_BORDER, backgroundColor: DRAG_DELETE_TINT },
   dayCellContent: { marginTop: 2, gap: 2 },
-  dayNumber: { fontSize: 11, fontWeight: '700' },
-  cellMineName: { fontSize: 9, fontWeight: '700', lineHeight: 11 },
-  cellSubText: { fontSize: 7.5, lineHeight: 9 },
+  dayNumber: { fontSize: 11, fontWeight: '700', color: CELL_TEXT_DARK },
+  cellMineName: { fontSize: 9, fontWeight: '700', lineHeight: 11, color: CELL_TEXT_DARK },
+  cellSubText: { fontSize: 7.5, lineHeight: 9, color: CELL_SUBTEXT_DARK },
+  cellCommentBox: {
+    backgroundColor: COMMENT_BG, borderWidth: 1.5, borderColor: COMMENT_BORDER,
+    borderRadius: 3, paddingHorizontal: 3, paddingVertical: 2, marginTop: 2,
+  },
+  cellCommentText: { fontSize: 7, fontWeight: '700', color: CELL_TEXT_DARK, textAlign: 'center', lineHeight: 8.5 },
   cellPill: { borderRadius: 6, paddingHorizontal: 3, paddingVertical: 1, marginTop: 2 },
   cellPillText: { fontSize: 7, fontWeight: '700', textAlign: 'center' },
   cellInvoiceText: { fontSize: 7, fontWeight: '700', color: INVOICE_COLOR, marginTop: 2 },
