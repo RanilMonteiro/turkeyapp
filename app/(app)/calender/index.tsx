@@ -47,15 +47,29 @@ const TESTING_TYPE_OPTIONS = ['Brake Testing', 'Lux Testing', 'Brake and Lux Tes
 const TAM_STATUS_OPTIONS = ['On TAM', 'Not On TAM', 'Brake and Inspection'];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+const FINANCIAL_DOCUMENT_OPTIONS = ['Invoice Number', 'Order Number', 'Sales Order'];
+// Short prefix shown on the grid cell itself, where space is tight.
+const FINANCIAL_DOC_ABBR: Record<string, string> = {
+  'Invoice Number': 'INV',
+  'Order Number': 'PO',
+  'Sales Order': 'SO',
+};
+function financialDocPlaceholder(type: string | null): string {
+  if (type === 'Order Number') return 'e.g. PO 12345';
+  if (type === 'Sales Order') return 'e.g. SO 16617';
+  return 'e.g. INV 50521';
+}
+
 // Fixed row height for the grid — needed so drag gestures can work out
 // which day is under the finger using simple math instead of measuring
 // every cell. If you change dayCell's height in the styles below, update
 // this too.
 const ROW_HEIGHT = 140;
 
-// Whether dragging one day onto others also copies its invoice number.
-// Off by default since invoice numbers are usually unique per job.
-const COPY_INVOICE_ON_FILL = false;
+// Whether dragging one day onto others also copies its financial document
+// (type + number). On by default: a fill-drag is usually one job spanning
+// several days, so it makes sense for them to share the same document.
+const COPY_FINANCIAL_DOC_ON_FILL = true;
 
 type Technician = { id: string; full_name: string };
 
@@ -75,7 +89,8 @@ type CalendarEntry = {
   comments: string | null;
   testing_type: string | null;
   tam_status: string | null;
-  invoice_number: string | null;
+  financial_document_type: string | null;
+  financial_document_number: string | null;
 };
 
 type DragInfo =
@@ -175,9 +190,11 @@ export default function OperationalCalendar() {
   const [comments, setComments] = useState('');
   const [testingType, setTestingType] = useState<string | null>(null);
   const [tamStatus, setTamStatus] = useState<string | null>(null);
-  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [financialDocType, setFinancialDocType] = useState<string | null>(null);
+  const [financialDocNumber, setFinancialDocNumber] = useState('');
   const [showTestingTypeDropdown, setShowTestingTypeDropdown] = useState(false);
   const [showTamStatusDropdown, setShowTamStatusDropdown] = useState(false);
+  const [showFinancialDocDropdown, setShowFinancialDocDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // ---------- Drag-to-fill / drag-to-delete ----------
@@ -363,7 +380,8 @@ export default function OperationalCalendar() {
       comments: sourceEntry.comments,
       testing_type: sourceEntry.testing_type,
       tam_status: sourceEntry.tam_status,
-      invoice_number: COPY_INVOICE_ON_FILL ? sourceEntry.invoice_number : null,
+      financial_document_type: COPY_FINANCIAL_DOC_ON_FILL ? sourceEntry.financial_document_type : null,
+      financial_document_number: COPY_FINANCIAL_DOC_ON_FILL ? sourceEntry.financial_document_number : null,
       updated_by: uid,
       created_by: uid,
     }));
@@ -517,7 +535,8 @@ export default function OperationalCalendar() {
     setComments('');
     setTestingType(null);
     setTamStatus(null);
-    setInvoiceNumber('');
+    setFinancialDocType(null);
+    setFinancialDocNumber('');
     setShowMineSuggestions(false);
     setEntryModalVisible(true);
   }
@@ -532,7 +551,8 @@ export default function OperationalCalendar() {
     setComments(entry.comments ?? '');
     setTestingType(entry.testing_type);
     setTamStatus(entry.tam_status);
-    setInvoiceNumber(entry.invoice_number ?? '');
+    setFinancialDocType(entry.financial_document_type);
+    setFinancialDocNumber(entry.financial_document_number ?? '');
     setShowMineSuggestions(false);
     setDetailEntry(null);
     setEntryModalVisible(true);
@@ -582,6 +602,26 @@ export default function OperationalCalendar() {
     }
   }
 
+  // If an edit changes the financial document, look for other days (for
+  // the same technician) that currently carry the exact same old
+  // type+number — those are the days that were "made from that" same
+  // document (e.g. created together via a date range or a fill-drag).
+  // Days with a different document are a different job and are left
+  // alone.
+  async function updateRelatedFinancialDocs(dates: string[], type: string | null, number: string | null) {
+    if (!selectedTechnicianId || dates.length === 0) return;
+    const { error } = await supabase
+      .from('operational_calendar_entries')
+      .update({ financial_document_type: type, financial_document_number: number })
+      .eq('technician_id', selectedTechnicianId)
+      .in('entry_date', dates);
+    if (error) {
+      notify('Error', error.message);
+    } else {
+      fetchEntries(selectedTechnicianId);
+    }
+  }
+
   async function performSave(targetDates: string[]) {
     setSaving(true);
     const { data: userData } = await supabase.auth.getUser();
@@ -595,12 +635,34 @@ export default function OperationalCalendar() {
       comments: comments.trim() || null,
       testing_type: testingType,
       tam_status: tamStatus,
-      invoice_number: invoiceNumber.trim() || null,
+      financial_document_type: financialDocType,
+      financial_document_number: financialDocNumber.trim() || null,
       updated_by: uid,
     };
 
     let error;
+    let relatedDates: string[] = [];
+    let newDocType = basePayload.financial_document_type;
+    let newDocNumber = basePayload.financial_document_number;
+
     if (editingEntry) {
+      const oldDocType = editingEntry.financial_document_type;
+      const oldDocNumber = editingEntry.financial_document_number;
+      const docChanged = oldDocType !== newDocType || oldDocNumber !== newDocNumber;
+
+      // Only entries that had a real document before (not blank) can be
+      // "related" to this one.
+      if (docChanged && oldDocType && oldDocNumber) {
+        relatedDates = entries
+          .filter(e =>
+            e.id !== editingEntry.id &&
+            e.technician_id === editingEntry.technician_id &&
+            e.financial_document_type === oldDocType &&
+            e.financial_document_number === oldDocNumber
+          )
+          .map(e => e.entry_date);
+      }
+
       ({ error } = await supabase
         .from('operational_calendar_entries')
         .update({ ...basePayload, entry_date: targetDates[0] })
@@ -637,6 +699,16 @@ export default function OperationalCalendar() {
     setEntryModalVisible(false);
     if (selectedTechnicianId) fetchEntries(selectedTechnicianId);
     fetchMinePresets();
+
+    if (relatedDates.length > 0) {
+      confirm(
+        'Update related days?',
+        `${relatedDates.length} other day${relatedDates.length === 1 ? '' : 's'} ` +
+          `${relatedDates.length === 1 ? 'shares' : 'share'} this same financial document. ` +
+          `Update ${relatedDates.length === 1 ? 'it' : 'them'} to the new one too?`,
+        () => updateRelatedFinancialDocs(relatedDates, newDocType, newDocNumber)
+      );
+    }
   }
 
   function handleDeleteEntry(entry: CalendarEntry) {
@@ -808,9 +880,9 @@ export default function OperationalCalendar() {
                               </Text>
                             </View>
                           )}
-                          {entry.invoice_number && (
+                          {entry.financial_document_number && (
                             <Text style={styles.cellInvoiceText} numberOfLines={1}>
-                              {entry.invoice_number}
+                              {`${FINANCIAL_DOC_ABBR[entry.financial_document_type ?? ''] ?? ''} ${entry.financial_document_number}`.trim()}
                             </Text>
                           )}
                         </View>
@@ -899,8 +971,10 @@ export default function OperationalCalendar() {
                   )}
                 </View>
 
-                {detailEntry.invoice_number && (
-                  <Text style={styles.invoiceText}>{detailEntry.invoice_number}</Text>
+                {detailEntry.financial_document_number && (
+                  <Text style={styles.invoiceText}>
+                    {detailEntry.financial_document_type ?? 'Financial Document'}: {detailEntry.financial_document_number}
+                  </Text>
                 )}
 
                 {canEdit && (
@@ -1095,14 +1169,41 @@ export default function OperationalCalendar() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>INVOICE NUMBER</Text>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>FINANCIAL DOCUMENT</Text>
+              <TouchableOpacity
+                style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
+                onPress={() => setShowFinancialDocDropdown(!showFinancialDocDropdown)}
+              >
+                <Text style={[styles.dropdownBtnText, { color: financialDocType ? theme.text : theme.subtext }]}>
+                  {financialDocType ?? 'Select document type'}
+                </Text>
+                <ChevronDown color={theme.muted} size={16} />
+              </TouchableOpacity>
+              {showFinancialDocDropdown && (
+                <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  {FINANCIAL_DOCUMENT_OPTIONS.map(opt => (
+                    <TouchableOpacity
+                      key={opt}
+                      style={[styles.dropdownItem, { borderBottomColor: theme.border }, financialDocType === opt && { backgroundColor: `${colors.yellow}20` }]}
+                      onPress={() => { setFinancialDocType(opt); setShowFinancialDocDropdown(false); }}
+                    >
+                      <Text style={[styles.dropdownItemText, { color: financialDocType === opt ? colors.yellow : theme.text }]}>{opt}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
               <TextInput
-                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
-                placeholder="e.g. SO 16617 INV 50521"
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, marginTop: 8 }]}
+                placeholder={financialDocPlaceholder(financialDocType)}
                 placeholderTextColor={theme.muted}
-                value={invoiceNumber}
-                onChangeText={setInvoiceNumber}
+                value={financialDocNumber}
+                onChangeText={setFinancialDocNumber}
               />
+              {editingEntry && (financialDocType !== editingEntry.financial_document_type || financialDocNumber.trim() !== (editingEntry.financial_document_number ?? '')) && editingEntry.financial_document_type && editingEntry.financial_document_number && (
+                <Text style={[styles.rangeHint, { color: theme.subtext, marginTop: 8, marginBottom: 0 }]}>
+                  Any other days sharing the current document will be offered the same change when you save.
+                </Text>
+              )}
             </View>
           </View>
 
