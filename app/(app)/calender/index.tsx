@@ -60,11 +60,11 @@ function financialDocPlaceholder(type: string | null): string {
   return 'e.g. INV 50521';
 }
 
-// Fixed row height for the grid — needed so drag gestures can work out
-// which day is under the finger using simple math instead of measuring
-// every cell. If you change dayCell's height in the styles below, update
-// this too.
-const ROW_HEIGHT = 140;
+// Row height for the grid — needed so drag gestures can work out which
+// day is under the finger using simple math instead of measuring every
+// cell. Landscape gets a shorter row since the screen is a lot less tall.
+const PORTRAIT_ROW_HEIGHT = 172;
+const LANDSCAPE_ROW_HEIGHT = 120;
 
 // Whether dragging one day onto others also copies its financial document
 // (type + number). On by default: a fill-drag is usually one job spanning
@@ -155,7 +155,9 @@ function getCellBackground(entry: CalendarEntry | undefined): string {
 export default function OperationalCalendar() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const rowHeight = isLandscape ? LANDSCAPE_ROW_HEIGHT : PORTRAIT_ROW_HEIGHT;
 
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -216,6 +218,7 @@ export default function OperationalCalendar() {
     deleteMode: false,
     weeks: [] as (string | null)[][],
     cellWidth: 0,
+    rowHeight: PORTRAIT_ROW_HEIGHT,
     entriesByDate: {} as Record<string, CalendarEntry>,
     selectedTechnicianId: null as string | null,
   });
@@ -232,7 +235,33 @@ export default function OperationalCalendar() {
 
   // Cell width: full available width split 7 ways, so the grid always
   // fills the screen edge-to-edge like the spreadsheet's fixed columns.
+  // This already recalculates on rotation since it comes from
+  // useWindowDimensions, so the grid itself adapts to landscape on its own.
   const cellWidth = (width - 4) / 7;
+
+  // This screen supports both orientations. Unlock rotation while it's
+  // focused, and lock back to portrait when leaving it, so the rest of
+  // the app (which may assume portrait) isn't affected. Requires the
+  // `expo-screen-orientation` package (`npx expo install
+  // expo-screen-orientation`). If your app.json also has a hard
+  // `"orientation": "portrait"` lock for standalone/EAS builds, that
+  // takes precedence in production builds and needs to be changed to
+  // `"default"` (or removed) for this to work outside of Expo Go.
+  useFocusEffect(
+    useCallback(() => {
+      let ScreenOrientation: typeof import('expo-screen-orientation') | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        ScreenOrientation = require('expo-screen-orientation');
+      } catch {
+        ScreenOrientation = null;
+      }
+      ScreenOrientation?.unlockAsync().catch(() => {});
+      return () => {
+        ScreenOrientation?.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      };
+    }, [])
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -320,6 +349,7 @@ export default function OperationalCalendar() {
   liveRef.current.deleteMode = deleteMode;
   liveRef.current.weeks = weeks;
   liveRef.current.cellWidth = cellWidth;
+  liveRef.current.rowHeight = rowHeight;
   liveRef.current.entriesByDate = entriesByDate;
   liveRef.current.selectedTechnicianId = selectedTechnicianId;
 
@@ -348,10 +378,10 @@ export default function OperationalCalendar() {
     const localX = pageX - gridOriginRef.current.pageX;
     const localY = pageY - gridOriginRef.current.pageY;
     if (localX < 0 || localY < 0) return null;
-    const { weeks: liveWeeks, cellWidth: liveCellWidth } = liveRef.current;
+    const { weeks: liveWeeks, cellWidth: liveCellWidth, rowHeight: liveRowHeight } = liveRef.current;
     if (!liveCellWidth) return null;
     const col = Math.floor(localX / liveCellWidth);
-    const row = Math.floor(localY / ROW_HEIGHT);
+    const row = Math.floor(localY / liveRowHeight);
     if (col < 0 || col > 6) return null;
     const week = liveWeeks[row];
     if (!week) return null;
@@ -738,7 +768,7 @@ export default function OperationalCalendar() {
   return (
     <>
       <View style={[styles.container, { backgroundColor: theme.background }]}>
-        <View style={styles.header}>
+        <View style={[styles.header, isLandscape && styles.headerLandscape]}>
           <TouchableOpacity onPress={() => router.back()}>
             <ArrowLeft color={colors.yellow} size={24} />
           </TouchableOpacity>
@@ -818,7 +848,7 @@ export default function OperationalCalendar() {
                     return (
                       <View
                         key={di}
-                        style={[styles.dayCell, { width: cellWidth, backgroundColor: CELL_EMPTY_BG, borderColor: CELL_BORDER }]}
+                        style={[styles.dayCell, { width: cellWidth, height: rowHeight, backgroundColor: CELL_EMPTY_BG, borderColor: CELL_BORDER }]}
                       />
                     );
                   }
@@ -836,7 +866,7 @@ export default function OperationalCalendar() {
                       onPress={canEdit ? undefined : () => handleDayPress(dateStr)}
                       style={[
                         styles.dayCell,
-                        { width: cellWidth, backgroundColor: getCellBackground(entry), borderColor: CELL_BORDER },
+                        { width: cellWidth, height: rowHeight, backgroundColor: getCellBackground(entry), borderColor: CELL_BORDER },
                         isFillHighlighted && !isDragSource && styles.dayCellFillHighlight,
                         isDragSource && styles.dayCellDragSource,
                         isDeleteHighlighted && styles.dayCellDeleteHighlight,
@@ -1000,7 +1030,7 @@ export default function OperationalCalendar() {
           contentContainerStyle={styles.modalContent}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+          <View style={[styles.modalHeader, isLandscape && styles.modalHeaderLandscape, { borderBottomColor: theme.border }]}>
             <TouchableOpacity onPress={() => setEntryModalVisible(false)}>
               <X color={theme.muted} size={24} />
             </TouchableOpacity>
@@ -1010,7 +1040,7 @@ export default function OperationalCalendar() {
             <View style={{ width: 24 }} />
           </View>
 
-          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.formCard, isLandscape && styles.formCardLandscape, { backgroundColor: theme.card, borderColor: theme.border }]}>
             {editingEntry ? (
               <View style={styles.fieldGroup}>
                 <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DATE</Text>
@@ -1223,6 +1253,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingTop: 60, paddingBottom: 12,
   },
+  headerLandscape: { paddingTop: 24, paddingBottom: 8 },
   headerTitle: { fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
   deleteModeBtn: {
     width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
@@ -1243,23 +1274,23 @@ const styles = StyleSheet.create({
   weekdayHeaderCell: { paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
   weekdayHeaderText: { color: colors.white, fontSize: 11, fontWeight: '700' },
   dayCell: {
-    height: ROW_HEIGHT, borderWidth: 1, padding: 4, overflow: 'hidden',
+    borderWidth: 1, padding: 4, overflow: 'hidden',
   },
   dayCellFillHighlight: { borderWidth: 2, borderColor: DRAG_FILL_BORDER, backgroundColor: DRAG_FILL_TINT },
   dayCellDragSource: { borderWidth: 2, borderColor: DRAG_SOURCE_BORDER },
   dayCellDeleteHighlight: { borderWidth: 2, borderColor: DRAG_DELETE_BORDER, backgroundColor: DRAG_DELETE_TINT },
-  dayCellContent: { marginTop: 2, gap: 2 },
-  dayNumber: { fontSize: 11, fontWeight: '700', color: CELL_TEXT_DARK },
-  cellMineName: { fontSize: 9, fontWeight: '700', lineHeight: 11, color: CELL_TEXT_DARK },
-  cellSubText: { fontSize: 7.5, lineHeight: 9, color: CELL_SUBTEXT_DARK },
+  dayCellContent: { marginTop: 2, gap: 3 },
+  dayNumber: { fontSize: 13, fontWeight: '700', color: CELL_TEXT_DARK },
+  cellMineName: { fontSize: 11.5, fontWeight: '700', lineHeight: 14, color: CELL_TEXT_DARK },
+  cellSubText: { fontSize: 9.5, lineHeight: 12, color: CELL_SUBTEXT_DARK },
   cellCommentBox: {
     backgroundColor: COMMENT_BG, borderWidth: 1.5, borderColor: COMMENT_BORDER,
-    borderRadius: 3, paddingHorizontal: 3, paddingVertical: 2, marginTop: 2,
+    borderRadius: 3, paddingHorizontal: 4, paddingVertical: 3, marginTop: 2,
   },
-  cellCommentText: { fontSize: 7, fontWeight: '700', color: CELL_TEXT_DARK, textAlign: 'center', lineHeight: 8.5 },
-  cellPill: { borderRadius: 6, paddingHorizontal: 3, paddingVertical: 1, marginTop: 2 },
-  cellPillText: { fontSize: 7, fontWeight: '700', textAlign: 'center' },
-  cellInvoiceText: { fontSize: 7, fontWeight: '700', color: INVOICE_COLOR, marginTop: 2 },
+  cellCommentText: { fontSize: 9, fontWeight: '700', color: CELL_TEXT_DARK, textAlign: 'center', lineHeight: 11 },
+  cellPill: { borderRadius: 6, paddingHorizontal: 4, paddingVertical: 2, marginTop: 2 },
+  cellPillText: { fontSize: 8.5, fontWeight: '700', textAlign: 'center' },
+  cellInvoiceText: { fontSize: 8.5, fontWeight: '700', color: INVOICE_COLOR, marginTop: 2 },
   pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   pickerSheet: { width: '100%', maxWidth: 420, borderRadius: 16, borderWidth: 1, padding: 16 },
   pickerTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
@@ -1283,8 +1314,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16, borderBottomWidth: 1,
   },
+  modalHeaderLandscape: { paddingTop: 24 },
   modalTitle: { fontSize: 18, fontWeight: '700' },
   formCard: { margin: 16, borderRadius: 20, padding: 20, borderWidth: 1 },
+  formCardLandscape: { maxWidth: 560, alignSelf: 'center', width: '100%' },
   fieldGroup: { marginBottom: 16 },
   fieldLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.8, marginBottom: 8 },
   input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15 },
