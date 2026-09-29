@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, FileText, Calendar, BarChart3, LogOut, Users, ClipboardList, CheckCircle, FolderOpen, Eye } from 'lucide-react-native';
+import { User, FileText, Calendar, BarChart3, LogOut, Users, ClipboardList, CheckCircle, FolderOpen, Eye, MapPin } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 
 const colors = {
@@ -133,6 +133,17 @@ export default function AdminDashboard() {
       description: 'View your field team',
       route: '/(app)/callouts/(admin)/technicians',
       permission: 'manage_team',
+    },
+    {
+      // Visible to every admin; whether they can edit site info or
+      // just view/add notes+docs is decided inside the screen itself
+      // via the can_manage_sites permission, not gated here.
+      id: 'sites',
+      title: 'Sites',
+      icon: MapPin,
+      description: 'Site contacts, info, notes and documents',
+      route: '/(app)/hr/sites',
+      permission: null,
     },
     {
   id: 'documents',

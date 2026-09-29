@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, FileText, LogOut, ClipboardList, FolderOpen, Calendar } from 'lucide-react-native';
+import { User, FileText, LogOut, ClipboardList, FolderOpen, Calendar, MapPin } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 
 const colors = {
@@ -90,6 +90,17 @@ export default function TechnicianDashboard() {
   route: '/(app)/shared/my-requests',
   permission: null,
 },
+    {
+      // Technicians view site info/contacts read-only, and can add
+      // notes or upload documents for a site — enforced inside the
+      // screen, not gated here.
+      id: 'sites',
+      title: 'Sites',
+      icon: MapPin,
+      description: 'Site info, notes and documents',
+      route: '/(app)/hr/sites',
+      permission: null,
+    },
     {
       // Technicians always see their own operational calendar,
       // read-only — the screen itself hides edit controls for this
