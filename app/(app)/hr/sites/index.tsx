@@ -4,7 +4,7 @@ import {
   StyleSheet, useColorScheme, ActivityIndicator,
   Alert, TextInput, Modal
 } from 'react-native';
-import { Plus, MapPin, Edit, Trash2, X } from 'lucide-react-native';
+import { Plus, MapPin, Edit, Trash2, X, ChevronRight } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
@@ -41,6 +41,12 @@ export default function SitesManager() {
   const [siteName, setSiteName] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Only superuser (always) or an admin/hr with can_manage_sites can
+  // create/rename/delete a site. Everyone else just browses the list
+  // and taps in to view/contribute to a site's file (handled by
+  // permissions inside the detail screen itself).
+  const [canManage, setCanManage] = useState(false);
+
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
     card: isDark ? colors.gray[900] : colors.white,
@@ -53,9 +59,35 @@ export default function SitesManager() {
 
   useFocusEffect(
     useCallback(() => {
+      fetchPermission();
       fetchSites();
     }, [])
   );
+
+  async function fetchPermission() {
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
+    if (!uid) return;
+
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', uid).single();
+    const role = profile?.role;
+
+    if (role === 'superuser') {
+      setCanManage(true);
+      return;
+    }
+    if (role === 'admin' || role === 'hr') {
+      const { data: grant } = await supabase
+        .from('user_permissions')
+        .select('granted')
+        .eq('user_id', uid)
+        .eq('permission', 'can_manage_sites')
+        .maybeSingle();
+      setCanManage(!!grant?.granted);
+      return;
+    }
+    setCanManage(false);
+  }
 
   async function fetchSites() {
     const { data } = await supabase
@@ -156,9 +188,13 @@ export default function SitesManager() {
           <ArrowLeft color={colors.yellow} size={24} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: theme.text }]}>Sites</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={openCreateModal}>
-          <Plus color={colors.black} size={20} />
-        </TouchableOpacity>
+        {canManage ? (
+          <TouchableOpacity style={styles.addBtn} onPress={openCreateModal}>
+            <Plus color={colors.black} size={20} />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 36 }} />
+        )}
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -166,15 +202,19 @@ export default function SitesManager() {
           <View style={[styles.emptyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <MapPin color={theme.muted} size={40} />
             <Text style={[styles.emptyText, { color: theme.subtext }]}>No sites yet</Text>
-            <Text style={[styles.emptyHint, { color: theme.muted }]}>
-              Tap + to add your first site
-            </Text>
+            {canManage && (
+              <Text style={[styles.emptyHint, { color: theme.muted }]}>
+                Tap + to add your first site
+              </Text>
+            )}
           </View>
         ) : (
           sites.map((site) => (
-            <View
+            <TouchableOpacity
               key={site.id}
               style={[styles.siteCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={() => router.push(`/(app)/hr/sites/${site.id}` as any)}
+              activeOpacity={0.7}
             >
               <View style={styles.siteLeft}>
                 <View style={[styles.siteIcon, { backgroundColor: `${colors.yellow}20` }]}>
@@ -188,20 +228,25 @@ export default function SitesManager() {
                 </View>
               </View>
               <View style={styles.siteActions}>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: theme.input }]}
-                  onPress={() => openEditModal(site)}
-                >
-                  <Edit color={colors.yellow} size={16} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: isDark ? '#3b1a1a' : '#fee2e2' }]}
-                  onPress={() => handleDelete(site)}
-                >
-                  <Trash2 color="#ef4444" size={16} />
-                </TouchableOpacity>
+                {canManage && (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: theme.input }]}
+                      onPress={(e) => { e.stopPropagation(); openEditModal(site); }}
+                    >
+                      <Edit color={colors.yellow} size={16} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: isDark ? '#3b1a1a' : '#fee2e2' }]}
+                      onPress={(e) => { e.stopPropagation(); handleDelete(site); }}
+                    >
+                      <Trash2 color="#ef4444" size={16} />
+                    </TouchableOpacity>
+                  </>
+                )}
+                <ChevronRight color={theme.muted} size={18} />
               </View>
-            </View>
+            </TouchableOpacity>
           ))
         )}
       </ScrollView>
@@ -307,7 +352,7 @@ const styles = StyleSheet.create({
   },
   siteName: { fontSize: 16, fontWeight: '600', marginBottom: 2 },
   siteDate: { fontSize: 12 },
-  siteActions: { flexDirection: 'row', gap: 8 },
+  siteActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   actionBtn: {
     width: 36,
     height: 36,
