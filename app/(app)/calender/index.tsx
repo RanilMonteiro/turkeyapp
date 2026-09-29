@@ -4,11 +4,10 @@ import {
   StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput, useWindowDimensions,
   PanResponder, GestureResponderEvent,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
-import { useFocusEffect } from '@react-navigation/native';
 import DatePickerField from '../../../components/DatepickerField';
 
 const colors = {
@@ -63,8 +62,8 @@ function financialDocPlaceholder(type: string | null): string {
 // Row height for the grid — needed so drag gestures can work out which
 // day is under the finger using simple math instead of measuring every
 // cell. Landscape gets a shorter row since the screen is a lot less tall.
-const PORTRAIT_ROW_HEIGHT = 172;
-const LANDSCAPE_ROW_HEIGHT = 120;
+const PORTRAIT_ROW_HEIGHT = 232;
+const LANDSCAPE_ROW_HEIGHT = 210;
 
 // Whether dragging one day onto others also copies its financial document
 // (type + number). On by default: a fill-drag is usually one job spanning
@@ -249,7 +248,10 @@ export default function OperationalCalendar() {
   // `"default"` (or removed) for this to work outside of Expo Go.
   useFocusEffect(
     useCallback(() => {
-      let ScreenOrientation: typeof import('expo-screen-orientation') | null = null;
+      // Loosely typed on purpose: this package is optional. If it isn't
+      // installed yet, this just no-ops (rotation stays locked) instead
+      // of breaking the type-check or the build.
+      let ScreenOrientation: any = null;
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         ScreenOrientation = require('expo-screen-orientation');
