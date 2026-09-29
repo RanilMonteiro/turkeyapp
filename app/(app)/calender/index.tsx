@@ -62,8 +62,8 @@ function financialDocPlaceholder(type: string | null): string {
 // Row height for the grid — needed so drag gestures can work out which
 // day is under the finger using simple math instead of measuring every
 // cell. Landscape gets a shorter row since the screen is a lot less tall.
-const PORTRAIT_ROW_HEIGHT = 232;
-const LANDSCAPE_ROW_HEIGHT = 210;
+const PORTRAIT_ROW_HEIGHT = 272;
+const LANDSCAPE_ROW_HEIGHT = 250;
 
 // Whether dragging one day onto others also copies its financial document
 // (type + number). On by default: a fill-drag is usually one job spanning
@@ -1281,18 +1281,18 @@ const styles = StyleSheet.create({
   dayCellFillHighlight: { borderWidth: 2, borderColor: DRAG_FILL_BORDER, backgroundColor: DRAG_FILL_TINT },
   dayCellDragSource: { borderWidth: 2, borderColor: DRAG_SOURCE_BORDER },
   dayCellDeleteHighlight: { borderWidth: 2, borderColor: DRAG_DELETE_BORDER, backgroundColor: DRAG_DELETE_TINT },
-  dayCellContent: { marginTop: 2, gap: 3 },
-  dayNumber: { fontSize: 13, fontWeight: '700', color: CELL_TEXT_DARK },
-  cellMineName: { fontSize: 11.5, fontWeight: '700', lineHeight: 14, color: CELL_TEXT_DARK },
-  cellSubText: { fontSize: 9.5, lineHeight: 12, color: CELL_SUBTEXT_DARK },
+  dayCellContent: { marginTop: 4, gap: 6 },
+  dayNumber: { fontSize: 18, fontWeight: '700', color: CELL_TEXT_DARK },
+  cellMineName: { fontSize: 15.5, fontWeight: '700', lineHeight: 19, color: CELL_TEXT_DARK },
+  cellSubText: { fontSize: 13, lineHeight: 16, color: CELL_SUBTEXT_DARK },
   cellCommentBox: {
     backgroundColor: COMMENT_BG, borderWidth: 1.5, borderColor: COMMENT_BORDER,
-    borderRadius: 3, paddingHorizontal: 4, paddingVertical: 3, marginTop: 2,
+    borderRadius: 5, paddingHorizontal: 6, paddingVertical: 5, marginTop: 2,
   },
-  cellCommentText: { fontSize: 9, fontWeight: '700', color: CELL_TEXT_DARK, textAlign: 'center', lineHeight: 11 },
-  cellPill: { borderRadius: 6, paddingHorizontal: 4, paddingVertical: 2, marginTop: 2 },
-  cellPillText: { fontSize: 8.5, fontWeight: '700', textAlign: 'center' },
-  cellInvoiceText: { fontSize: 8.5, fontWeight: '700', color: INVOICE_COLOR, marginTop: 2 },
+  cellCommentText: { fontSize: 13, fontWeight: '700', color: CELL_TEXT_DARK, textAlign: 'center', lineHeight: 16 },
+  cellPill: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, marginTop: 2 },
+  cellPillText: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  cellInvoiceText: { fontSize: 13, fontWeight: '700', color: INVOICE_COLOR, marginTop: 4, textAlign: 'center' },
   pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   pickerSheet: { width: '100%', maxWidth: 420, borderRadius: 16, borderWidth: 1, padding: 16 },
   pickerTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
