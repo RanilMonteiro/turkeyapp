@@ -8,7 +8,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
-import { exportCalendarPdf, PdfScope } from '../../../lib/calendarPdf';
+import { exportCalendarPdf, PdfScope } from '../../../lib/calendarPDF';
 import DatePickerField from '../../../components/DatepickerField';
 
 const colors = {
