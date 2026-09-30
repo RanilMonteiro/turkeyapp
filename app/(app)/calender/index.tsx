@@ -5,7 +5,12 @@ import {
   PanResponder, GestureResponderEvent,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare } from 'lucide-react-native';
+import {
+  ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, Download
+} from 'lucide-react-native';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
 import DatePickerField from '../../../components/DatepickerField';
@@ -20,15 +25,11 @@ const colors = {
   }
 };
 
-// Matches the green / tan / red color coding from the spreadsheet.
 const TESTING_TYPE_COLOR = { bg: '#d1fae5', text: '#059669' };
 const TAM_STATUS_COLOR = { bg: '#fef3c7', text: '#b45309' };
 const INVOICE_COLOR = '#dc2626';
 const DAY_HEADER_BG = '#1e293b';
 
-// Fixed colors for the calendar grid itself — these are intentionally NOT
-// theme-aware, so the calendar always looks the same (white/green) whether
-// the app is in light or dark mode, matching the reference spreadsheet.
 const CELL_EMPTY_BG = '#ffffff';
 const CELL_FILLED_BG = '#d9ead3';
 const CELL_BORDER = '#94a3b8';
@@ -45,29 +46,26 @@ const DRAG_SOURCE_BORDER = '#b45309';
 const TESTING_TYPE_OPTIONS = ['Brake Testing', 'Lux Testing', 'Brake and Lux Testing', 'Inspections'];
 const TAM_STATUS_OPTIONS = ['On TAM', 'Not On TAM', 'Brake and Inspection'];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
 
 const FINANCIAL_DOCUMENT_OPTIONS = ['Invoice Number', 'Order Number', 'Sales Order'];
-// Short prefix shown on the grid cell itself, where space is tight.
 const FINANCIAL_DOC_ABBR: Record<string, string> = {
   'Invoice Number': 'INV',
   'Order Number': 'PO',
   'Sales Order': 'SO',
 };
+
 function financialDocPlaceholder(type: string | null): string {
   if (type === 'Order Number') return 'e.g. PO 12345';
   if (type === 'Sales Order') return 'e.g. SO 16617';
   return 'e.g. INV 50521';
 }
 
-// Row height for the grid — needed so drag gestures can work out which
-// day is under the finger using simple math instead of measuring every
-// cell. Landscape gets a shorter row since the screen is a lot less tall.
 const PORTRAIT_ROW_HEIGHT = 272;
 const LANDSCAPE_ROW_HEIGHT = 250;
-
-// Whether dragging one day onto others also copies its financial document
-// (type + number). On by default: a fill-drag is usually one job spanning
-// several days, so it makes sense for them to share the same document.
 const COPY_FINANCIAL_DOC_ON_FILL = true;
 
 type Technician = { id: string; full_name: string };
@@ -102,9 +100,6 @@ function toDateString(year: number, month: number, day: number): string {
   return `${year}-${mm}-${dd}`;
 }
 
-// Every date string between from/to inclusive — used to spread one
-// entry across multiple days when the person sets a date range, and
-// to work out which days a fill-drag gesture passed over.
 function expandDateRange(from: string, to: string): string[] {
   const dates: string[] = [];
   let current = new Date(from + 'T00:00:00');
@@ -123,9 +118,6 @@ function computeRangeDates(a: string, b: string): string[] {
   return a <= b ? expandDateRange(a, b) : expandDateRange(b, a);
 }
 
-// Builds a Sun-Sat grid of week rows for the given month, padding the
-// leading/trailing gaps with null so every row has exactly 7 slots —
-// mirrors how the spreadsheet lays a month out across fixed columns.
 function buildMonthGrid(year: number, month: number): (string | null)[][] {
   const firstDay = new Date(year, month, 1);
   const startWeekday = firstDay.getDay();
@@ -141,14 +133,151 @@ function buildMonthGrid(year: number, month: number): (string | null)[][] {
   return weeks;
 }
 
-// The grid cell background only knows "has an entry" vs "empty" right now
-// (matches the green look in the reference screenshot). The screenshot
-// also shows one manually orange-highlighted mine — there's no field in
-// the data that would drive that automatically, so it isn't reproduced
-// here. Adding a `highlight_color` column + a color picker in the entry
-// form would be the way to support that.
 function getCellBackground(entry: CalendarEntry | undefined): string {
   return entry ? CELL_FILLED_BG : CELL_EMPTY_BG;
+}
+
+/**
+ * Builds HTML document and initiates PDF print/export workflow
+ */
+async function generateCalendarPDF({
+  year,
+  month,
+  technicianName,
+  entries,
+}: {
+  year: number;
+  month: number | null;
+  technicianName: string;
+  entries: CalendarEntry[];
+}) {
+  const entriesMap: Record<string, CalendarEntry> = {};
+  entries.forEach(e => { entriesMap[e.entry_date] = e; });
+
+  const monthsToRender = month !== null ? [month] : Array.from({ length: 12 }, (_, i) => i);
+
+  let htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          @page { size: A4 landscape; margin: 10mm; }
+          body { font-family: -apple-system, sans-serif; color: #0f172a; margin: 0; padding: 0; background-color: #ffffff; }
+          .page-container { page-break-after: always; display: flex; flex-direction: column; box-sizing: border-box; }
+          .page-container:last-child { page-break-after: avoid; }
+          .pdf-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #1e293b; padding-bottom: 6px; margin-bottom: 8px; }
+          .pdf-title { font-size: 18px; font-weight: 800; text-transform: uppercase; }
+          .pdf-subtitle { font-size: 13px; font-weight: 600; color: #475569; }
+          .calendar-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+          .calendar-grid th { background-color: #1e293b; color: #ffffff; font-size: 10px; font-weight: 700; padding: 4px; text-transform: uppercase; border: 1px solid #0f172a; }
+          .calendar-grid td { border: 1px solid #94a3b8; vertical-align: top; padding: 4px; height: 105px; box-sizing: border-box; }
+          .cell-empty { background-color: #ffffff; }
+          .cell-filled { background-color: #d9ead3; }
+          .day-num { font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 2px; }
+          .mine-name { font-size: 10.5px; font-weight: 700; line-height: 1.2; color: #0f172a; }
+          .sub-text { font-size: 8.5px; color: #334155; line-height: 1.1; }
+          .comment-box { background-color: #fff176; border: 1px solid #000000; border-radius: 3px; padding: 2px; font-size: 8px; font-weight: 700; margin-top: 2px; text-align: center; }
+          .pill { display: inline-block; border-radius: 3px; padding: 2px; font-size: 8px; font-weight: 700; margin-top: 2px; text-align: center; width: 100%; box-sizing: border-box; }
+          .pill-testing { background-color: #d1fae5; color: #059669; }
+          .pill-tam { background-color: #fef3c7; color: #b45309; }
+          .invoice-text { font-size: 8.5px; font-weight: 700; color: #dc2626; margin-top: 2px; text-align: center; }
+        </style>
+      </head>
+      <body>
+  `;
+
+  for (const m of monthsToRender) {
+    const monthName = MONTH_NAMES[m];
+    const firstDay = new Date(year, m, 1).getDay();
+    const daysInMonth = new Date(year, m + 1, 0).getDate();
+
+    const cells: (string | null)[] = [];
+    for (let i = 0; i < firstDay; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const mm = String(m + 1).padStart(2, '0');
+      const dd = String(d).padStart(2, '0');
+      cells.push(`${year}-${mm}-${dd}`);
+    }
+    while (cells.length % 7 !== 0) cells.push(null);
+
+    const weeks: (string | null)[][] = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+    htmlContent += `
+      <div class="page-container">
+        <div class="pdf-header">
+          <div class="pdf-title">${monthName} ${year}</div>
+          <div class="pdf-subtitle">Technician: <strong>${technicianName}</strong></div>
+        </div>
+        <table class="calendar-grid">
+          <thead>
+            <tr>
+              <th style="width: 14.28%;">Sun</th>
+              <th style="width: 14.28%;">Mon</th>
+              <th style="width: 14.28%;">Tue</th>
+              <th style="width: 14.28%;">Wed</th>
+              <th style="width: 14.28%;">Thu</th>
+              <th style="width: 14.28%;">Fri</th>
+              <th style="width: 14.28%;">Sat</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    for (const week of weeks) {
+      htmlContent += `<tr>`;
+      for (const dateStr of week) {
+        if (!dateStr) {
+          htmlContent += `<td class="cell-empty"></td>`;
+          continue;
+        }
+
+        const entry = entriesMap[dateStr];
+        const dayNum = parseInt(dateStr.split('-')[2], 10);
+        const cellClass = entry ? 'cell-filled' : 'cell-empty';
+
+        htmlContent += `<td class="${cellClass}">`;
+        htmlContent += `<div class="day-num">${dayNum}</div>`;
+
+        if (entry) {
+          htmlContent += `<div class="mine-name">${entry.mine_name}</div>`;
+          if (entry.contact_person) htmlContent += `<div class="sub-text">${entry.contact_person}</div>`;
+          if (entry.contact_number) htmlContent += `<div class="sub-text">${entry.contact_number}</div>`;
+          if (entry.comments) htmlContent += `<div class="comment-box">${entry.comments}</div>`;
+          if (entry.testing_type) htmlContent += `<div class="pill pill-testing">${entry.testing_type}</div>`;
+          if (entry.tam_status) htmlContent += `<div class="pill pill-tam">${entry.tam_status}</div>`;
+          if (entry.financial_document_number) {
+            const docAbbr = FINANCIAL_DOC_ABBR[entry.financial_document_type ?? ''] ?? 'INV';
+            htmlContent += `<div class="invoice-text">${docAbbr} ${entry.financial_document_number}</div>`;
+          }
+        }
+
+        htmlContent += `</td>`;
+      }
+      htmlContent += `</tr>`;
+    }
+
+    htmlContent += `
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  htmlContent += `
+      </body>
+    </html>
+  `;
+
+  const { uri } = await Print.printToFileAsync({ html: htmlContent, base64: false });
+  await Sharing.shareAsync(uri, {
+    UTI: '.pdf',
+    mimeType: 'application/pdf',
+    dialogTitle: month !== null
+      ? `Export ${MONTH_NAMES[month]} ${year} PDF`
+      : `Export Full Year ${year} PDF`,
+  });
 }
 
 export default function OperationalCalendar() {
@@ -175,12 +304,13 @@ export default function OperationalCalendar() {
     return { year: now.getFullYear(), month: now.getMonth() };
   });
 
-  // Day detail modal (tap a filled day — shows everything including
-  // comments, plus Edit/Delete if permitted)
+  // Modal / PDF states
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+
   const [detailEntry, setDetailEntry] = useState<CalendarEntry | null>(null);
   const [detailDate, setDetailDate] = useState<string | null>(null);
 
-  // Entry edit modal
   const [entryModalVisible, setEntryModalVisible] = useState(false);
   const [editingEntry, setEditingEntry] = useState<CalendarEntry | null>(null);
   const [dateFrom, setDateFrom] = useState('');
@@ -198,7 +328,6 @@ export default function OperationalCalendar() {
   const [showFinancialDocDropdown, setShowFinancialDocDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // ---------- Drag-to-fill / drag-to-delete ----------
   const [deleteMode, setDeleteMode] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [dragInfo, setDragInfo] = useState<DragInfo | null>(null);
@@ -209,9 +338,6 @@ export default function OperationalCalendar() {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartDateRef = useRef<string | null>(null);
 
-  // Mirrors the latest state into a ref so the PanResponder (created once
-  // and never recreated) can always read fresh values instead of the
-  // stale ones captured on its first render.
   const liveRef = useRef({
     canEdit: false,
     deleteMode: false,
@@ -232,32 +358,12 @@ export default function OperationalCalendar() {
     muted: isDark ? colors.gray[500] : colors.gray[400],
   };
 
-  // Cell width: full available width split 7 ways, so the grid always
-  // fills the screen edge-to-edge like the spreadsheet's fixed columns.
-  // This already recalculates on rotation since it comes from
-  // useWindowDimensions, so the grid itself adapts to landscape on its own.
   const cellWidth = (width - 4) / 7;
 
-  // This screen supports both orientations. Unlock rotation while it's
-  // focused, and lock back to portrait when leaving it, so the rest of
-  // the app (which may assume portrait) isn't affected. Requires the
-  // `expo-screen-orientation` package (`npx expo install
-  // expo-screen-orientation`). If your app.json also has a hard
-  // `"orientation": "portrait"` lock for standalone/EAS builds, that
-  // takes precedence in production builds and needs to be changed to
-  // `"default"` (or removed) for this to work outside of Expo Go.
   useFocusEffect(
     useCallback(() => {
-      // Loosely typed on purpose: this package is optional. If it isn't
-      // installed yet, this just no-ops (rotation stays locked) instead
-      // of breaking the type-check or the build.
       let ScreenOrientation: any = null;
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        ScreenOrientation = require('expo-screen-orientation');
-      } catch {
-        ScreenOrientation = null;
-      }
+      try { ScreenOrientation = require('expo-screen-orientation'); } catch { ScreenOrientation = null; }
       ScreenOrientation?.unlockAsync().catch(() => {});
       return () => {
         ScreenOrientation?.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
@@ -277,11 +383,7 @@ export default function OperationalCalendar() {
     const uid = userData.user?.id ?? null;
     setUserId(uid);
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', uid)
-      .single();
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', uid).single();
     const myRole = profile?.role ?? null;
     setRole(myRole);
 
@@ -345,8 +447,6 @@ export default function OperationalCalendar() {
   const selectedTechnician = technicians.find(t => t.id === selectedTechnicianId);
   const weeks = buildMonthGrid(viewDate.year, viewDate.month);
 
-  // Keep the live ref in sync every render so gesture handlers (bound
-  // once) always see current data.
   liveRef.current.canEdit = canEdit;
   liveRef.current.deleteMode = deleteMode;
   liveRef.current.weeks = weeks;
@@ -373,7 +473,45 @@ export default function OperationalCalendar() {
     }
   }
 
-  // ---------- Drag gesture ----------
+  async function handleExportPDF(exportType: 'month' | 'year') {
+    if (!selectedTechnician || !selectedTechnicianId) {
+      notify('Error', 'Please select a technician first.');
+      return;
+    }
+
+    setShowExportModal(false);
+    setExportingPdf(true);
+
+    try {
+      let exportEntries = entries;
+
+      if (exportType === 'year') {
+        const yearStart = `${viewDate.year}-01-01`;
+        const yearEnd = `${viewDate.year}-12-31`;
+        const { data, error } = await supabase
+          .from('operational_calendar_entries')
+          .select('*')
+          .eq('technician_id', selectedTechnicianId)
+          .gte('entry_date', yearStart)
+          .lte('entry_date', yearEnd)
+          .order('entry_date');
+
+        if (error) throw error;
+        if (data) exportEntries = data;
+      }
+
+      await generateCalendarPDF({
+        year: viewDate.year,
+        month: exportType === 'month' ? viewDate.month : null,
+        technicianName: selectedTechnician.full_name,
+        entries: exportEntries,
+      });
+    } catch (err: any) {
+      notify('PDF Export Failed', err.message);
+    } finally {
+      setExportingPdf(false);
+    }
+  }
 
   function dateAtTouch(evt: GestureResponderEvent): string | null {
     const { pageX, pageY } = evt.nativeEvent;
@@ -555,8 +693,6 @@ export default function OperationalCalendar() {
     })
   ).current;
 
-  // ---------- Entry modal ----------
-
   function openNewEntryModal(dateStr: string) {
     setEditingEntry(null);
     setDateFrom(dateStr);
@@ -614,14 +750,7 @@ export default function OperationalCalendar() {
     }
 
     const targetDates = editingEntry ? [dateFrom] : expandDateRange(dateFrom, dateTo);
-
-    // Warn before silently overwriting days that already have an
-    // entry — only relevant for a fresh multi/single-day save (this
-    // branch only runs when editingEntry is null, so any existing
-    // entry on a target day is necessarily a different one).
-    const overlapping = editingEntry
-      ? []
-      : targetDates.filter(d => !!entriesByDate[d]);
+    const overlapping = editingEntry ? [] : targetDates.filter(d => !!entriesByDate[d]);
 
     if (overlapping.length > 0) {
       confirm(
@@ -634,12 +763,6 @@ export default function OperationalCalendar() {
     }
   }
 
-  // If an edit changes the financial document, look for other days (for
-  // the same technician) that currently carry the exact same old
-  // type+number — those are the days that were "made from that" same
-  // document (e.g. created together via a date range or a fill-drag).
-  // Days with a different document are a different job and are left
-  // alone.
   async function updateRelatedFinancialDocs(dates: string[], type: string | null, number: string | null) {
     if (!selectedTechnicianId || dates.length === 0) return;
     const { error } = await supabase
@@ -682,8 +805,6 @@ export default function OperationalCalendar() {
       const oldDocNumber = editingEntry.financial_document_number;
       const docChanged = oldDocType !== newDocType || oldDocNumber !== newDocNumber;
 
-      // Only entries that had a real document before (not blank) can be
-      // "related" to this one.
       if (docChanged && oldDocType && oldDocNumber) {
         relatedDates = entries
           .filter(e =>
@@ -712,8 +833,6 @@ export default function OperationalCalendar() {
       return;
     }
 
-    // Remember this mine's contact info for next time, regardless of
-    // whether this was a new entry or an edit.
     await supabase
       .from('operational_calendar_mine_presets')
       .upsert(
@@ -775,16 +894,25 @@ export default function OperationalCalendar() {
             <ArrowLeft color={colors.yellow} size={24} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: theme.text }]}>Operational Calendar</Text>
-          {canEdit ? (
-            <TouchableOpacity
-              onPress={() => setDeleteMode(d => !d)}
-              style={[styles.deleteModeBtn, deleteMode && styles.deleteModeBtnActive]}
-            >
-              <Trash2 color={deleteMode ? '#ffffff' : theme.muted} size={18} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <TouchableOpacity onPress={() => setShowExportModal(true)} disabled={exportingPdf}>
+              {exportingPdf ? (
+                <ActivityIndicator color={colors.yellow} size="small" />
+              ) : (
+                <Download color={colors.yellow} size={22} />
+              )}
             </TouchableOpacity>
-          ) : (
-            <View style={{ width: 24 }} />
-          )}
+            {canEdit ? (
+              <TouchableOpacity
+                onPress={() => setDeleteMode(d => !d)}
+                style={[styles.deleteModeBtn, deleteMode && styles.deleteModeBtnActive]}
+              >
+                <Trash2 color={deleteMode ? '#ffffff' : theme.muted} size={18} />
+              </TouchableOpacity>
+            ) : (
+              <View style={{ width: 24 }} />
+            )}
+          </View>
         </View>
 
         {role !== 'technician' && (
@@ -826,7 +954,6 @@ export default function OperationalCalendar() {
         </View>
 
         <ScrollView contentContainerStyle={{ paddingBottom: 24 }} scrollEnabled={!isDragging}>
-          {/* Weekday header row */}
           <View style={styles.weekRow}>
             {WEEKDAY_LABELS.map(label => (
               <View key={label} style={[styles.weekdayHeaderCell, { width: cellWidth, backgroundColor: DAY_HEADER_BG }]}>
@@ -835,9 +962,6 @@ export default function OperationalCalendar() {
             ))}
           </View>
 
-          {/* Grid — wrapped in a single view carrying the drag gesture so
-              we can work out which day is under the finger with simple
-              row/col math instead of measuring every cell. */}
           <View
             ref={gridRef}
             onLayout={measureGridOrigin}
@@ -928,6 +1052,36 @@ export default function OperationalCalendar() {
         </ScrollView>
       </View>
 
+      {/* Export Options Modal */}
+      <Modal visible={showExportModal} transparent animationType="fade" onRequestClose={() => setShowExportModal(false)}>
+        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowExportModal(false)}>
+          <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.pickerTitle, { color: theme.text }]}>Export Calendar to PDF</Text>
+            <Text style={{ color: theme.subtext, fontSize: 13, marginBottom: 16 }}>
+              Technician: <Text style={{ color: colors.yellow, fontWeight: '700' }}>{selectedTechnician?.full_name}</Text>
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.saveBtn, { margin: 0, marginBottom: 10 }]}
+              onPress={() => handleExportPDF('month')}
+            >
+              <Text style={styles.saveBtnText}>
+                Export Single Month ({new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.saveBtn, { margin: 0, backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.yellow }]}
+              onPress={() => handleExportPDF('year')}
+            >
+              <Text style={[styles.saveBtnText, { color: colors.yellow }]}>
+                Export Full Year ({viewDate.year})
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Technician picker modal */}
       <Modal visible={showTechDropdown} transparent animationType="fade" onRequestClose={() => setShowTechDropdown(false)}>
         <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowTechDropdown(false)}>
@@ -948,8 +1102,7 @@ export default function OperationalCalendar() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Day detail modal — tapping a filled day shows everything,
-          including comments, which don't fit in the grid cell itself */}
+      {/* Day detail modal */}
       <Modal visible={!!detailEntry} transparent animationType="fade" onRequestClose={() => setDetailEntry(null)}>
         <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setDetailEntry(null)}>
           <TouchableOpacity activeOpacity={1} style={[styles.detailSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
