@@ -138,7 +138,7 @@ function getCellBackground(entry: CalendarEntry | undefined): string {
 }
 
 /**
- * Builds HTML document and initiates PDF print/export workflow
+ * Builds printable HTML and generates PDF natively via expo-print
  */
 async function generateCalendarPDF({
   year,
@@ -161,27 +161,134 @@ async function generateCalendarPDF({
     <html>
       <head>
         <meta charset="utf-8" />
+        <title>${month !== null ? MONTH_NAMES[month] : 'Year'} ${year} Calendar</title>
         <style>
-          @page { size: A4 landscape; margin: 10mm; }
-          body { font-family: -apple-system, sans-serif; color: #0f172a; margin: 0; padding: 0; background-color: #ffffff; }
-          .page-container { page-break-after: always; display: flex; flex-direction: column; box-sizing: border-box; }
-          .page-container:last-child { page-break-after: avoid; }
-          .pdf-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #1e293b; padding-bottom: 6px; margin-bottom: 8px; }
-          .pdf-title { font-size: 18px; font-weight: 800; text-transform: uppercase; }
-          .pdf-subtitle { font-size: 13px; font-weight: 600; color: #475569; }
-          .calendar-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-          .calendar-grid th { background-color: #1e293b; color: #ffffff; font-size: 10px; font-weight: 700; padding: 4px; text-transform: uppercase; border: 1px solid #0f172a; }
-          .calendar-grid td { border: 1px solid #94a3b8; vertical-align: top; padding: 4px; height: 105px; box-sizing: border-box; }
-          .cell-empty { background-color: #ffffff; }
-          .cell-filled { background-color: #d9ead3; }
-          .day-num { font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 2px; }
-          .mine-name { font-size: 10.5px; font-weight: 700; line-height: 1.2; color: #0f172a; }
-          .sub-text { font-size: 8.5px; color: #334155; line-height: 1.1; }
-          .comment-box { background-color: #fff176; border: 1px solid #000000; border-radius: 3px; padding: 2px; font-size: 8px; font-weight: 700; margin-top: 2px; text-align: center; }
-          .pill { display: inline-block; border-radius: 3px; padding: 2px; font-size: 8px; font-weight: 700; margin-top: 2px; text-align: center; width: 100%; box-sizing: border-box; }
+          @page {
+            size: A4 landscape;
+            margin: 6mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #0f172a;
+          }
+          .month-page {
+            width: 100%;
+            height: 98vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            page-break-after: always;
+            break-after: page;
+            padding: 4px;
+          }
+          .month-page:last-child {
+            page-break-after: avoid;
+            break-after: avoid;
+          }
+          .pdf-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #1e293b;
+            padding-bottom: 4px;
+            margin-bottom: 6px;
+          }
+          .pdf-title {
+            font-size: 16px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #0f172a;
+          }
+          .pdf-subtitle {
+            font-size: 12px;
+            font-weight: 600;
+            color: #334155;
+          }
+          .calendar-table {
+            width: 100%;
+            height: 90vh;
+            border-collapse: collapse;
+            table-layout: fixed;
+          }
+          .calendar-table th {
+            background-color: #1e293b;
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 4px 2px;
+            text-transform: uppercase;
+            border: 1px solid #0f172a;
+            height: 24px;
+          }
+          .calendar-table td {
+            border: 1px solid #94a3b8;
+            vertical-align: top;
+            padding: 3px;
+            overflow: hidden;
+            word-wrap: break-word;
+          }
+          .cell-empty {
+            background-color: #ffffff;
+          }
+          .cell-filled {
+            background-color: #d9ead3;
+          }
+          .day-num {
+            font-size: 11px;
+            font-weight: 800;
+            color: #0f172a;
+            margin-bottom: 2px;
+          }
+          .mine-name {
+            font-size: 9.5px;
+            font-weight: 700;
+            line-height: 1.1;
+            color: #0f172a;
+          }
+          .sub-text {
+            font-size: 8px;
+            color: #334155;
+            line-height: 1;
+            margin-top: 1px;
+          }
+          .comment-box {
+            background-color: #fff176;
+            border: 1px solid #000000;
+            border-radius: 2px;
+            padding: 1px 2px;
+            font-size: 7.5px;
+            font-weight: 700;
+            margin-top: 2px;
+            text-align: center;
+            line-height: 1;
+          }
+          .pill {
+            border-radius: 3px;
+            padding: 1px 2px;
+            font-size: 7.5px;
+            font-weight: 700;
+            margin-top: 2px;
+            text-align: center;
+            display: block;
+          }
           .pill-testing { background-color: #d1fae5; color: #059669; }
           .pill-tam { background-color: #fef3c7; color: #b45309; }
-          .invoice-text { font-size: 8.5px; font-weight: 700; color: #dc2626; margin-top: 2px; text-align: center; }
+          .invoice-text {
+            font-size: 8px;
+            font-weight: 700;
+            color: #dc2626;
+            margin-top: 2px;
+            text-align: center;
+          }
         </style>
       </head>
       <body>
@@ -205,12 +312,12 @@ async function generateCalendarPDF({
     for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
 
     htmlContent += `
-      <div class="page-container">
+      <div class="month-page">
         <div class="pdf-header">
           <div class="pdf-title">${monthName} ${year}</div>
           <div class="pdf-subtitle">Technician: <strong>${technicianName}</strong></div>
         </div>
-        <table class="calendar-grid">
+        <table class="calendar-table">
           <thead>
             <tr>
               <th style="width: 14.28%;">Sun</th>
@@ -304,7 +411,6 @@ export default function OperationalCalendar() {
     return { year: now.getFullYear(), month: now.getMonth() };
   });
 
-  // Modal / PDF states
   const [exportingPdf, setExportingPdf] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
 
@@ -483,9 +589,26 @@ export default function OperationalCalendar() {
     setExportingPdf(true);
 
     try {
-      let exportEntries = entries;
+      let exportEntries: CalendarEntry[] = [];
 
-      if (exportType === 'year') {
+      if (exportType === 'month') {
+        const mmStart = String(viewDate.month + 1).padStart(2, '0');
+        const daysInMonth = new Date(viewDate.year, viewDate.month + 1, 0).getDate();
+        const ddEnd = String(daysInMonth).padStart(2, '0');
+        const monthStart = `${viewDate.year}-${mmStart}-01`;
+        const monthEnd = `${viewDate.year}-${mmStart}-${ddEnd}`;
+
+        const { data, error } = await supabase
+          .from('operational_calendar_entries')
+          .select('*')
+          .eq('technician_id', selectedTechnicianId)
+          .gte('entry_date', monthStart)
+          .lte('entry_date', monthEnd)
+          .order('entry_date');
+
+        if (error) throw error;
+        if (data) exportEntries = data;
+      } else {
         const yearStart = `${viewDate.year}-01-01`;
         const yearEnd = `${viewDate.year}-12-31`;
         const { data, error } = await supabase
@@ -940,7 +1063,6 @@ export default function OperationalCalendar() {
           </Text>
         )}
 
-        {/* Month nav */}
         <View style={styles.monthNavRow}>
           <TouchableOpacity onPress={goToPreviousMonth} style={styles.monthNavBtn}>
             <ChevronLeft color={colors.yellow} size={22} />
@@ -1055,7 +1177,7 @@ export default function OperationalCalendar() {
       {/* Export Options Modal */}
       <Modal visible={showExportModal} transparent animationType="fade" onRequestClose={() => setShowExportModal(false)}>
         <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowExportModal(false)}>
-          <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <TouchableOpacity activeOpacity={1} style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.pickerTitle, { color: theme.text }]}>Export Calendar to PDF</Text>
             <Text style={{ color: theme.subtext, fontSize: 13, marginBottom: 16 }}>
               Technician: <Text style={{ color: colors.yellow, fontWeight: '700' }}>{selectedTechnician?.full_name}</Text>
@@ -1078,7 +1200,7 @@ export default function OperationalCalendar() {
                 Export Full Year ({viewDate.year})
               </Text>
             </TouchableOpacity>
-          </View>
+          </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
 
