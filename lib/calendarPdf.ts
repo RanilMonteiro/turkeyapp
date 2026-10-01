@@ -18,6 +18,7 @@ export const HIGHLIGHT_COLOURS = [
   { key: 'blue', label: 'Rain delay', color: '#9fc5e8' },
   { key: 'yellow', label: 'Not confirmed', color: '#ffe599' },
   { key: 'green', label: 'Not complete', color: '#b6d7a8' },
+  { key: 'red', label: 'Not done', color: '#e57373' },
   { key: 'pink', label: 'Medical / Inductions / Training', color: '#f4b6d2' },
 ] as const;
 export type HighlightKey = (typeof HIGHLIGHT_COLOURS)[number]['key'];
