@@ -196,6 +196,29 @@ const CSS = `
   .mini td.on { background: #86c47a; color: #0f172a; font-weight: 800; border-radius: 2pt; }
   .legend { font-size: 7pt; color: #475569; margin-top: 6pt; }
   .legend span.sw { display: inline-block; width: 8pt; height: 8pt; background: #86c47a; border-radius: 2pt; vertical-align: -1pt; margin-right: 3pt; }
+
+  /* Fit-to-cell tuning: the financial document line is pinned to the bottom
+     of the cell and always visible; the content above it shrinks to fit. */
+  .page { padding: 16pt 20pt; }
+  .cell { display: flex; flex-direction: column; padding: 2.5pt 3.5pt; }
+  .cell .body { flex: 1; min-height: 0; overflow: hidden; }
+  .top { display: flex; align-items: flex-start; gap: 3pt; }
+  .day { font-size: 8.5pt; line-height: 1.1; flex: none; min-width: 9pt; }
+  .mine { font-size: 7.5pt; line-height: 1.1; margin-top: 0; flex: 1; }
+  .sub { font-size: 6.2pt; line-height: 1.15; margin-top: 0.5pt; }
+  .comment { margin-top: 2pt; padding: 1.5pt 3pt; font-size: 6.2pt; line-height: 1.15; }
+  .pill { margin-top: 2pt; padding: 1.5pt 4pt; font-size: 6.2pt; line-height: 1.15; }
+  .inv {
+    flex: none;
+    margin-top: 0;
+    padding-top: 2pt;
+    font-size: 7pt;
+    line-height: 1.15;
+    font-weight: 800;
+    color: #dc2626;
+    text-align: center;
+    word-break: break-word;
+  }
 `;
 
 function cellHtml(dateStr: string, entry: PdfEntry | undefined): string {
@@ -209,13 +232,14 @@ function cellHtml(dateStr: string, entry: PdfEntry | undefined): string {
 
   return `
     <div class="cell filled">
-      <div class="day">${day}</div>
-      <div class="mine">${esc(entry.mine_name)}</div>
+      <div class="body">
+      <div class="top"><div class="day">${day}</div><div class="mine">${esc(entry.mine_name)}</div></div>
       ${entry.contact_person ? `<div class="sub">${esc(entry.contact_person)}</div>` : ''}
       ${entry.contact_number ? `<div class="sub">${esc(entry.contact_number)}</div>` : ''}
       ${entry.comments ? `<div class="comment">${esc(entry.comments)}</div>` : ''}
       ${entry.testing_type ? `<div class="pill test">${esc(entry.testing_type)}</div>` : ''}
       ${entry.tam_status ? `<div class="pill tam">${esc(entry.tam_status)}</div>` : ''}
+      </div>
       ${doc ? `<div class="inv">${esc(doc)}</div>` : ''}
     </div>`;
 }
