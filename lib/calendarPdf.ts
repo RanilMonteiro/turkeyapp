@@ -359,10 +359,30 @@ async function renameFile(uri: string, fileName: string): Promise<string> {
 // Web only: expo-print can't produce files in a browser (it just opens the
 // print dialog), so render each .page of the HTML in a hidden iframe, snapshot
 // it, and assemble a real PDF that downloads straight away.
-// Requires:  npm install jspdf html2canvas
+// jsPDF + html2canvas are loaded from a CDN at the moment of export instead of
+// being bundled, because Metro can't bundle jsPDF's Node build. No npm install
+// needed for them.
+const JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+const HTML2CANVAS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+
+function loadScript(src: string, globalName: string): Promise<any> {
+  const w = window as any;
+  if (w[globalName]) return Promise.resolve(w[globalName]);
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = () =>
+      w[globalName] ? resolve(w[globalName]) : reject(new Error('PDF library failed to initialise.'));
+    s.onerror = () =>
+      reject(new Error('Could not load the PDF library. Check your internet connection and try again.'));
+    document.head.appendChild(s);
+  });
+}
+
 async function savePdfOnWeb(html: string, fileName: string): Promise<void> {
-  const html2canvas = (await import('html2canvas')).default;
-  const { jsPDF } = await import('jspdf');
+  const html2canvas = await loadScript(HTML2CANVAS_URL, 'html2canvas');
+  const jsPDF = (await loadScript(JSPDF_URL, 'jspdf')).jsPDF;
 
   const iframe = document.createElement('iframe');
   iframe.style.cssText =
