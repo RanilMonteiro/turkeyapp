@@ -197,27 +197,29 @@ const CSS = `
   .legend { font-size: 7pt; color: #475569; margin-top: 6pt; }
   .legend span.sw { display: inline-block; width: 8pt; height: 8pt; background: #86c47a; border-radius: 2pt; vertical-align: -1pt; margin-right: 3pt; }
 
-  /* Fit-to-cell tuning: the financial document line is pinned to the bottom
-     of the cell and always visible; the content above it shrinks to fit. */
+  /* Fit-to-cell: every size scales with --s, which is chosen per month in
+     monthPageHtml so the busiest day just fits and quiet months stay roomy.
+     The financial document line is pinned to the bottom of the cell. */
   .page { padding: 16pt 20pt; }
-  .cell { display: flex; flex-direction: column; padding: 2.5pt 3.5pt; }
+  .grid { --s: 1; }
+  .cell { display: flex; flex-direction: column; padding: calc(3pt * var(--s)) calc(4pt * var(--s)); }
   .cell .body { flex: 1; min-height: 0; overflow: hidden; }
-  .top { display: flex; align-items: flex-start; gap: 3pt; }
-  .day { font-size: 8.5pt; line-height: 1.1; flex: none; min-width: 9pt; }
-  .mine { font-size: 7.5pt; line-height: 1.1; margin-top: 0; flex: 1; }
-  .sub { font-size: 6.2pt; line-height: 1.15; margin-top: 0.5pt; }
-  .comment { margin-top: 2pt; padding: 1.5pt 3pt; font-size: 6.2pt; line-height: 1.15; }
-  .pill { margin-top: 2pt; padding: 1.5pt 4pt; font-size: 6.2pt; line-height: 1.15; }
+  .top { display: flex; align-items: flex-start; gap: calc(3pt * var(--s)); }
+  .day { font-size: calc(8.5pt * var(--s)); line-height: 1.1; flex: none; min-width: calc(9pt * var(--s)); }
+  .mine { font-size: calc(7.5pt * var(--s)); line-height: 1.1; margin-top: 0; flex: 1; }
+  .sub { font-size: calc(6.2pt * var(--s)); line-height: 1.15; margin-top: calc(0.5pt * var(--s)); }
+  .comment {
+    margin-top: calc(2pt * var(--s)); padding: calc(1.5pt * var(--s)) calc(3pt * var(--s));
+    font-size: calc(6.2pt * var(--s)); line-height: 1.15; border-radius: calc(3pt * var(--s));
+  }
+  .pill {
+    margin-top: calc(2pt * var(--s)); padding: calc(2pt * var(--s)) calc(4pt * var(--s));
+    font-size: calc(6.2pt * var(--s)); line-height: 1.15; border-radius: calc(6pt * var(--s));
+  }
   .inv {
-    flex: none;
-    margin-top: 0;
-    padding-top: 2pt;
-    font-size: 7pt;
-    line-height: 1.15;
-    font-weight: 800;
-    color: #dc2626;
-    text-align: center;
-    word-break: break-word;
+    flex: none; margin-top: 0; padding-top: calc(2pt * var(--s));
+    font-size: calc(7.5pt * var(--s)); line-height: 1.15; font-weight: 800;
+    color: #dc2626; text-align: center; word-break: break-word;
   }
 `;
 
@@ -248,6 +250,29 @@ function footerHtml(generated: string, pageLabel: string): string {
   return `<div class="footer"><span>Generated ${esc(generated)}</span><span>${esc(pageLabel)}</span></div>`;
 }
 
+// Rough height (in pt, at scale 1) of one filled cell. Used to pick a text
+// size per month so the busiest day still fits its row.
+function estimateEntryHeight(e: PdfEntry): number {
+  const lines = (text: string, perLine: number) => Math.max(1, Math.ceil(text.length / perLine));
+  let h = 6; // cell padding
+  h += 8.5 * lines(e.mine_name, 20);
+  if (e.contact_person) h += 7.6 * lines(e.contact_person, 28);
+  if (e.contact_number) h += 7.6 * lines(e.contact_number, 28);
+  if (e.comments) h += 7 + 7.1 * lines(e.comments, 24);
+  if (e.testing_type) h += 13.1;
+  if (e.tam_status) h += 13.1;
+  if (e.financial_document_number) h += 10.6 * lines(e.financial_document_number, 22);
+  return h;
+}
+
+function monthScale(entries: PdfEntry[], weekCount: number): number {
+  const rowH = 475 / weekCount; // approx. usable grid height / rows
+  const tallest = entries.reduce((m, e) => Math.max(m, estimateEntryHeight(e)), 0);
+  if (tallest === 0) return 1.4;
+  const scale = (rowH * 0.95) / tallest;
+  return Math.round(Math.min(1.5, Math.max(0.8, scale)) * 100) / 100;
+}
+
 function monthPageHtml(
   technicianName: string,
   year: number,
@@ -260,6 +285,13 @@ function monthPageHtml(
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   let scheduled = 0;
   for (let d = 1; d <= daysInMonth; d++) if (byDate[toDateString(year, month, d)]) scheduled++;
+
+  const monthEntries: PdfEntry[] = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const e = byDate[toDateString(year, month, d)];
+    if (e) monthEntries.push(e);
+  }
+  const scale = monthScale(monthEntries, weeks.length);
 
   const cells = weeks
     .map(week =>
@@ -282,7 +314,7 @@ function monthPageHtml(
       </div>
     </div>
     <div class="weekdays">${WEEKDAYS.map(w => `<div>${w}</div>`).join('')}</div>
-    <div class="grid" style="grid-template-rows: repeat(${weeks.length}, 1fr);">${cells}</div>
+    <div class="grid" style="grid-template-rows: repeat(${weeks.length}, 1fr); --s: ${scale};">${cells}</div>
     ${footerHtml(generated, pageLabel)}
   </div>`;
 }
