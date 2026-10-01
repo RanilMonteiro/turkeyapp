@@ -6,6 +6,7 @@
 //
 // Requires:  npx expo install expo-print expo-sharing expo-file-system
 
+import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { supabase } from './supabase';
@@ -355,6 +356,57 @@ async function renameFile(uri: string, fileName: string): Promise<string> {
   }
 }
 
+// Web only: expo-print can't produce files in a browser (it just opens the
+// print dialog), so render each .page of the HTML in a hidden iframe, snapshot
+// it, and assemble a real PDF that downloads straight away.
+// Requires:  npm install jspdf html2canvas
+async function savePdfOnWeb(html: string, fileName: string): Promise<void> {
+  const html2canvas = (await import('html2canvas')).default;
+  const { jsPDF } = await import('jspdf');
+
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText =
+    'position:fixed;left:-10000px;top:0;width:1200px;height:900px;border:0;visibility:hidden;';
+  document.body.appendChild(iframe);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      iframe.onload = () => resolve();
+      iframe.onerror = () => reject(new Error('Could not prepare the PDF.'));
+      iframe.srcdoc = html;
+    });
+
+    const doc = iframe.contentDocument;
+    if (!doc) throw new Error('Could not prepare the PDF.');
+    try {
+      await (doc as any).fonts?.ready;
+    } catch {
+      // fonts API not available — fine
+    }
+
+    const pageEls = Array.from(doc.querySelectorAll('.page')) as HTMLElement[];
+    if (pageEls.length === 0) throw new Error('Nothing to export.');
+
+    const pdfH = PAGE_H - 5; // matches .page height in the CSS
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [PAGE_W, pdfH] });
+
+    for (let i = 0; i < pageEls.length; i++) {
+      const canvas = await html2canvas(pageEls[i], {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+      });
+      if (i > 0) pdf.addPage([PAGE_W, pdfH], 'landscape');
+      pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, PAGE_W, pdfH);
+    }
+
+    pdf.save(fileName);
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}
+
 export async function exportCalendarPdf(opts: {
   technicianId: string;
   technicianName: string;
@@ -392,11 +444,20 @@ export async function exportCalendarPdf(opts: {
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><style>${CSS}</style></head><body>${pages}</body></html>`;
 
-  const { uri } = await Print.printToFileAsync({ html, width: PAGE_W, height: PAGE_H });
-
   const safeName = technicianName.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '') || 'Technician';
   const period = scope === 'year' ? `${year}` : `${year}-${String(month + 1).padStart(2, '0')}`;
-  const finalUri = await renameFile(uri, `Operational_Calendar_${safeName}_${period}.pdf`);
+  const fileName = `Operational_Calendar_${safeName}_${period}.pdf`;
+
+  // Browser: build the PDF ourselves and download it directly.
+  if (Platform.OS === 'web') {
+    await savePdfOnWeb(html, fileName);
+    return;
+  }
+
+  // iOS / Android: real PDF file + share sheet.
+  const result = await Print.printToFileAsync({ html, width: PAGE_W, height: PAGE_H });
+  if (!result?.uri) throw new Error('Could not create the PDF file.');
+  const finalUri = await renameFile(result.uri, fileName);
 
   if (!(await Sharing.isAvailableAsync())) {
     throw new Error('Sharing is not available on this device.');
