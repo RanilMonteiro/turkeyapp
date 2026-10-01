@@ -5,10 +5,10 @@ import {
   PanResponder, GestureResponderEvent,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown } from 'lucide-react-native';
+import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
-import { exportCalendarPdf, PdfScope } from '../../../lib/calendarPdf';
+import { exportCalendarPdf, PdfScope, HIGHLIGHT_COLOURS, HighlightKey } from '../../../lib/calendarPdf';
 import DatePickerField from '../../../components/DatepickerField';
 
 const colors = {
@@ -31,7 +31,6 @@ const DAY_HEADER_BG = '#1e293b';
 // theme-aware, so the calendar always looks the same (white/green) whether
 // the app is in light or dark mode, matching the reference spreadsheet.
 const CELL_EMPTY_BG = '#ffffff';
-const CELL_FILLED_BG = '#d9ead3';
 const CELL_BORDER = '#94a3b8';
 const CELL_TEXT_DARK = '#0f172a';
 const CELL_SUBTEXT_DARK = '#334155';
@@ -71,6 +70,12 @@ const LANDSCAPE_ROW_HEIGHT = 250;
 // several days, so it makes sense for them to share the same document.
 const COPY_FINANCIAL_DOC_ON_FILL = true;
 
+// Cell colours (stored in their own table so empty days can be coloured too).
+const HIGHLIGHT_TABLE = 'operational_calendar_highlights';
+const COLOUR_HEX = Object.fromEntries(HIGHLIGHT_COLOURS.map(c => [c.key, c.color])) as Record<HighlightKey, string>;
+const COLOUR_LABEL = Object.fromEntries(HIGHLIGHT_COLOURS.map(c => [c.key, c.label])) as Record<HighlightKey, string>;
+type PaintColor = HighlightKey | 'erase';
+
 type Technician = { id: string; full_name: string };
 
 type MinePreset = {
@@ -95,7 +100,8 @@ type CalendarEntry = {
 
 type DragInfo =
   | { type: 'fill'; sourceDate: string; dates: string[] }
-  | { type: 'delete'; dates: string[] };
+  | { type: 'delete'; dates: string[] }
+  | { type: 'paint'; color: PaintColor; dates: string[] };
 
 function toDateString(year: number, month: number, day: number): string {
   const mm = String(month + 1).padStart(2, '0');
@@ -142,14 +148,10 @@ function buildMonthGrid(year: number, month: number): (string | null)[][] {
   return weeks;
 }
 
-// The grid cell background only knows "has an entry" vs "empty" right now
-// (matches the green look in the reference screenshot). The screenshot
-// also shows one manually orange-highlighted mine — there's no field in
-// the data that would drive that automatically, so it isn't reproduced
-// here. Adding a `highlight_color` column + a color picker in the entry
-// form would be the way to support that.
-function getCellBackground(entry: CalendarEntry | undefined): string {
-  return entry ? CELL_FILLED_BG : CELL_EMPTY_BG;
+// Cells are white by default (filled or empty). A day only changes colour when
+// someone paints it with one of the highlight colours.
+function getCellBackground(colour: string | undefined): string {
+  return colour ?? CELL_EMPTY_BG;
 }
 
 export default function OperationalCalendar() {
@@ -203,6 +205,11 @@ export default function OperationalCalendar() {
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // Cell colours for the selected technician, keyed by date
+  const [highlights, setHighlights] = useState<Record<string, HighlightKey>>({});
+  const [showColourPanel, setShowColourPanel] = useState(false);
+  const [paintColor, setPaintColor] = useState<PaintColor | null>(null);
+
   // ---------- Drag-to-fill / drag-to-delete ----------
   const [deleteMode, setDeleteMode] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -213,6 +220,7 @@ export default function OperationalCalendar() {
   const dragInfoRef = useRef<DragInfo | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartDateRef = useRef<string | null>(null);
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 
   // Mirrors the latest state into a ref so the PanResponder (created once
   // and never recreated) can always read fresh values instead of the
@@ -225,6 +233,7 @@ export default function OperationalCalendar() {
     rowHeight: PORTRAIT_ROW_HEIGHT,
     entriesByDate: {} as Record<string, CalendarEntry>,
     selectedTechnicianId: null as string | null,
+    paintColor: null as PaintColor | null,
   });
 
   const theme = {
@@ -336,12 +345,22 @@ export default function OperationalCalendar() {
   );
 
   async function fetchEntries(technicianId: string) {
-    const { data } = await supabase
-      .from('operational_calendar_entries')
-      .select('*')
-      .eq('technician_id', technicianId)
-      .order('entry_date');
-    if (data) setEntries(data);
+    const [entriesRes, highlightsRes] = await Promise.all([
+      supabase
+        .from('operational_calendar_entries')
+        .select('*')
+        .eq('technician_id', technicianId)
+        .order('entry_date'),
+      supabase
+        .from(HIGHLIGHT_TABLE)
+        .select('entry_date, color')
+        .eq('technician_id', technicianId),
+    ]);
+    if (entriesRes.data) setEntries(entriesRes.data);
+
+    const map: Record<string, HighlightKey> = {};
+    (highlightsRes.data ?? []).forEach((h: any) => { map[h.entry_date] = h.color; });
+    setHighlights(map);
   }
 
   const entriesByDate: Record<string, CalendarEntry> = {};
@@ -359,6 +378,7 @@ export default function OperationalCalendar() {
   liveRef.current.rowHeight = rowHeight;
   liveRef.current.entriesByDate = entriesByDate;
   liveRef.current.selectedTechnicianId = selectedTechnicianId;
+  liveRef.current.paintColor = paintColor;
 
   function goToPreviousMonth() {
     setViewDate(prev => (prev.month === 0 ? { year: prev.year - 1, month: 11 } : { year: prev.year, month: prev.month - 1 }));
@@ -406,6 +426,10 @@ export default function OperationalCalendar() {
 
   function dateAtTouch(evt: GestureResponderEvent): string | null {
     const { pageX, pageY } = evt.nativeEvent;
+    return dateAtPoint(pageX, pageY);
+  }
+
+  function dateAtPoint(pageX: number, pageY: number): string | null {
     const localX = pageX - gridOriginRef.current.pageX;
     const localY = pageY - gridOriginRef.current.pageY;
     if (localX < 0 || localY < 0) return null;
@@ -507,6 +531,51 @@ export default function OperationalCalendar() {
     );
   }
 
+  // Paint (or clear) a colour on a set of days. Updates the screen straight
+  // away, then saves; if the save fails it reloads the real data.
+  async function savePaint(color: PaintColor, dates: string[]) {
+    const technicianId = liveRef.current.selectedTechnicianId;
+    if (!technicianId || dates.length === 0) return;
+
+    setHighlights(prev => {
+      const next = { ...prev };
+      dates.forEach(d => {
+        if (color === 'erase') delete next[d];
+        else next[d] = color;
+      });
+      return next;
+    });
+
+    let error;
+    if (color === 'erase') {
+      ({ error } = await supabase
+        .from(HIGHLIGHT_TABLE)
+        .delete()
+        .eq('technician_id', technicianId)
+        .in('entry_date', dates));
+    } else {
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData.user?.id;
+      ({ error } = await supabase
+        .from(HIGHLIGHT_TABLE)
+        .upsert(
+          dates.map(entry_date => ({
+            technician_id: technicianId,
+            entry_date,
+            color,
+            updated_by: uid,
+            updated_at: new Date().toISOString(),
+          })),
+          { onConflict: 'technician_id,entry_date' }
+        ));
+    }
+
+    if (error) {
+      notify('Error', error.message);
+      fetchEntries(technicianId);
+    }
+  }
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponderCapture: () => liveRef.current.canEdit,
@@ -515,6 +584,19 @@ export default function OperationalCalendar() {
         measureGridOrigin();
         const startDate = dateAtTouch(evt);
         touchStartDateRef.current = startDate;
+        lastPointRef.current = { x: evt.nativeEvent.pageX, y: evt.nativeEvent.pageY };
+
+        // Colour mode: touching a day starts painting straight away.
+        const paint = liveRef.current.paintColor;
+        if (paint) {
+          if (startDate) {
+            const info: DragInfo = { type: 'paint', color: paint, dates: [startDate] };
+            dragInfoRef.current = info;
+            setDragInfo(info);
+            setIsDragging(true);
+          }
+          return;
+        }
 
         if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = setTimeout(() => {
@@ -536,9 +618,33 @@ export default function OperationalCalendar() {
       },
       onPanResponderMove: (evt) => {
         if (!dragInfoRef.current) return;
+        const current = dragInfoRef.current;
+
+        if (current.type === 'paint') {
+          // Sample along the path between the last and current finger position
+          // so fast swipes don't skip over days.
+          const px = evt.nativeEvent.pageX;
+          const py = evt.nativeEvent.pageY;
+          const from = lastPointRef.current ?? { x: px, y: py };
+          const { cellWidth: cw, rowHeight: rh } = liveRef.current;
+          const step = Math.max(4, Math.min(cw, rh) / 3);
+          const steps = Math.max(1, Math.ceil(Math.hypot(px - from.x, py - from.y) / step));
+          const added: string[] = [];
+          for (let i = 1; i <= steps; i++) {
+            const d = dateAtPoint(from.x + ((px - from.x) * i) / steps, from.y + ((py - from.y) * i) / steps);
+            if (d && !current.dates.includes(d) && !added.includes(d)) added.push(d);
+          }
+          lastPointRef.current = { x: px, y: py };
+          if (added.length > 0) {
+            const next: DragInfo = { ...current, dates: [...current.dates, ...added] };
+            dragInfoRef.current = next;
+            setDragInfo(next);
+          }
+          return;
+        }
+
         const dateStr = dateAtTouch(evt);
         if (!dateStr) return;
-        const current = dragInfoRef.current;
 
         if (current.type === 'fill') {
           const dates = computeRangeDates(current.sourceDate, dateStr);
@@ -565,6 +671,7 @@ export default function OperationalCalendar() {
 
         if (info) {
           if (info.type === 'fill') finishFillDrag(info);
+          else if (info.type === 'paint') savePaint(info.color, info.dates);
           else finishDeleteDrag(info);
         } else if (touchStartDateRef.current) {
           handleDayPress(touchStartDateRef.current);
@@ -810,7 +917,7 @@ export default function OperationalCalendar() {
             </TouchableOpacity>
             {canEdit && (
               <TouchableOpacity
-                onPress={() => setDeleteMode(d => !d)}
+                onPress={() => { setDeleteMode(d => !d); setPaintColor(null); }}
                 style={[styles.deleteModeBtn, deleteMode && styles.deleteModeBtnActive]}
               >
                 <Trash2 color={deleteMode ? '#ffffff' : theme.muted} size={18} />
@@ -832,11 +939,90 @@ export default function OperationalCalendar() {
           </TouchableOpacity>
         )}
 
+        {/* Colours — open the key, pick a colour, then tap/drag over days */}
+        <View style={styles.colourBar}>
+          <TouchableOpacity
+            onPress={() => setShowColourPanel(v => !v)}
+            style={[styles.colourBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+          >
+            <Palette color={colors.yellow} size={16} />
+            <Text style={[styles.colourBtnText, { color: theme.text }]}>Colours</Text>
+            <ChevronDown color={theme.muted} size={16} />
+          </TouchableOpacity>
+
+          {paintColor && (
+            <View style={[styles.paintBanner, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <View
+                style={[
+                  styles.colourSwatchSmall,
+                  { backgroundColor: paintColor === 'erase' ? CELL_EMPTY_BG : COLOUR_HEX[paintColor] },
+                ]}
+              />
+              <Text style={[styles.paintBannerText, { color: theme.text }]} numberOfLines={1}>
+                {paintColor === 'erase' ? 'Clearing colour' : COLOUR_LABEL[paintColor]} · tap or drag over days
+              </Text>
+              <TouchableOpacity onPress={() => setPaintColor(null)}>
+                <Text style={styles.paintDone}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        {showColourPanel && (
+          <View style={[styles.colourPanel, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            {HIGHLIGHT_COLOURS.map(c => (
+              <TouchableOpacity
+                key={c.key}
+                disabled={!canEdit}
+                activeOpacity={0.7}
+                style={[
+                  styles.colourRow,
+                  { borderBottomColor: theme.border },
+                  paintColor === c.key && { backgroundColor: `${colors.yellow}20` },
+                ]}
+                onPress={() => {
+                  setPaintColor(c.key);
+                  setDeleteMode(false);
+                  setShowColourPanel(false);
+                }}
+              >
+                <View style={[styles.colourSwatch, { backgroundColor: c.color }]} />
+                <Text style={[styles.colourLabel, { color: theme.text }]}>{c.label}</Text>
+                {paintColor === c.key && <Check color={colors.yellow} size={16} />}
+              </TouchableOpacity>
+            ))}
+            {canEdit && (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={[
+                  styles.colourRow,
+                  { borderBottomColor: theme.border },
+                  paintColor === 'erase' && { backgroundColor: `${colors.yellow}20` },
+                ]}
+                onPress={() => {
+                  setPaintColor('erase');
+                  setDeleteMode(false);
+                  setShowColourPanel(false);
+                }}
+              >
+                <View style={[styles.colourSwatch, { alignItems: 'center', justifyContent: 'center', backgroundColor: CELL_EMPTY_BG }]}>
+                  <Eraser color="#64748b" size={13} />
+                </View>
+                <Text style={[styles.colourLabel, { color: theme.text }]}>Clear colour</Text>
+                {paintColor === 'erase' && <Check color={colors.yellow} size={16} />}
+              </TouchableOpacity>
+            )}
+            <Text style={[styles.colourHint, { color: theme.subtext }]}>
+              {canEdit ? 'Pick a colour, then tap or drag over the days you want to colour.' : 'View only'}
+            </Text>
+          </View>
+        )}
+
         {!canEdit && (
           <Text style={[styles.readOnlyNote, { color: theme.muted }]}>View only</Text>
         )}
 
-        {canEdit && (
+        {canEdit && !paintColor && (
           <Text style={[styles.dragHint, { color: theme.subtext }]}>
             {deleteMode
               ? 'Delete mode: press & drag across days to select, then confirm to delete.'
@@ -857,7 +1043,12 @@ export default function OperationalCalendar() {
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={{ paddingBottom: 24 }} scrollEnabled={!isDragging}>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 24 }}
+          scrollEnabled={!isDragging}
+          onScroll={measureGridOrigin}
+          scrollEventThrottle={32}
+        >
           {/* Weekday header row */}
           <View style={styles.weekRow}>
             {WEEKDAY_LABELS.map(label => (
@@ -892,6 +1083,11 @@ export default function OperationalCalendar() {
                   const isFillHighlighted = dragInfo?.type === 'fill' && dragInfo.dates.includes(dateStr);
                   const isDragSource = dragInfo?.type === 'fill' && dragInfo.sourceDate === dateStr;
                   const isDeleteHighlighted = dragInfo?.type === 'delete' && dragInfo.dates.includes(dateStr);
+                  const paintPreview = dragInfo?.type === 'paint' && dragInfo.dates.includes(dateStr) ? dragInfo.color : null;
+                  const savedColour = highlights[dateStr] ? COLOUR_HEX[highlights[dateStr]] : undefined;
+                  const cellColour = paintPreview
+                    ? (paintPreview === 'erase' ? undefined : COLOUR_HEX[paintPreview])
+                    : savedColour;
 
                   return (
                     <TouchableOpacity
@@ -900,7 +1096,7 @@ export default function OperationalCalendar() {
                       onPress={canEdit ? undefined : () => handleDayPress(dateStr)}
                       style={[
                         styles.dayCell,
-                        { width: cellWidth, height: rowHeight, backgroundColor: getCellBackground(entry), borderColor: CELL_BORDER },
+                        { width: cellWidth, height: rowHeight, backgroundColor: getCellBackground(cellColour), borderColor: CELL_BORDER },
                         isFillHighlighted && !isDragSource && styles.dayCellFillHighlight,
                         isDragSource && styles.dayCellDragSource,
                         isDeleteHighlighted && styles.dayCellDeleteHighlight,
@@ -1072,6 +1268,11 @@ export default function OperationalCalendar() {
                 )}
 
                 <View style={styles.pillRow}>
+                  {detailDate && highlights[detailDate] && (
+                    <View style={[styles.pill, { backgroundColor: COLOUR_HEX[highlights[detailDate]] }]}>
+                      <Text style={[styles.pillText, { color: '#0f172a' }]}>{COLOUR_LABEL[highlights[detailDate]]}</Text>
+                    </View>
+                  )}
                   {detailEntry.testing_type && (
                     <View style={[styles.pill, { backgroundColor: TESTING_TYPE_COLOR.bg }]}>
                       <Text style={[styles.pillText, { color: TESTING_TYPE_COLOR.text }]}>{detailEntry.testing_type}</Text>
@@ -1351,6 +1552,18 @@ const styles = StyleSheet.create({
   techPickerText: { flex: 1, fontSize: 14, fontWeight: '600' },
   readOnlyNote: { fontSize: 12, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
   dragHint: { fontSize: 11.5, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
+  colourBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 8 },
+  colourBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, height: 40 },
+  colourBtnText: { fontSize: 14, fontWeight: '600' },
+  paintBanner: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, height: 40 },
+  paintBannerText: { flex: 1, fontSize: 12.5, fontWeight: '600' },
+  paintDone: { color: colors.yellow, fontWeight: '700', fontSize: 13 },
+  colourPanel: { borderWidth: 1, borderRadius: 12, marginHorizontal: 16, marginBottom: 8, overflow: 'hidden' },
+  colourRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1 },
+  colourSwatch: { width: 24, height: 24, borderRadius: 12, borderWidth: 1, borderColor: '#64748b' },
+  colourSwatchSmall: { width: 16, height: 16, borderRadius: 8, borderWidth: 1, borderColor: '#64748b' },
+  colourLabel: { flex: 1, fontSize: 14, fontWeight: '600' },
+  colourHint: { fontSize: 11.5, fontStyle: 'italic', padding: 10 },
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },
   monthNavBtn: { padding: 8 },
   monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },

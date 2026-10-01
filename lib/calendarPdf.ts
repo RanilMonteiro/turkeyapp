@@ -13,6 +13,19 @@ import { supabase } from './supabase';
 
 export type PdfScope = 'month' | 'year';
 
+// Single source of truth for the cell colours. Used by the screen AND the PDF.
+export const HIGHLIGHT_COLOURS = [
+  { key: 'blue', label: 'Rain delay', color: '#9fc5e8' },
+  { key: 'yellow', label: 'Not confirmed', color: '#ffe599' },
+  { key: 'green', label: 'Not complete', color: '#b6d7a8' },
+  { key: 'pink', label: 'Medical / Inductions / Training', color: '#f4b6d2' },
+] as const;
+export type HighlightKey = (typeof HIGHLIGHT_COLOURS)[number]['key'];
+
+const COLOUR_HEX: Record<string, string> = Object.fromEntries(
+  HIGHLIGHT_COLOURS.map(c => [c.key, c.color])
+);
+
 type PdfEntry = {
   entry_date: string;
   mine_name: string;
@@ -139,7 +152,7 @@ const CSS = `
     min-height: 0;
   }
   .cell.pad { background: #f1f5f9; }
-  .cell.filled { background: #d9ead3; }
+  .cell.filled { background: #ffffff; }
   .day { font-size: 10pt; font-weight: 800; color: #0f172a; }
   .mine { font-size: 8pt; font-weight: 800; line-height: 1.15; margin-top: 1pt; color: #0f172a; }
   .sub { font-size: 6.5pt; line-height: 1.2; color: #334155; margin-top: 1pt; }
@@ -176,6 +189,10 @@ const CSS = `
     color: #64748b;
   }
 
+  .keys { display: flex; gap: 10pt; align-items: center; }
+  .key { display: flex; align-items: center; gap: 3pt; }
+  .key i { display: inline-block; width: 8pt; height: 8pt; border: 0.5pt solid #94a3b8; border-radius: 2pt; }
+
   /* Year overview */
   .overview {
     flex: 1;
@@ -193,9 +210,9 @@ const CSS = `
   .mini table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   .mini th { font-size: 6pt; color: #64748b; font-weight: 700; padding-bottom: 2pt; }
   .mini td { font-size: 6.5pt; text-align: center; padding: 2pt 0; color: #334155; }
-  .mini td.on { background: #86c47a; color: #0f172a; font-weight: 800; border-radius: 2pt; }
+  .mini td.on { background: #cbd5e1; color: #0f172a; font-weight: 800; border-radius: 2pt; }
   .legend { font-size: 7pt; color: #475569; margin-top: 6pt; }
-  .legend span.sw { display: inline-block; width: 8pt; height: 8pt; background: #86c47a; border-radius: 2pt; vertical-align: -1pt; margin-right: 3pt; }
+  .legend span.sw { display: inline-block; width: 8pt; height: 8pt; background: #cbd5e1; border-radius: 2pt; vertical-align: -1pt; margin-right: 3pt; }
 
   /* Fit-to-cell: every size scales with --s, which is chosen per month in
      monthPageHtml so the busiest day just fits and quiet months stay roomy.
@@ -223,9 +240,11 @@ const CSS = `
   }
 `;
 
-function cellHtml(dateStr: string, entry: PdfEntry | undefined): string {
+function cellHtml(dateStr: string, entry: PdfEntry | undefined, colourKey?: string): string {
   const day = parseInt(dateStr.split('-')[2], 10);
-  if (!entry) return `<div class="cell"><div class="day">${day}</div></div>`;
+  const bg = colourKey ? COLOUR_HEX[colourKey] : undefined;
+  const styleAttr = bg ? ` style="background:${bg};"` : '';
+  if (!entry) return `<div class="cell"${styleAttr}><div class="day">${day}</div></div>`;
 
   const docAbbr = FINANCIAL_DOC_ABBR[entry.financial_document_type ?? ''] ?? '';
   const doc = entry.financial_document_number
@@ -233,7 +252,7 @@ function cellHtml(dateStr: string, entry: PdfEntry | undefined): string {
     : '';
 
   return `
-    <div class="cell filled">
+    <div class="cell filled"${styleAttr}>
       <div class="body">
       <div class="top"><div class="day">${day}</div><div class="mine">${esc(entry.mine_name)}</div></div>
       ${entry.contact_person ? `<div class="sub">${esc(entry.contact_person)}</div>` : ''}
@@ -247,7 +266,10 @@ function cellHtml(dateStr: string, entry: PdfEntry | undefined): string {
 }
 
 function footerHtml(generated: string, pageLabel: string): string {
-  return `<div class="footer"><span>Generated ${esc(generated)}</span><span>${esc(pageLabel)}</span></div>`;
+  const keys = HIGHLIGHT_COLOURS.map(
+    c => `<span class="key"><i style="background:${c.color};"></i>${esc(c.label)}</span>`
+  ).join('');
+  return `<div class="footer"><span>Generated ${esc(generated)}</span><span class="keys">${keys}</span><span>${esc(pageLabel)}</span></div>`;
 }
 
 // Rough height (in pt, at scale 1) of one filled cell. Used to pick a text
@@ -278,6 +300,7 @@ function monthPageHtml(
   year: number,
   month: number,
   byDate: Record<string, PdfEntry>,
+  colours: Record<string, string>,
   generated: string,
   pageLabel: string
 ): string {
@@ -296,7 +319,7 @@ function monthPageHtml(
   const cells = weeks
     .map(week =>
       week
-        .map(dateStr => (dateStr ? cellHtml(dateStr, byDate[dateStr]) : `<div class="cell pad"></div>`))
+        .map(dateStr => (dateStr ? cellHtml(dateStr, byDate[dateStr], colours[dateStr]) : `<div class="cell pad"></div>`))
         .join('')
     )
     .join('');
@@ -319,7 +342,12 @@ function monthPageHtml(
   </div>`;
 }
 
-function miniMonthHtml(year: number, month: number, byDate: Record<string, PdfEntry>): string {
+function miniMonthHtml(
+  year: number,
+  month: number,
+  byDate: Record<string, PdfEntry>,
+  colours: Record<string, string>
+): string {
   const weeks = buildMonthGrid(year, month);
   let scheduled = 0;
   const rows = weeks
@@ -331,7 +359,9 @@ function miniMonthHtml(year: number, month: number, byDate: Record<string, PdfEn
             const day = parseInt(dateStr.split('-')[2], 10);
             const on = !!byDate[dateStr];
             if (on) scheduled++;
-            return `<td class="${on ? 'on' : ''}">${day}</td>`;
+            const bg = colours[dateStr] ? COLOUR_HEX[colours[dateStr]] : '';
+            const style = bg ? ` style="background:${bg};${on ? '' : 'font-weight:800;'}"` : '';
+            return `<td class="${on ? 'on' : ''}"${style}>${day}</td>`;
           })
           .join('')}</tr>`
     )
@@ -354,11 +384,12 @@ function yearOverviewHtml(
   technicianName: string,
   year: number,
   byDate: Record<string, PdfEntry>,
+  colours: Record<string, string>,
   total: number,
   generated: string,
   pageLabel: string
 ): string {
-  const minis = Array.from({ length: 12 }, (_, m) => miniMonthHtml(year, m, byDate)).join('');
+  const minis = Array.from({ length: 12 }, (_, m) => miniMonthHtml(year, m, byDate, colours)).join('');
   return `
   <div class="page">
     <div class="header">
@@ -502,18 +533,33 @@ export async function exportCalendarPdf(opts: {
   const byDate: Record<string, PdfEntry> = {};
   entries.forEach(e => { byDate[e.entry_date] = e; });
 
+  // Cell colours for the same range. If the table doesn't exist yet this just
+  // comes back empty and the PDF is produced without colours.
+  const colourByDate: Record<string, string> = {};
+  try {
+    const { data: hl } = await supabase
+      .from('operational_calendar_highlights')
+      .select('entry_date, color')
+      .eq('technician_id', technicianId)
+      .gte('entry_date', from)
+      .lte('entry_date', to);
+    (hl ?? []).forEach((h: any) => { colourByDate[h.entry_date] = h.color; });
+  } catch {
+    // ignore
+  }
+
   const generated = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
 
   let pages: string;
   if (scope === 'month') {
-    pages = monthPageHtml(technicianName, year, month, byDate, generated, 'Page 1 of 1');
+    pages = monthPageHtml(technicianName, year, month, byDate, colourByDate, generated, 'Page 1 of 1');
   } else {
     const totalPages = 13;
     const parts = [
-      yearOverviewHtml(technicianName, year, byDate, entries.length, generated, `Page 1 of ${totalPages}`),
+      yearOverviewHtml(technicianName, year, byDate, colourByDate, entries.length, generated, `Page 1 of ${totalPages}`),
     ];
     for (let m = 0; m < 12; m++) {
-      parts.push(monthPageHtml(technicianName, year, m, byDate, generated, `Page ${m + 2} of ${totalPages}`));
+      parts.push(monthPageHtml(technicianName, year, m, byDate, colourByDate, generated, `Page ${m + 2} of ${totalPages}`));
     }
     pages = parts.join('');
   }
