@@ -78,11 +78,10 @@ type PaintColor = HighlightKey | 'erase';
 
 type Technician = { id: string; full_name: string };
 
-type MinePreset = {
-  mine_name: string;
-  contact_person: string | null;
-  contact_number: string | null;
-};
+// Sites (from the Sites screen) that can be picked for a calendar entry, plus
+// each site's contacts, which fill the contact person / number fields.
+type SiteOption = { id: string; name: string };
+type SiteContact = { site_id: string; name: string; phone: string | null };
 
 type CalendarEntry = {
   id: string;
@@ -96,6 +95,7 @@ type CalendarEntry = {
   tam_status: string | null;
   financial_document_type: string | null;
   financial_document_number: string | null;
+  site_id: string | null;
 };
 
 type DragInfo =
@@ -171,8 +171,11 @@ export default function OperationalCalendar() {
   const [showTechDropdown, setShowTechDropdown] = useState(false);
 
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
-  const [minePresets, setMinePresets] = useState<MinePreset[]>([]);
-  const [showMineSuggestions, setShowMineSuggestions] = useState(false);
+  const [sites, setSites] = useState<SiteOption[]>([]);
+  const [siteContacts, setSiteContacts] = useState<Record<string, SiteContact[]>>({});
+  const [showSiteDropdown, setShowSiteDropdown] = useState(false);
+  const [siteSearch, setSiteSearch] = useState('');
+  const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
   const [viewDate, setViewDate] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
@@ -207,6 +210,8 @@ export default function OperationalCalendar() {
 
   // Cell colours for the selected technician, keyed by date
   const [highlights, setHighlights] = useState<Record<string, HighlightKey>>({});
+  // Approved leave for the selected technician: date -> leave type (comes from the forms system)
+  const [leaveDays, setLeaveDays] = useState<Record<string, string>>({});
   const [showColourPanel, setShowColourPanel] = useState(false);
   const [paintColor, setPaintColor] = useState<PaintColor | null>(null);
 
@@ -234,6 +239,7 @@ export default function OperationalCalendar() {
     entriesByDate: {} as Record<string, CalendarEntry>,
     selectedTechnicianId: null as string | null,
     paintColor: null as PaintColor | null,
+    leaveDays: {} as Record<string, string>,
   });
 
   const theme = {
@@ -282,7 +288,7 @@ export default function OperationalCalendar() {
   useFocusEffect(
     useCallback(() => {
       fetchAll();
-      fetchMinePresets();
+      fetchSitesAndContacts();
     }, [])
   );
 
@@ -330,12 +336,21 @@ export default function OperationalCalendar() {
     setLoading(false);
   }
 
-  async function fetchMinePresets() {
-    const { data } = await supabase
-      .from('operational_calendar_mine_presets')
-      .select('mine_name, contact_person, contact_number')
-      .order('mine_name');
-    if (data) setMinePresets(data);
+  // Sites + their contacts come straight from the Sites screen's data, so the
+  // calendar always offers the same sites and contact people.
+  async function fetchSitesAndContacts() {
+    const [sitesRes, contactsRes] = await Promise.all([
+      supabase.from('sites').select('id, name').order('name'),
+      supabase.from('site_contacts').select('site_id, name, phone').order('name'),
+    ]);
+    if (sitesRes.data) setSites(sitesRes.data);
+
+    const grouped: Record<string, SiteContact[]> = {};
+    (contactsRes.data ?? []).forEach((c: any) => {
+      if (!grouped[c.site_id]) grouped[c.site_id] = [];
+      grouped[c.site_id].push(c);
+    });
+    setSiteContacts(grouped);
   }
 
   useFocusEffect(
@@ -345,7 +360,8 @@ export default function OperationalCalendar() {
   );
 
   async function fetchEntries(technicianId: string) {
-    const [entriesRes, highlightsRes] = await Promise.all([
+    const thisYear = new Date().getFullYear();
+    const [entriesRes, highlightsRes, leaveRes] = await Promise.all([
       supabase
         .from('operational_calendar_entries')
         .select('*')
@@ -355,12 +371,22 @@ export default function OperationalCalendar() {
         .from(HIGHLIGHT_TABLE)
         .select('entry_date, color')
         .eq('technician_id', technicianId),
+      // Final-approved leave from the forms system (one row per leave day)
+      supabase.rpc('get_approved_leave', {
+        p_technician_id: technicianId,
+        p_from: `${thisYear - 1}-01-01`,
+        p_to: `${thisYear + 2}-12-31`,
+      }),
     ]);
     if (entriesRes.data) setEntries(entriesRes.data);
 
     const map: Record<string, HighlightKey> = {};
     (highlightsRes.data ?? []).forEach((h: any) => { map[h.entry_date] = h.color; });
     setHighlights(map);
+
+    const leaveMap: Record<string, string> = {};
+    (leaveRes.data ?? []).forEach((l: any) => { leaveMap[l.leave_date] = l.leave_type ?? ''; });
+    setLeaveDays(leaveMap);
   }
 
   const entriesByDate: Record<string, CalendarEntry> = {};
@@ -379,6 +405,7 @@ export default function OperationalCalendar() {
   liveRef.current.entriesByDate = entriesByDate;
   liveRef.current.selectedTechnicianId = selectedTechnicianId;
   liveRef.current.paintColor = paintColor;
+  liveRef.current.leaveDays = leaveDays;
 
   function goToPreviousMonth() {
     setViewDate(prev => (prev.month === 0 ? { year: prev.year - 1, month: 11 } : { year: prev.year, month: prev.month - 1 }));
@@ -394,7 +421,16 @@ export default function OperationalCalendar() {
       setDetailEntry(entry);
       setDetailDate(dateStr);
     } else if (liveRef.current.canEdit) {
-      openNewEntryModal(dateStr);
+      const leaveType = liveRef.current.leaveDays[dateStr];
+      if (leaveType !== undefined) {
+        confirm(
+          'On approved leave',
+          `This technician is on approved leave${leaveType ? ` (${leaveType})` : ''} on this day. Add an entry anyway?`,
+          () => openNewEntryModal(dateStr)
+        );
+      } else {
+        openNewEntryModal(dateStr);
+      }
     }
   }
 
@@ -460,6 +496,7 @@ export default function OperationalCalendar() {
       technician_id: technicianId,
       entry_date,
       mine_name: sourceEntry.mine_name,
+      site_id: sourceEntry.site_id,
       contact_person: sourceEntry.contact_person,
       contact_number: sourceEntry.contact_number,
       comments: sourceEntry.comments,
@@ -705,7 +742,9 @@ export default function OperationalCalendar() {
     setTamStatus(null);
     setFinancialDocType(null);
     setFinancialDocNumber('');
-    setShowMineSuggestions(false);
+    setSelectedSiteId(null);
+    setShowSiteDropdown(false);
+    setSiteSearch('');
     setEntryModalVisible(true);
   }
 
@@ -721,25 +760,33 @@ export default function OperationalCalendar() {
     setTamStatus(entry.tam_status);
     setFinancialDocType(entry.financial_document_type);
     setFinancialDocNumber(entry.financial_document_number ?? '');
-    setShowMineSuggestions(false);
+    setSelectedSiteId(entry.site_id ?? null);
+    setShowSiteDropdown(false);
+    setSiteSearch('');
     setDetailEntry(null);
     setEntryModalVisible(true);
   }
 
-  const filteredMineSuggestions = mineName.trim().length > 0
-    ? minePresets.filter(p => p.mine_name.toLowerCase().includes(mineName.trim().toLowerCase())).slice(0, 6)
-    : [];
+  const filteredSites = siteSearch.trim()
+    ? sites.filter(site => site.name.toLowerCase().includes(siteSearch.trim().toLowerCase()))
+    : sites;
 
-  function selectMinePreset(preset: MinePreset) {
-    setMineName(preset.mine_name);
-    setContactPerson(preset.contact_person ?? '');
-    setContactNumber(preset.contact_number ?? '');
-    setShowMineSuggestions(false);
+  // Picking a site fills the site name and the contact people / numbers from
+  // that site's contacts (joined with "/" like the sheet: "Renier/Doug").
+  // Both fields stay editable if one day needs something different.
+  function selectSite(site: SiteOption) {
+    const contacts = siteContacts[site.id] ?? [];
+    setSelectedSiteId(site.id);
+    setMineName(site.name);
+    setContactPerson(contacts.map(c => c.name).join('/'));
+    setContactNumber(contacts.map(c => c.phone).filter(Boolean).join('/'));
+    setShowSiteDropdown(false);
+    setSiteSearch('');
   }
 
   async function handleSaveEntry() {
     if (!mineName.trim()) {
-      notify('Missing mine name', 'Please enter a mine name.');
+      notify('Missing site', 'Please select a site.');
       return;
     }
     if (!dateFrom || !selectedTechnicianId) return;
@@ -798,6 +845,7 @@ export default function OperationalCalendar() {
     const basePayload = {
       technician_id: selectedTechnicianId,
       mine_name: mineName.trim(),
+      site_id: selectedSiteId,
       contact_person: contactPerson.trim() || null,
       contact_number: contactNumber.trim() || null,
       comments: comments.trim() || null,
@@ -848,25 +896,9 @@ export default function OperationalCalendar() {
       return;
     }
 
-    // Remember this mine's contact info for next time, regardless of
-    // whether this was a new entry or an edit.
-    await supabase
-      .from('operational_calendar_mine_presets')
-      .upsert(
-        {
-          mine_name: mineName.trim(),
-          contact_person: contactPerson.trim() || null,
-          contact_number: contactNumber.trim() || null,
-          updated_by: uid,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'mine_name_key' }
-      );
-
     setSaving(false);
     setEntryModalVisible(false);
     if (selectedTechnicianId) fetchEntries(selectedTechnicianId);
-    fetchMinePresets();
 
     if (relatedDates.length > 0) {
       confirm(
@@ -1015,6 +1047,9 @@ export default function OperationalCalendar() {
             <Text style={[styles.colourHint, { color: theme.subtext }]}>
               {canEdit ? 'Pick a colour, then tap or drag over the days you want to colour.' : 'View only'}
             </Text>
+            <Text style={[styles.colourHint, { color: theme.subtext, paddingTop: 0 }]}>
+              Approved leave appears automatically as a purple LEAVE badge.
+            </Text>
           </View>
         )}
 
@@ -1103,6 +1138,17 @@ export default function OperationalCalendar() {
                       ]}
                     >
                       <Text style={styles.dayNumber}>{dayNum}</Text>
+
+                      {leaveDays[dateStr] !== undefined && (
+                        <View style={styles.cellLeaveBadge}>
+                          <Text style={styles.cellLeaveTitle}>LEAVE</Text>
+                          {!!leaveDays[dateStr] && (
+                            <Text style={styles.cellLeaveType} numberOfLines={2}>
+                              {leaveDays[dateStr]}
+                            </Text>
+                          )}
+                        </View>
+                      )}
 
                       {entry && (
                         <View style={styles.dayCellContent}>
@@ -1367,31 +1413,63 @@ export default function OperationalCalendar() {
             )}
 
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>MINE NAME *</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
-                placeholder="e.g. Redpath Mining"
-                placeholderTextColor={theme.muted}
-                value={mineName}
-                onChangeText={(v) => { setMineName(v); setShowMineSuggestions(true); }}
-                onFocus={() => setShowMineSuggestions(true)}
-              />
-              {showMineSuggestions && filteredMineSuggestions.length > 0 && (
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SITE *</Text>
+              <TouchableOpacity
+                style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
+                onPress={() => setShowSiteDropdown(v => !v)}
+              >
+                <Text
+                  style={[styles.dropdownBtnText, { color: mineName ? theme.text : theme.subtext }]}
+                  numberOfLines={1}
+                >
+                  {mineName || 'Select site'}
+                </Text>
+                <ChevronDown color={theme.muted} size={16} />
+              </TouchableOpacity>
+              {showSiteDropdown && (
                 <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                  {filteredMineSuggestions.map(preset => (
-                    <TouchableOpacity
-                      key={preset.mine_name}
-                      style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
-                      onPress={() => selectMinePreset(preset)}
-                    >
-                      <Text style={[styles.dropdownItemText, { color: theme.text }]}>{preset.mine_name}</Text>
-                      {(preset.contact_person || preset.contact_number) && (
-                        <Text style={[styles.dropdownItemSub, { color: theme.subtext }]}>
-                          {[preset.contact_person, preset.contact_number].filter(Boolean).join(' · ')}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  ))}
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, margin: 8 }]}
+                    placeholder="Search sites..."
+                    placeholderTextColor={theme.muted}
+                    value={siteSearch}
+                    onChangeText={setSiteSearch}
+                  />
+                  <ScrollView style={{ maxHeight: 280 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {filteredSites.length === 0 ? (
+                      <Text style={[styles.dropdownItemSub, { color: theme.subtext, padding: 14 }]}>
+                        {sites.length === 0 ? 'No sites yet. Sites are added on the Sites screen.' : 'No sites match that search.'}
+                      </Text>
+                    ) : (
+                      filteredSites.map(site => {
+                        const contacts = siteContacts[site.id] ?? [];
+                        const summary = [
+                          contacts.map(c => c.name).join('/'),
+                          contacts.map(c => c.phone).filter(Boolean).join('/'),
+                        ].filter(Boolean).join(' · ');
+                        return (
+                          <TouchableOpacity
+                            key={site.id}
+                            style={[
+                              styles.dropdownItem,
+                              { borderBottomColor: theme.border },
+                              selectedSiteId === site.id && { backgroundColor: `${colors.yellow}20` },
+                            ]}
+                            onPress={() => selectSite(site)}
+                          >
+                            <Text style={[styles.dropdownItemText, { color: selectedSiteId === site.id ? colors.yellow : theme.text }]}>
+                              {site.name}
+                            </Text>
+                            {!!summary && (
+                              <Text style={[styles.dropdownItemSub, { color: theme.subtext }]} numberOfLines={1}>
+                                {summary}
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </ScrollView>
                 </View>
               )}
             </View>
@@ -1564,6 +1642,12 @@ const styles = StyleSheet.create({
   colourSwatchSmall: { width: 16, height: 16, borderRadius: 8, borderWidth: 1, borderColor: '#64748b' },
   colourLabel: { flex: 1, fontSize: 14, fontWeight: '600' },
   colourHint: { fontSize: 11.5, fontStyle: 'italic', padding: 10 },
+  cellLeaveBadge: {
+    backgroundColor: '#ede9fe', borderWidth: 1.5, borderColor: '#7c3aed', borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 5, marginTop: 4, alignItems: 'center',
+  },
+  cellLeaveTitle: { fontSize: 13, fontWeight: '800', color: '#5b21b6', letterSpacing: 0.6 },
+  cellLeaveType: { fontSize: 12, fontWeight: '700', color: '#5b21b6', textAlign: 'center', marginTop: 1 },
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },
   monthNavBtn: { padding: 8 },
   monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },

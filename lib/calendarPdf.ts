@@ -190,6 +190,17 @@ const CSS = `
     color: #64748b;
   }
 
+  .leave {
+    margin-top: calc(2.5pt * var(--s));
+    background: #ede9fe;
+    border: calc(1pt * var(--s)) solid #7c3aed;
+    border-radius: calc(3pt * var(--s));
+    padding: calc(1.5pt * var(--s)) calc(3pt * var(--s));
+    text-align: center;
+    color: #5b21b6;
+  }
+  .leave b { display: block; font-size: calc(6.8pt * var(--s)); letter-spacing: 0.5pt; font-weight: 800; line-height: 1.1; }
+  .leave span { display: block; font-size: calc(6.2pt * var(--s)); font-weight: 700; line-height: 1.15; }
   .keys { display: flex; gap: 10pt; align-items: center; }
   .key { display: flex; align-items: center; gap: 3pt; }
   .key i { display: inline-block; width: 8pt; height: 8pt; border: 0.5pt solid #94a3b8; border-radius: 2pt; }
@@ -241,11 +252,20 @@ const CSS = `
   }
 `;
 
-function cellHtml(dateStr: string, entry: PdfEntry | undefined, colourKey?: string): string {
+function cellHtml(
+  dateStr: string,
+  entry: PdfEntry | undefined,
+  colourKey?: string,
+  leaveType?: string
+): string {
   const day = parseInt(dateStr.split('-')[2], 10);
   const bg = colourKey ? COLOUR_HEX[colourKey] : undefined;
   const styleAttr = bg ? ` style="background:${bg};"` : '';
-  if (!entry) return `<div class="cell"${styleAttr}><div class="day">${day}</div></div>`;
+  const leaveHtml =
+    leaveType !== undefined
+      ? `<div class="leave"><b>LEAVE</b>${leaveType ? `<span>${esc(leaveType)}</span>` : ''}</div>`
+      : '';
+  if (!entry) return `<div class="cell"${styleAttr}><div class="day">${day}</div>${leaveHtml}</div>`;
 
   const docAbbr = FINANCIAL_DOC_ABBR[entry.financial_document_type ?? ''] ?? '';
   const doc = entry.financial_document_number
@@ -256,6 +276,7 @@ function cellHtml(dateStr: string, entry: PdfEntry | undefined, colourKey?: stri
     <div class="cell filled"${styleAttr}>
       <div class="body">
       <div class="top"><div class="day">${day}</div><div class="mine">${esc(entry.mine_name)}</div></div>
+      ${leaveHtml}
       ${entry.contact_person ? `<div class="sub">${esc(entry.contact_person)}</div>` : ''}
       ${entry.contact_number ? `<div class="sub">${esc(entry.contact_number)}</div>` : ''}
       ${entry.comments ? `<div class="comment">${esc(entry.comments)}</div>` : ''}
@@ -270,7 +291,7 @@ function footerHtml(generated: string, pageLabel: string): string {
   const keys = HIGHLIGHT_COLOURS.map(
     c => `<span class="key"><i style="background:${c.color};"></i>${esc(c.label)}</span>`
   ).join('');
-  return `<div class="footer"><span>Generated ${esc(generated)}</span><span class="keys">${keys}</span><span>${esc(pageLabel)}</span></div>`;
+  return `<div class="footer"><span>Generated ${esc(generated)}</span><span class="keys">${keys}<span class="key"><i style="background:#ede9fe;border-color:#7c3aed;"></i>Approved leave</span></span><span>${esc(pageLabel)}</span></div>`;
 }
 
 // Rough height (in pt, at scale 1) of one filled cell. Used to pick a text
@@ -288,9 +309,9 @@ function estimateEntryHeight(e: PdfEntry): number {
   return h;
 }
 
-function monthScale(entries: PdfEntry[], weekCount: number): number {
+function monthScale(heights: number[], weekCount: number): number {
   const rowH = 475 / weekCount; // approx. usable grid height / rows
-  const tallest = entries.reduce((m, e) => Math.max(m, estimateEntryHeight(e)), 0);
+  const tallest = heights.reduce((m, h) => Math.max(m, h), 0);
   if (tallest === 0) return 1.4;
   const scale = (rowH * 0.95) / tallest;
   return Math.round(Math.min(1.5, Math.max(0.8, scale)) * 100) / 100;
@@ -302,6 +323,7 @@ function monthPageHtml(
   month: number,
   byDate: Record<string, PdfEntry>,
   colours: Record<string, string>,
+  leave: Record<string, string>,
   generated: string,
   pageLabel: string
 ): string {
@@ -310,17 +332,19 @@ function monthPageHtml(
   let scheduled = 0;
   for (let d = 1; d <= daysInMonth; d++) if (byDate[toDateString(year, month, d)]) scheduled++;
 
-  const monthEntries: PdfEntry[] = [];
+  const heights: number[] = [];
   for (let d = 1; d <= daysInMonth; d++) {
-    const e = byDate[toDateString(year, month, d)];
-    if (e) monthEntries.push(e);
+    const ds = toDateString(year, month, d);
+    const e = byDate[ds];
+    const hasLeave = leave[ds] !== undefined;
+    if (e || hasLeave) heights.push((e ? estimateEntryHeight(e) : 14) + (hasLeave ? 22 : 0));
   }
-  const scale = monthScale(monthEntries, weeks.length);
+  const scale = monthScale(heights, weeks.length);
 
   const cells = weeks
     .map(week =>
       week
-        .map(dateStr => (dateStr ? cellHtml(dateStr, byDate[dateStr], colours[dateStr]) : `<div class="cell pad"></div>`))
+        .map(dateStr => (dateStr ? cellHtml(dateStr, byDate[dateStr], colours[dateStr], leave[dateStr]) : `<div class="cell pad"></div>`))
         .join('')
     )
     .join('');
@@ -347,7 +371,8 @@ function miniMonthHtml(
   year: number,
   month: number,
   byDate: Record<string, PdfEntry>,
-  colours: Record<string, string>
+  colours: Record<string, string>,
+  leave: Record<string, string>
 ): string {
   const weeks = buildMonthGrid(year, month);
   let scheduled = 0;
@@ -360,7 +385,11 @@ function miniMonthHtml(
             const day = parseInt(dateStr.split('-')[2], 10);
             const on = !!byDate[dateStr];
             if (on) scheduled++;
-            const bg = colours[dateStr] ? COLOUR_HEX[colours[dateStr]] : '';
+            const bg = colours[dateStr]
+              ? COLOUR_HEX[colours[dateStr]]
+              : leave[dateStr] !== undefined
+                ? '#ddd6fe'
+                : '';
             const style = bg ? ` style="background:${bg};${on ? '' : 'font-weight:800;'}"` : '';
             return `<td class="${on ? 'on' : ''}"${style}>${day}</td>`;
           })
@@ -386,11 +415,12 @@ function yearOverviewHtml(
   year: number,
   byDate: Record<string, PdfEntry>,
   colours: Record<string, string>,
+  leave: Record<string, string>,
   total: number,
   generated: string,
   pageLabel: string
 ): string {
-  const minis = Array.from({ length: 12 }, (_, m) => miniMonthHtml(year, m, byDate, colours)).join('');
+  const minis = Array.from({ length: 12 }, (_, m) => miniMonthHtml(year, m, byDate, colours, leave)).join('');
   return `
   <div class="page">
     <div class="header">
@@ -549,18 +579,32 @@ export async function exportCalendarPdf(opts: {
     // ignore
   }
 
+  // Approved leave for the same range (shown as LEAVE + type). If the database
+  // function isn't installed yet this just comes back empty.
+  const leaveByDate: Record<string, string> = {};
+  try {
+    const { data: lv } = await supabase.rpc('get_approved_leave', {
+      p_technician_id: technicianId,
+      p_from: from,
+      p_to: to,
+    });
+    (lv ?? []).forEach((l: any) => { leaveByDate[l.leave_date] = l.leave_type ?? ''; });
+  } catch {
+    // ignore
+  }
+
   const generated = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
 
   let pages: string;
   if (scope === 'month') {
-    pages = monthPageHtml(technicianName, year, month, byDate, colourByDate, generated, 'Page 1 of 1');
+    pages = monthPageHtml(technicianName, year, month, byDate, colourByDate, leaveByDate, generated, 'Page 1 of 1');
   } else {
     const totalPages = 13;
     const parts = [
-      yearOverviewHtml(technicianName, year, byDate, colourByDate, entries.length, generated, `Page 1 of ${totalPages}`),
+      yearOverviewHtml(technicianName, year, byDate, colourByDate, leaveByDate, entries.length, generated, `Page 1 of ${totalPages}`),
     ];
     for (let m = 0; m < 12; m++) {
-      parts.push(monthPageHtml(technicianName, year, m, byDate, colourByDate, generated, `Page ${m + 2} of ${totalPages}`));
+      parts.push(monthPageHtml(technicianName, year, m, byDate, colourByDate, leaveByDate, generated, `Page ${m + 2} of ${totalPages}`));
     }
     pages = parts.join('');
   }
