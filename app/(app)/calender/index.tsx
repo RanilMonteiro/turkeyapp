@@ -1662,8 +1662,8 @@ const styles = StyleSheet.create({
   dayCellDeleteHighlight: { borderWidth: 2, borderColor: DRAG_DELETE_BORDER, backgroundColor: DRAG_DELETE_TINT },
   dayCellContent: { marginTop: 4, gap: 6 },
   dayNumber: { fontSize: 18, fontWeight: '700', color: CELL_TEXT_DARK },
-  cellMineName: { fontSize: 15.5, fontWeight: '700', lineHeight: 19, color: CELL_TEXT_DARK },
-  cellSubText: { fontSize: 13, lineHeight: 16, color: CELL_SUBTEXT_DARK },
+  cellMineName: { fontSize: 15.5, fontWeight: '700', lineHeight: 19, color: CELL_TEXT_DARK, textAlign: 'center' },
+  cellSubText: { fontSize: 13, lineHeight: 16, color: CELL_SUBTEXT_DARK, textAlign: 'center' },
   cellCommentBox: {
     backgroundColor: COMMENT_BG, borderWidth: 1.5, borderColor: COMMENT_BORDER,
     borderRadius: 5, paddingHorizontal: 6, paddingVertical: 5, marginTop: 2,

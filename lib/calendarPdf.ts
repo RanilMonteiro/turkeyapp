@@ -250,6 +250,13 @@ const CSS = `
     font-size: calc(7.5pt * var(--s)); line-height: 1.15; font-weight: 800;
     color: #dc2626; text-align: center; word-break: break-word;
   }
+
+  /* Centre everything in a cell; the day number stays in the top-left corner. */
+  .cell .body { text-align: center; }
+  .top { position: relative; display: block; }
+  .top .day { position: absolute; left: 0; top: 0; min-width: 0; }
+  .top .mine { text-align: center; padding: 0 calc(11pt * var(--s)); }
+  .sub { text-align: center; }
 `;
 
 function cellHtml(
