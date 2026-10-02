@@ -253,9 +253,10 @@ const CSS = `
 
   /* Centre everything in a cell; the day number stays in the top-left corner. */
   .cell .body { text-align: center; }
-  .top { position: relative; display: block; }
-  .top .day { position: absolute; left: 0; top: 0; min-width: 0; }
-  .top .mine { text-align: center; padding: 0 calc(11pt * var(--s)); }
+  /* Day number on its own line (left), site name centred underneath it. */
+  .top { display: block; }
+  .top .day { position: static; text-align: left; min-width: 0; }
+  .top .mine { text-align: center; padding: 0; margin-top: calc(1pt * var(--s)); }
   .sub { text-align: center; }
 `;
 
@@ -305,7 +306,7 @@ function footerHtml(generated: string, pageLabel: string): string {
 // size per month so the busiest day still fits its row.
 function estimateEntryHeight(e: PdfEntry): number {
   const lines = (text: string, perLine: number) => Math.max(1, Math.ceil(text.length / perLine));
-  let h = 6; // cell padding
+  let h = 6 + 9.5; // cell padding + day-number line
   h += 8.5 * lines(e.mine_name, 20);
   if (e.contact_person) h += 7.6 * lines(e.contact_person, 28);
   if (e.contact_number) h += 7.6 * lines(e.contact_number, 28);
