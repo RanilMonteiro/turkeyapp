@@ -260,6 +260,16 @@ const CSS = `
   .sub { text-align: center; }
 `;
 
+// Long site names are printed smaller so they stay on fewer lines and never
+// push the contact numbers / document number out of the cell.
+function titleFactor(name: string): number {
+  const n = name.length;
+  if (n <= 16) return 1;
+  if (n <= 26) return 0.88;
+  if (n <= 38) return 0.76;
+  return 0.66;
+}
+
 function cellHtml(
   dateStr: string,
   entry: PdfEntry | undefined,
@@ -283,7 +293,7 @@ function cellHtml(
   return `
     <div class="cell filled"${styleAttr}>
       <div class="body">
-      <div class="top"><div class="day">${day}</div><div class="mine">${esc(entry.mine_name)}</div></div>
+      <div class="top"><div class="day">${day}</div><div class="mine" style="font-size:calc(7.5pt * var(--s) * ${titleFactor(entry.mine_name)});">${esc(entry.mine_name)}</div></div>
       ${leaveHtml}
       ${entry.contact_person ? `<div class="sub">${esc(entry.contact_person)}</div>` : ''}
       ${entry.contact_number ? `<div class="sub">${esc(entry.contact_number)}</div>` : ''}
@@ -307,7 +317,8 @@ function footerHtml(generated: string, pageLabel: string): string {
 function estimateEntryHeight(e: PdfEntry): number {
   const lines = (text: string, perLine: number) => Math.max(1, Math.ceil(text.length / perLine));
   let h = 6 + 9.5; // cell padding + day-number line
-  h += 8.5 * lines(e.mine_name, 20);
+  const f = titleFactor(e.mine_name);
+  h += 8.5 * f * lines(e.mine_name, 20 / f);
   if (e.contact_person) h += 7.6 * lines(e.contact_person, 28);
   if (e.contact_number) h += 7.6 * lines(e.contact_number, 28);
   if (e.comments) h += 7 + 7.1 * lines(e.comments, 24);

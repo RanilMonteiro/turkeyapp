@@ -154,6 +154,17 @@ function getCellBackground(colour: string | undefined): string {
   return colour ?? CELL_EMPTY_BG;
 }
 
+// Long site names get a smaller font so they fit on fewer lines and don't push
+// the contact numbers / document number out of the cell.
+function titleFontSize(name: string): number {
+  const n = name.length;
+  if (n <= 16) return 15.5;
+  if (n <= 24) return 13.5;
+  if (n <= 34) return 12;
+  if (n <= 46) return 10.5;
+  return 9.5;
+}
+
 export default function OperationalCalendar() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
@@ -1152,16 +1163,21 @@ export default function OperationalCalendar() {
 
                       {entry && (
                         <View style={styles.dayCellContent}>
-                          <Text style={styles.cellMineName} numberOfLines={2}>
+                          <Text
+                            style={[styles.cellMineName, { fontSize: titleFontSize(entry.mine_name), lineHeight: Math.round(titleFontSize(entry.mine_name) * 1.2) }]}
+                            numberOfLines={3}
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.7}
+                          >
                             {entry.mine_name}
                           </Text>
                           {entry.contact_person && (
-                            <Text style={styles.cellSubText} numberOfLines={1}>
+                            <Text style={styles.cellSubText} numberOfLines={2}>
                               {entry.contact_person}
                             </Text>
                           )}
                           {entry.contact_number && (
-                            <Text style={styles.cellSubText} numberOfLines={1}>
+                            <Text style={styles.cellSubText} numberOfLines={2}>
                               {entry.contact_number}
                             </Text>
                           )}
