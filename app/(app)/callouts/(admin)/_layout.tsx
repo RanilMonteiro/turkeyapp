@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import { LayoutDashboard, Plus, Calendar,Users } from 'lucide-react-native';
-import { useColorScheme, Platform } from 'react-native';
+import { useColorScheme } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const colors = {
   yellow: '#fbbf24',
@@ -17,6 +18,10 @@ const colors = {
 
 export default function AdminCalloutsLayout() {
   const isDark = useColorScheme() === 'dark';
+  // Android 3-button / gesture nav sits on top of the app when edge-to-edge
+  // is on, so the tab bar must add the real bottom inset instead of a fixed height.
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, 8);
 
   return (
     <Tabs screenOptions={{
@@ -35,8 +40,8 @@ export default function AdminCalloutsLayout() {
         backgroundColor: isDark ? colors.black : colors.white,
         borderTopColor: isDark ? colors.gray[800] : colors.gray[200],
         borderTopWidth: 1,
-        height: Platform.OS === 'ios' ? 85 : 65,
-        paddingBottom: Platform.OS === 'ios' ? 28 : 10,
+        height: 56 + bottomPad,
+        paddingBottom: bottomPad,
         paddingTop: 8,
       },
       tabBarActiveTintColor: colors.yellow,

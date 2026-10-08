@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, FileText, Calendar, BarChart3, LogOut, Users, ClipboardList, CheckCircle, FolderOpen, Eye, MapPin } from 'lucide-react-native';
+import { LogOut } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
+import { useAccess } from '../../../context/AccessContext';
 
 const colors = {
   yellow: '#fbbf24',
@@ -22,159 +22,12 @@ const colors = {
 export default function AdminDashboard() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
-  const [fullName, setFullName] = useState('');
-  const [permissions, setPermissions] = useState<string[]>([]);
-  const [hasDocGrants, setHasDocGrants] = useState(false);
-
-  useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  async function fetchProfile() {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name')
-      .eq('id', userData.user.id)
-      .single();
-
-    const { data: perms } = await supabase
-      .from('user_permissions')
-      .select('permission')
-      .eq('user_id', userData.user.id)
-      .eq('granted', true);
-
-    // "See Docs" only shows up for admins HR has actually granted
-    // document access to — not every admin needs this card.
-    const { data: grants } = await supabase
-      .from('document_access_grants')
-      .select('id')
-      .eq('admin_id', userData.user.id)
-      .limit(1);
-
-    if (profile) setFullName(profile.full_name ?? '');
-    if (perms) setPermissions(perms.map(p => p.permission));
-    setHasDocGrants((grants?.length ?? 0) > 0);
-  }
+  const { fullName, dashboardFeatures: features } = useAccess();
 
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace('/(auth)/login' as any);
   }
-
-  const allFeatures = [
-    {
-      id: 'callouts',
-      title: 'Callouts',
-      icon: FileText,
-      description: 'Manage and create callouts',
-      route: '/(app)/callouts/(admin)/dashboard',
-      permission: 'view_callouts',
-    },
-    {
-      id: 'callouts-tech',
-      title: 'Callouts (Technician)',
-      icon: FileText,
-      description: 'Accept and complete jobs like a technician',
-      route: '/(app)/callouts/(technician)/jobs',
-      permission: 'view_callouts_tech',
-    },
-    {
-      id: 'calendar',
-      title: 'Calendar',
-      icon: Calendar,
-      description: 'View callout schedule',
-      route: '/(app)/callouts/(admin)/calendar',
-      permission: 'view_calendar',
-    },
-    {
-      // Separate from the callout schedule above — this is the
-      // per-technician job/mine schedule (Operational Calendar).
-      // Always visible; whether the admin can EDIT vs just VIEW is
-      // decided inside the screen itself via user_permissions
-      // ('can_edit_operational_calendar'), not gated here.
-      id: 'operational-calendar',
-      title: 'Operational Calendar',
-      icon: Calendar,
-      description: 'View technician job schedules',
-      route: '/(app)/calender',
-      permission: null,
-    },
-    {
-  id: 'forms',
-  title: 'Forms',
-  icon: ClipboardList,
-  description: 'Submit leave and other requests',
-  route: '/(app)/shared/forms',
-  permission: null,
-},
-{
-  id: 'my-requests',
-  title: 'My Requests',
-  icon: FileText,
-  description: 'Track your submissions',
-  route: '/(app)/shared/my-requests',
-  permission: null,
-},
-{
-  id: 'approvals',
-  title: 'Approvals',
-  icon: CheckCircle,
-  description: 'Requests waiting for your approval',
-  route: '/(app)/shared/my-approvals',
-  permission: 'can_approve',
-},
-    {
-      id: 'team',
-      title: 'Technicians',
-      icon: Users,
-      description: 'View your field team',
-      route: '/(app)/callouts/(admin)/technicians',
-      permission: 'manage_team',
-    },
-    {
-      // Visible to every admin; whether they can edit site info or
-      // just view/add notes+docs is decided inside the screen itself
-      // via the can_manage_sites permission, not gated here.
-      id: 'sites',
-      title: 'Sites',
-      icon: MapPin,
-      description: 'Site contacts, info, notes and documents',
-      route: '/(app)/hr/sites',
-      permission: null,
-    },
-    {
-  id: 'documents',
-  title: 'My Documents',
-  icon: FolderOpen,
-  description: 'View your HR documents',
-  route: '/(app)/shared/my-documents',
-  permission: null,
-},
-    ...(hasDocGrants ? [{
-      id: 'see-docs',
-      title: 'See Docs',
-      icon: Eye,
-      description: 'Documents you have been granted access to',
-      route: '/(app)/shared/granted-documents',
-      permission: null,
-    }] : []),
-    {
-      id: 'reports',
-      title: 'Reports',
-      icon: BarChart3,
-      description: 'Analytics and insights',
-      route: '/(app)/reports',
-      permission: 'view_reports',
-    },
-   
-  ];
-
-  const features = allFeatures.filter(f =>
-    f.permission === null || permissions.includes(f.permission)
-  );
 
   return (
     <ScrollView

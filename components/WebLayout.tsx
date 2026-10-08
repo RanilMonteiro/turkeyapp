@@ -1,16 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
   ScrollView, Platform, useWindowDimensions,
   useColorScheme
 } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import {
-  LayoutDashboard, Users, FileText, FolderOpen,
-  ClipboardList, MapPin, GitBranch, LogOut,
-  Menu, X, CheckCircle, Calendar, Wrench
-} from 'lucide-react-native';
+import { LogOut, Menu, X } from 'lucide-react-native';
 import { supabase } from '../lib/supabase';
+import { useAccess } from '../context/AccessContext';
+import {
+  FEATURE_GROUP_LABELS, FEATURE_GROUP_ORDER, HOME_ICON, findActiveId,
+} from '../constants/features';
 
 const colors = {
   yellow: '#fbbf24',
@@ -28,56 +28,10 @@ const colors = {
   }
 };
 
-// HR nav trimmed to match the new dashboard: Forms (template builder),
-// standalone Documents, and standalone Approval Chains are gone —
-// Documents and Approval Chains now live inside each employee's own
-// profile page, and Forms (the generic builder) was discarded.
-// Each nav item can carry a `permission` key. null means always visible
-// for that role; a string means the item only shows if the logged-in
-// user has that permission granted (checked against user_permissions,
-// same source of truth as the dashboard grids). This keeps the sidebar
-// in sync with what a given admin can actually do — previously it
-// listed every admin nav item unconditionally regardless of what
-// permissions that specific admin had.
-const navByRole: Record<string, { label: string; icon: any; route: string; permission: string | null }[]> = {
-  superuser: [
-    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/superuser', permission: null },
-    { label: 'Manage Users', icon: Users, route: '/(app)/superuser/manage-users', permission: null },
-    { label: 'Callouts', icon: FileText, route: '/(app)/callouts/(admin)/dashboard', permission: null },
-    { label: 'Employees', icon: Users, route: '/(app)/hr/employees', permission: null },
-    { label: 'Requests', icon: FileText, route: '/(app)/hr/requests', permission: null },
-    { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: null },
-    { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites', permission: null },
-    { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
-  ],
-  hr: [
-    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/hr', permission: null },
-    { label: 'Employees', icon: Users, route: '/(app)/hr/employees', permission: null },
-    { label: 'Requests', icon: FileText, route: '/(app)/hr/requests', permission: null },
-    { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: null },
-    { label: 'Sites', icon: MapPin, route: '/(app)/hr/sites', permission: null },
-    { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
-    
-  ],
-  admin: [
-    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/admin', permission: null },
-    { label: 'Callouts', icon: FileText, route: '/(app)/callouts/(admin)/dashboard', permission: 'view_callouts' },
-    { label: 'Callouts (Technician)', icon: Wrench, route: '/(app)/callouts/(technician)/jobs', permission: 'view_callouts_tech' },
-     { label: 'Forms', icon: ClipboardList, route: '/(app)/shared/forms', permission: null },
-     { label: 'My Approvals', icon: CheckCircle, route: '/(app)/shared/my-approvals', permission: 'can_approve' },
-    { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests', permission: null },
-    { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents', permission: null },
-    { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
-  ],
-  technician: [
-    { label: 'Dashboard', icon: LayoutDashboard, route: '/(app)/technician', permission: null },
-    { label: 'Callouts', icon: Wrench, route: '/(app)/callouts/(technician)/jobs', permission: null },
-    { label: 'Forms', icon: ClipboardList, route: '/(app)/shared/forms', permission: null },
-    { label: 'My Requests', icon: ClipboardList, route: '/(app)/shared/my-requests', permission: null },
-    { label: 'My Documents', icon: FolderOpen, route: '/(app)/shared/my-documents', permission: null },
-    { label: 'Leave Calendar', icon: Calendar, route: '/(app)/shared/leave-calendar', permission: null },
-  ],
-};
+// The sidebar no longer has its own hard-coded list per role. It shows
+// exactly what constants/features.ts says this person may open (role +
+// permissions), grouped into sections — so it always matches the
+// dashboard cards. To change who sees a tab, edit features.ts.
 
 type Props = {
   children: React.ReactNode;
@@ -85,48 +39,19 @@ type Props = {
 
 export default function WebLayout({ children }: Props) {
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() ?? '';
   const { width } = useWindowDimensions();
   const isDark = useColorScheme() === 'dark';
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [profile, setProfile] = useState<{ role: string; full_name: string } | null>(null);
-const [permissions, setPermissions] = useState<string[]>([]);
+  const { role, fullName, sidebarFeatures, homeRoute } = useAccess();
   const isWeb = Platform.OS === 'web';
   const isDesktop = width >= 768;
 
-  useEffect(() => {
-    fetchProfile();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      fetchProfile();
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-
-  async function fetchProfile() {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) { setProfile(null); return; }
-
-  const { data } = await supabase
-    .from('profiles')
-    .select('role, full_name')
-    .eq('id', userData.user.id)
-    .single();
-
-  const { data: perms } = await supabase
-    .from('user_permissions')
-    .select('permission')
-    .eq('user_id', userData.user.id)
-    .eq('granted', true);
-
-  if (data) setProfile(data);
-  if (perms) setPermissions(perms.map(p => p.permission));
-}
-
-  const isAuthScreen = pathname?.includes('auth') || pathname === '/';
+  const isAuthScreen =
+    pathname.includes('auth') || pathname === '/' || pathname === '/login';
 
   // Only show sidebar on web desktop and when logged in
-  if (!isWeb || !isDesktop || !profile || isAuthScreen) {
+  if (!isWeb || !isDesktop || !role || !homeRoute || isAuthScreen) {
     return <>{children}</>;
   }
 
@@ -140,16 +65,61 @@ const [permissions, setPermissions] = useState<string[]>([]);
     topbar: isDark ? colors.gray[900] : colors.white,
   };
 
-  const navItems = (navByRole[profile.role] ?? []).filter(
-  item => item.permission === null || permissions.includes(item.permission)
-);
-  const currentPage = navItems.find(n =>
-    pathname === n.route || pathname.startsWith(n.route + '/')
-  );
+  const homeItem = {
+    id: 'home',
+    title: 'Dashboard',
+    icon: HOME_ICON,
+    route: homeRoute,
+    alsoMatches: [] as string[],
+  };
+
+  const activeId = findActiveId(pathname, [homeItem, ...sidebarFeatures]);
+  const activeItem = [homeItem, ...sidebarFeatures].find(i => i.id === activeId);
+
+  const sections = FEATURE_GROUP_ORDER
+    .map(group => ({
+      label: FEATURE_GROUP_LABELS[group],
+      items: sidebarFeatures.filter(f => f.group === group),
+    }))
+    .filter(section => section.items.length > 0);
+
+  const displayName = fullName || '';
+  const initial = displayName.charAt(0).toUpperCase();
+  const roleLabel = role === 'hr' ? 'HR' : role.charAt(0).toUpperCase() + role.slice(1);
 
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace('/(auth)/login' as any);
+  }
+
+  function renderItem(item: { id: string; title: string; icon: any; route: string }) {
+    const isActive = item.id === activeId;
+    return (
+      <TouchableOpacity
+        key={item.id}
+        style={[
+          styles.navItem,
+          isActive && { backgroundColor: `${colors.yellow}15` }
+        ]}
+        onPress={() => router.push(item.route as any)}
+        activeOpacity={0.7}
+      >
+        <item.icon
+          color={isActive ? colors.yellow : theme.muted}
+          size={17}
+        />
+        <Text style={[
+          styles.navLabel,
+          {
+            color: isActive ? colors.yellow : theme.subtext,
+            fontWeight: isActive ? '700' : '400',
+          }
+        ]}>
+          {item.title}
+        </Text>
+        {isActive && <View style={styles.activeDot} />}
+      </TouchableOpacity>
+    );
   }
 
   return (
@@ -173,16 +143,16 @@ const [permissions, setPermissions] = useState<string[]>([]);
           <View style={[styles.userRow, { borderBottomColor: theme.border }]}>
             <View style={[styles.avatar, { backgroundColor: `${colors.yellow}25` }]}>
               <Text style={[styles.avatarText, { color: colors.yellow }]}>
-                {profile.full_name?.charAt(0).toUpperCase()}
+                {initial}
               </Text>
             </View>
             <View style={styles.userInfo}>
               <Text style={[styles.userName, { color: theme.text }]} numberOfLines={1}>
-                {profile.full_name}
+                {displayName}
               </Text>
               <View style={[styles.rolePill, { backgroundColor: `${colors.yellow}20` }]}>
                 <Text style={[styles.rolePillText, { color: colors.yellow }]}>
-                  {profile.role.charAt(0).toUpperCase() + profile.role.slice(1)}
+                  {roleLabel}
                 </Text>
               </View>
             </View>
@@ -190,36 +160,13 @@ const [permissions, setPermissions] = useState<string[]>([]);
 
           {/* Nav */}
           <ScrollView style={styles.nav} showsVerticalScrollIndicator={false}>
-            <Text style={[styles.navSection, { color: theme.muted }]}>NAVIGATION</Text>
-            {navItems.map((item) => {
-              const isActive = pathname === item.route || pathname.startsWith(item.route + '/');
-              return (
-                <TouchableOpacity
-                  key={item.route}
-                  style={[
-                    styles.navItem,
-                    isActive && { backgroundColor: `${colors.yellow}15` }
-                  ]}
-                  onPress={() => router.push(item.route as any)}
-                  activeOpacity={0.7}
-                >
-                  <item.icon
-                    color={isActive ? colors.yellow : theme.muted}
-                    size={17}
-                  />
-                  <Text style={[
-                    styles.navLabel,
-                    {
-                      color: isActive ? colors.yellow : theme.subtext,
-                      fontWeight: isActive ? '700' : '400',
-                    }
-                  ]}>
-                    {item.label}
-                  </Text>
-                  {isActive && <View style={styles.activeDot} />}
-                </TouchableOpacity>
-              );
-            })}
+            {renderItem(homeItem)}
+            {sections.map(section => (
+              <View key={section.label}>
+                <Text style={[styles.navSection, { color: theme.muted }]}>{section.label}</Text>
+                {section.items.map(renderItem)}
+              </View>
+            ))}
           </ScrollView>
 
           {/* Logout */}
@@ -249,13 +196,13 @@ const [permissions, setPermissions] = useState<string[]>([]);
           </TouchableOpacity>
 
           <Text style={[styles.pageTitle, { color: theme.text }]}>
-            {currentPage?.label ?? 'Dashboard'}
+            {activeItem?.title ?? 'Dashboard'}
           </Text>
 
           <View style={styles.topBarRight}>
             <View style={[styles.topBarAvatar, { backgroundColor: `${colors.yellow}20` }]}>
               <Text style={[styles.topBarAvatarText, { color: colors.yellow }]}>
-                {profile.full_name?.charAt(0).toUpperCase()}
+                {initial}
               </Text>
             </View>
           </View>
@@ -329,7 +276,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
     paddingHorizontal: 8,
-    paddingTop: 8,
+    paddingTop: 16,
     paddingBottom: 6,
   },
   navItem: {

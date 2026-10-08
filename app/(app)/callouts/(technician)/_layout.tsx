@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import { List, CheckCircle } from 'lucide-react-native';
 import { useColorScheme } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const colors = {
   yellow: '#fbbf24',
@@ -17,6 +18,8 @@ const colors = {
 
 export default function TechnicianCalloutsLayout() {
   const isDark = useColorScheme() === 'dark';
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, 8);
 
   return (
     <Tabs screenOptions={{
@@ -35,8 +38,8 @@ export default function TechnicianCalloutsLayout() {
         backgroundColor: isDark ? colors.black : colors.white,
         borderTopColor: isDark ? colors.gray[800] : colors.gray[200],
         borderTopWidth: 1,
-        height: 60,
-        paddingBottom: 8,
+        height: 52 + bottomPad,
+        paddingBottom: bottomPad,
         paddingTop: 8,
       },
       tabBarActiveTintColor: colors.yellow,

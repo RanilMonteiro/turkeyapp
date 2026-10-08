@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, FileText, LogOut, ClipboardList, FolderOpen, Calendar, MapPin } from 'lucide-react-native';
+import { LogOut } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
+import { useAccess } from '../../../context/AccessContext';
 
 const colors = {
   yellow: '#fbbf24',
@@ -22,102 +22,12 @@ const colors = {
 export default function TechnicianDashboard() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
-  const [fullName, setFullName] = useState('');
-  const [permissions, setPermissions] = useState<string[]>([]);
-
-  useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  async function fetchProfile() {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name')
-      .eq('id', userData.user.id)
-      .single();
-
-    const { data: perms } = await supabase
-      .from('user_permissions')
-      .select('permission')
-      .eq('user_id', userData.user.id)
-      .eq('granted', true);
-
-    if (profile) setFullName(profile.full_name ?? '');
-    if (perms) setPermissions(perms.map(p => p.permission));
-  }
+  const { fullName, dashboardFeatures: features } = useAccess();
 
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace('/(auth)/login' as any);
   }
-
-  const allFeatures = [
-    {
-      id: 'callouts',
-      title: 'My Callouts',
-      icon: FileText,
-      description: 'View and accept callouts',
-      route: '/(app)/callouts/(technician)/jobs',
-      permission: null,
-    },
-
-    {
-  id: 'forms',
-  title: 'Forms',
-  icon: ClipboardList,
-  description: 'Submit leave and other requests',
-  route: '/(app)/shared/forms',
-  permission: null,
-},
-
-{
-  id: 'documents',
-  title: 'My Documents',
-  icon: FolderOpen,
-  description: 'View your HR documents',
-  route: '/(app)/shared/my-documents',
-  permission: null,
-},
-
-{
-  id: 'my-requests',
-  title: 'My Requests',
-  icon: FileText,
-  description: 'Track your submissions',
-  route: '/(app)/shared/my-requests',
-  permission: null,
-},
-    {
-      // Technicians view site info/contacts read-only, and can add
-      // notes or upload documents for a site — enforced inside the
-      // screen, not gated here.
-      id: 'sites',
-      title: 'Sites',
-      icon: MapPin,
-      description: 'Site info, notes and documents',
-      route: '/(app)/hr/sites',
-      permission: null,
-    },
-    {
-      // Technicians always see their own operational calendar,
-      // read-only — the screen itself hides edit controls for this
-      // role, so no permission gating is needed here.
-      id: 'operational-calendar',
-      title: 'My Calendar',
-      icon: Calendar,
-      description: 'View your job schedule',
-      route: '/(app)/calender',
-      permission: null,
-    },
-    
-  ];
-
-  const features = allFeatures.filter(f =>
-    f.permission === null || permissions.includes(f.permission)
-  );
 
   return (
     <ScrollView

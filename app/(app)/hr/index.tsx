@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Users, FileText, MapPin, LogOut, CheckCircle } from 'lucide-react-native';
+import { LogOut } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
+import { useAccess } from '../../../context/AccessContext';
 
 const colors = {
   yellow: '#fbbf24',
@@ -22,7 +22,7 @@ const colors = {
 export default function HRDashboard() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
-  const [fullName, setFullName] = useState('');
+  const { fullName, dashboardFeatures: features } = useAccess();
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -32,60 +32,10 @@ export default function HRDashboard() {
     subtext: isDark ? colors.gray[400] : colors.gray[500],
   };
 
-  useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  async function fetchProfile() {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name')
-      .eq('id', userData.user.id)
-      .single();
-    if (profile) setFullName(profile.full_name ?? '');
-  }
-
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace('/(auth)/login' as any);
   }
-
-  // Forms (template builder), standalone Documents, and standalone
-  // Approval Chains have been removed from here — the first is
-  // discarded in favor of purpose-built forms, and the other two now
-  // live inside each employee's own profile page instead.
-  const features = [
-    {
-      id: 'employees',
-      title: 'Employees',
-      icon: Users,
-      description: 'Manage employee profiles',
-      route: '/(app)/hr/employees',
-    },
-    {
-      id: 'requests',
-      title: 'Requests',
-      icon: FileText,
-      description: 'View all form submissions',
-      route: '/(app)/hr/requests',
-    },
-    {
-      id: 'approvals',
-      title: 'My Approvals',
-      icon: CheckCircle,
-      description: 'Requests waiting for your approval',
-      route: '/(app)/shared/my-approvals',
-    },
-    {
-      id: 'sites',
-      title: 'Sites',
-      icon: MapPin,
-      description: 'Manage company sites',
-      route: '/(app)/hr/sites',
-    },
-  ];
 
   return (
     <ScrollView

@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { RoleProvider } from '../hooks/useRole';
+import { AccessProvider } from '../context/AccessContext';
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -59,7 +59,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <RoleProvider>
+    <AccessProvider>
       <WebLayout>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
@@ -67,6 +67,6 @@ export default function RootLayout() {
           <Stack.Screen name="(app)" />
         </Stack>
       </WebLayout>
-    </RoleProvider>
+    </AccessProvider>
   );
 }

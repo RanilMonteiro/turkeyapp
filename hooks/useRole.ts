@@ -1,74 +1,25 @@
-import React from 'react';
+// ─────────────────────────────────────────────────────────────────────
+// DEPRECATED — kept only so the two older screens that still import it
+// (dashboard/index.tsx, profile/documents.tsx) keep working.
+//
+// This used to hold a hard-coded permission map and always reported the
+// user as a 'technician' (nothing ever called setRole). It now just reads
+// the real role from AccessContext. New code should use `useAccess()`
+// from '../context/AccessContext' directly.
+// ─────────────────────────────────────────────────────────────────────
+import { AccessProvider, useAccess } from '../context/AccessContext';
+import type { PermissionKey } from '../constants/permissions';
 
-type UserRole = 'technician' | 'admin' | 'superuser';
+export const RoleProvider = AccessProvider;
 
-interface RoleContextType {
-  role: UserRole;
-  setRole: (role: UserRole) => void;
-  can: (permission: string) => boolean;
-  isTechnician: boolean;
-  isAdmin: boolean;
-  isSuperuser: boolean;
-}
-
-const RoleContext = React.createContext<RoleContextType | undefined>(undefined);
-
-export function RoleProvider({ children }: { children: React.ReactNode }) {
-  const [role, setRole] = React.useState<UserRole>('technician');
-
-  const permissions = {
-    technician: [
-      'view_assigned_callouts',
-      'update_callout_status',
-      'request_leave',
-      'view_own_schedule',
-      'view_own_profile',
-    ],
-    admin: [
-      'view_all_callouts',
-      'create_callout',
-      'edit_callout',
-      'assign_technician',
-      'manage_team',
-      'approve_leave',
-      'view_reports',
-      'view_all_profiles',
-    ],
-    superuser: [
-      'all',
-      'delete_callout',
-      'delete_user',
-      'impersonate_user',
-      'manage_roles',
-      'system_settings',
-    ],
-  };
-
-  const can = (permission: string) => {
-    if (role === 'superuser') return true;
-    return permissions[role]?.includes(permission) || false;
-  };
-
-  const value = {
+export function useRole() {
+  const access = useAccess();
+  const role = access.role ?? 'technician';
+  return {
     role,
-    setRole,
-    can,
+    can: (permission: string) => access.can(permission as PermissionKey),
     isTechnician: role === 'technician',
     isAdmin: role === 'admin' || role === 'superuser',
     isSuperuser: role === 'superuser',
   };
-
-  return React.createElement(
-    RoleContext.Provider,
-    { value },
-    children
-  );
-}
-
-export function useRole() {
-  const context = React.useContext(RoleContext);
-  if (context === undefined) {
-    throw new Error('useRole must be used within a RoleProvider');
-  }
-  return context;
 }

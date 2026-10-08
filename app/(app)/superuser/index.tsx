@@ -1,7 +1,8 @@
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, FileText, Calendar, BarChart3, LogOut, Users, Settings, MapPin, CheckCircle } from 'lucide-react-native';
+import { LogOut } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
+import { useAccess } from '../../../context/AccessContext';
 
 const colors = {
   yellow: '#fbbf24',
@@ -25,61 +26,7 @@ export default function SuperuserDashboard() {
   const router = useRouter();
   const isDarkMode = useColorScheme() === 'dark';
 
-  const features = [
-  {
-    id: 'manage-users',
-    title: 'Manage Users',
-    icon: Users,
-    description: 'Create, edit and assign roles',
-    route: '/(app)/superuser/manage-users',
-  },
-  {
-    id: 'callouts',
-    title: 'Callouts',
-    icon: FileText,
-    description: 'Manage all callouts',
-    route: '/(app)/callouts/(admin)/dashboard',
-  },
-  // Same HR-level features HR has access to — RLS already grants
-  // superuser the same access everywhere, this just wires up the UI.
-  {
-    id: 'employees',
-    title: 'Employees',
-    icon: Users,
-    description: 'Manage employee profiles',
-    route: '/(app)/hr/employees',
-  },
-  {
-    id: 'requests',
-    title: 'Requests',
-    icon: FileText,
-    description: 'View all form submissions',
-    route: '/(app)/hr/requests',
-  },
-  {
-    id: 'approvals',
-    title: 'My Approvals',
-    icon: CheckCircle,
-    description: 'Requests waiting for your approval',
-    route: '/(app)/shared/my-approvals',
-  },
-  {
-    id: 'sites',
-    title: 'Sites',
-    icon: MapPin,
-    description: 'Manage company sites',
-    route: '/(app)/hr/sites',
-  },
-  {
-    // Superuser always has full edit rights on this calendar (checked
-    // inside the screen itself), so no permission gating needed here.
-    id: 'operational-calendar',
-    title: 'Operational Calendar',
-    icon: Calendar,
-    description: 'Manage technician job schedules',
-    route: '/(app)/calender',
-  },
-];
+  const { dashboardFeatures: features } = useAccess();
 
   async function handleLogout() {
     await supabase.auth.signOut();

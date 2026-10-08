@@ -26,8 +26,6 @@ export default function AppLayout() {
       <Stack.Screen name="profile" />
       <Stack.Screen name="callouts" />
       <Stack.Screen name="calender" />
-      <Stack.Screen name="reports" />
-      <Stack.Screen name="settings" />
     </Stack>
   );
 }

@@ -2,12 +2,14 @@ import { useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, TextInput,
-  ActivityIndicator, Switch
+  ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify } from '../../../lib/notify';
+import PermissionToggles from '../../../components/PermissionToggles';
+import { sanitizePermissions } from '../../../constants/permissions';
 
 const colors = {
   yellow: '#fbbf24',
@@ -23,32 +25,6 @@ const colors = {
     900: '#0f172a',
   }
 };
-
-// Every permission here is now fully toggleable — there used to be a
-// hardcoded `enabled: false` on most of these that permanently locked
-// their switches off no matter what was selected. That's gone.
-//
-// This list only includes permissions that actually gate something in
-// the app right now:
-//  - view_callouts       -> admin-side Callouts management dashboard
-//  - view_callouts_tech  -> technician-style "accept/complete a job"
-//                           view, also available to admins if granted
-//  - view_calendar       -> Callout calendar
-//  - manage_team         -> Technicians list
-//  - view_reports        -> Reports screen
-//
-// view_documents / approve_documents were removed: they predate the
-// Document Access Grants system (HR grants specific admins access to
-// specific employees' documents) and don't gate anything anymore —
-// leaving them in would just be another "toggle that does nothing."
-const ALL_PERMISSIONS = [
-  { key: 'view_callouts', label: 'Callouts (Admin)', description: 'Manage and create callouts' },
-  { key: 'view_callouts_tech', label: 'Callouts (Technician view)', description: 'Accept and complete jobs like a technician' },
-  { key: 'view_calendar', label: 'Calendar', description: 'Access the job calendar' },
-  { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians' },
-  { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics' },
-  { key: 'can_approve', label: 'Eligible Approver', description: 'Can be chosen as an approver in employee approval chains' },
-];
 
 export default function CreateUser() {
   const router = useRouter();
@@ -114,7 +90,7 @@ export default function CreateUser() {
           password,
           full_name: fullName,
           role,
-          permissions: role === 'admin' || role === 'hr' ? permissions : [],
+          permissions: role === 'admin' || role === 'hr' ? sanitizePermissions(role, permissions) : [],
         }),
       }
     );
@@ -238,43 +214,20 @@ export default function CreateUser() {
         </View>
       </View>
 
-      {/* Permissions apply to admin AND hr — technicians use their own
-          fixed screens and don't need this. HR reuses the exact same
-          permission set as admin rather than having its own separate
-          list. Note: HR's own dashboard doesn't currently gate any of
-          its cards on these permissions the way admin's does — this
-          just makes the same picker available for HR accounts too. */}
-      {(role === 'admin' || role === 'hr') && (
-        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Permissions</Text>
-          <Text style={[styles.sectionSubtitle, { color: theme.subtext }]}>
-            Control what this user can access. Checking both Callout options shows both the
-            admin management view and the technician job-accepting view on their dashboard.
-          </Text>
-
-          {ALL_PERMISSIONS.map((perm) => (
-            <View
-              key={perm.key}
-              style={[styles.permRow, { borderBottomColor: theme.border }]}
-            >
-              <View style={styles.permInfo}>
-                <Text style={[styles.permLabel, { color: theme.text }]}>
-                  {perm.label}
-                </Text>
-                <Text style={[styles.permDesc, { color: theme.subtext }]}>
-                  {perm.description}
-                </Text>
-              </View>
-              <Switch
-                value={permissions.includes(perm.key)}
-                onValueChange={() => togglePermission(perm.key)}
-                trackColor={{ false: isDark ? colors.gray[700] : colors.gray[200], true: `${colors.yellow}80` }}
-                thumbColor={permissions.includes(perm.key) ? colors.yellow : colors.gray[400]}
-              />
-            </View>
-          ))}
-        </View>
-      )}
+      <PermissionToggles
+        role={role}
+        selected={permissions}
+        onToggle={togglePermission}
+        accent={colors.yellow}
+        theme={{
+          card: theme.card,
+          border: theme.border,
+          text: theme.text,
+          subtext: theme.subtext,
+          trackOff: isDark ? colors.gray[700] : colors.gray[200],
+          thumbOff: colors.gray[400],
+        }}
+      />
 
       <TouchableOpacity
         style={[styles.submitButton, loading && { opacity: 0.6 }]}

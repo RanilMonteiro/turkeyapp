@@ -2,12 +2,14 @@ import { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, TextInput,
-  ActivityIndicator, Switch
+  ActivityIndicator
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify } from '../../../lib/notify';
+import PermissionToggles from '../../../components/PermissionToggles';
+import { sanitizePermissions } from '../../../constants/permissions';
 
 const colors = {
   yellow: '#fbbf24',
@@ -23,17 +25,6 @@ const colors = {
     900: '#0f172a',
   }
 };
-
-// Kept in sync with create-user.tsx — same permission set, same
-// no-longer-artificially-locked toggles.
-const ALL_PERMISSIONS = [
-  { key: 'view_callouts', label: 'Callouts (Admin)', description: 'Manage and create callouts' },
-  { key: 'view_callouts_tech', label: 'Callouts (Technician view)', description: 'Accept and complete jobs like a technician' },
-  { key: 'view_calendar', label: 'Calendar', description: 'Access the job calendar' },
-  { key: 'manage_team', label: 'Manage Team', description: 'View and manage technicians' },
-  { key: 'view_reports', label: 'View Reports', description: 'Access reports and analytics' },
-  { key: 'can_approve', label: 'Eligible Approver', description: 'Can be chosen as an approver in employee approval chains' },
-];
 
 export default function EditUser() {
   const router = useRouter();
@@ -121,7 +112,7 @@ export default function EditUser() {
       user_id: id,
       full_name: fullName,
       role,
-      permissions: role === 'admin' || role === 'hr' ? permissions : [],
+      permissions: role === 'admin' || role === 'hr' ? sanitizePermissions(role, permissions) : [],
     };
 
     if (newPassword) payload.password = newPassword;
@@ -245,39 +236,20 @@ export default function EditUser() {
         </View>
       </View>
 
-      {/* Permissions only apply to admin — technicians and HR use their
-          own fixed screens and don't need this. */}
-      {(role === 'admin' || role === 'hr') && (
-        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>Permissions</Text>
-          <Text style={[styles.sectionSubtitle, { color: theme.subtext }]}>
-            Control what this admin can access. Checking both Callout options shows both the
-            admin management view and the technician job-accepting view on their dashboard.
-          </Text>
-
-          {ALL_PERMISSIONS.map((perm) => (
-            <View
-              key={perm.key}
-              style={[styles.permRow, { borderBottomColor: theme.border }]}
-            >
-              <View style={styles.permInfo}>
-                <Text style={[styles.permLabel, { color: theme.text }]}>
-                  {perm.label}
-                </Text>
-                <Text style={[styles.permDesc, { color: theme.subtext }]}>
-                  {perm.description}
-                </Text>
-              </View>
-              <Switch
-                value={permissions.includes(perm.key)}
-                onValueChange={() => togglePermission(perm.key)}
-                trackColor={{ false: isDark ? colors.gray[700] : colors.gray[200], true: `${colors.yellow}80` }}
-                thumbColor={permissions.includes(perm.key) ? colors.yellow : colors.gray[400]}
-              />
-            </View>
-          ))}
-        </View>
-      )}
+      <PermissionToggles
+        role={role}
+        selected={permissions}
+        onToggle={togglePermission}
+        accent={colors.yellow}
+        theme={{
+          card: theme.card,
+          border: theme.border,
+          text: theme.text,
+          subtext: theme.subtext,
+          trackOff: isDark ? colors.gray[700] : colors.gray[200],
+          thumbOff: colors.gray[400],
+        }}
+      />
 
       <TouchableOpacity
         style={[styles.submitButton, saving && { opacity: 0.6 }]}
