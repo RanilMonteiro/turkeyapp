@@ -216,7 +216,7 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
 
   async function fetchProfile() {
     const [{ data: emp }, { data: siteData }] = await Promise.all([
-      supabase.from('profiles').select('*, sites(name)').eq('id', id).single(),
+      supabase.from('profiles').select('*, sites!site_id(name)').eq('id', id).single(),
       supabase.from('sites').select('*').order('name', { ascending: true }),
     ]);
 

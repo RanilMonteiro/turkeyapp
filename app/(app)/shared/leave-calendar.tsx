@@ -162,7 +162,7 @@ export default function LeaveCalendar() {
 
     let query = supabase
       .from('form_submissions')
-      .select('id, employee_id, status, form_data, template_id, employee:employee_id(full_name, site_id, sites(name))')
+      .select('id, employee_id, status, form_data, template_id, employee:employee_id(full_name, site_id, sites!site_id(name))')
       .in('template_id', templateIds);
 
     // Technician: only their own. RLS also enforces this, but scoping

@@ -67,10 +67,10 @@ export default function Employees() {
   );
 
 async function fetchData() {
-  const [{ data: emps }, { data: siteData }] = await Promise.all([
+  const [{ data: emps, error: empsError }, { data: siteData }] = await Promise.all([
     supabase
       .from('profiles')
-      .select('*, sites(name)')
+      .select('*, sites!site_id(name)')
       .order('full_name', { ascending: true }),
     supabase
       .from('sites')
@@ -78,6 +78,7 @@ async function fetchData() {
       .order('name', { ascending: true }),
   ]);
 
+  if (empsError) console.error('Employees fetch failed:', empsError);
   if (emps) setEmployees(emps);
   if (siteData) setSites(siteData);
   setLoading(false);

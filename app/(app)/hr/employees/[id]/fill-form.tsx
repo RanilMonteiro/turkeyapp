@@ -89,7 +89,7 @@ export default function FillFormForEmployee() {
   async function fetchEmployee() {
     const { data } = await supabase
       .from('profiles')
-      .select('id, full_name, employee_number, job_title, department, phone, id_number, sites(name)')
+      .select('id, full_name, employee_number, job_title, department, phone, id_number, sites!site_id(name)')
       .eq('id', employeeId)
       .single();
     if (data) setEmployee(data as any);

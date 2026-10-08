@@ -103,7 +103,7 @@ export default function SubmitForm() {
       const { data: userData } = await supabase.auth.getUser();
       const { data: profile } = await supabase
         .from('profiles')
-        .select('full_name, employee_number, job_title, department, phone, id_number, sites(name)')
+        .select('full_name, employee_number, job_title, department, phone, id_number, sites!site_id(name)')
         .eq('id', userData.user?.id)
         .single();
 
