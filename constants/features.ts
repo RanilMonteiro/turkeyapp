@@ -86,6 +86,7 @@ export const FEATURES: Feature[] = [
     route: '/(app)/callouts/(technician)/jobs',
     group: 'operations',
     roles: ['technician'],
+    permission: 'view_callouts_tech',
   },
   {
     id: 'callout-calendar',
@@ -98,8 +99,8 @@ export const FEATURES: Feature[] = [
     permission: 'view_calendar',
   },
   {
-    // Everyone can open it. Whether they can EDIT is decided inside the
-    // screen (superuser/hr always, admin only with the grant).
+    // Gated by the "Operational Calendar" switch. Whether they can EDIT
+    // is a separate switch, decided inside the screen.
     id: 'operational-calendar',
     title: 'Operational Calendar',
     description: 'View technician job schedules',
@@ -107,6 +108,7 @@ export const FEATURES: Feature[] = [
     route: '/(app)/calender',
     group: 'operations',
     roles: ['superuser', 'hr', 'admin', 'technician'],
+    permission: 'view_operational_calendar',
     titleByRole: { technician: 'My Calendar' },
     descriptionByRole: {
       superuser: 'Manage technician job schedules',
@@ -193,8 +195,8 @@ export const FEATURES: Feature[] = [
 
   // ── COMPANY ─────────────────────────────────────────────────────────
   {
-    // Everyone can open it. Whether they can EDIT is decided inside the
-    // screen via can_manage_sites.
+    // Gated by the "Sites" switch. Whether they can EDIT is a separate
+    // switch (can_manage_sites), decided inside the screen.
     id: 'sites',
     title: 'Sites',
     description: 'Site contacts, info, notes and documents',
@@ -202,6 +204,7 @@ export const FEATURES: Feature[] = [
     route: '/(app)/hr/sites',
     group: 'company',
     roles: ['superuser', 'hr', 'admin', 'technician'],
+    permission: 'view_sites',
     descriptionByRole: {
       superuser: 'Manage company sites',
       hr: 'Manage company sites',

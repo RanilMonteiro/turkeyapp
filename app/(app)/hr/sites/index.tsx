@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import RequirePermission from '../../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
@@ -31,7 +32,7 @@ type Site = {
   created_at: string;
 };
 
-export default function SitesManager() {
+function SitesManager() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
   const [sites, setSites] = useState<Site[]>([]);
@@ -397,3 +398,12 @@ const styles = StyleSheet.create({
   },
   saveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
 });
+
+// Guarded entry point: the screen only opens while the "Sites" switch is on for this user.
+export default function SitesManagerScreen() {
+  return (
+    <RequirePermission permission="view_sites" name="Sites">
+      <SitesManager />
+    </RequirePermission>
+  );
+}

@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import RequirePermission from '../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput, useWindowDimensions,
@@ -165,7 +166,7 @@ function titleFontSize(name: string): number {
   return 9.5;
 }
 
-export default function OperationalCalendar() {
+function OperationalCalendar() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
   const { width, height } = useWindowDimensions();
@@ -1733,3 +1734,12 @@ const styles = StyleSheet.create({
   },
   saveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
 });
+
+// Guarded entry point: the screen only opens while the "the Operational Calendar" switch is on for this user.
+export default function OperationalCalendarScreen() {
+  return (
+    <RequirePermission permission="view_operational_calendar" name="the Operational Calendar">
+      <OperationalCalendar />
+    </RequirePermission>
+  );
+}

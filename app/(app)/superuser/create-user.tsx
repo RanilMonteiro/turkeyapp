@@ -8,8 +8,11 @@ import { useRouter } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify } from '../../../lib/notify';
+import { syncUserPermissions } from '../../../lib/permissionsSync';
 import PermissionToggles from '../../../components/PermissionToggles';
-import { sanitizePermissions } from '../../../constants/permissions';
+import {
+  sanitizePermissions, defaultPermissionsFor, togglePermissionKey,
+} from '../../../constants/permissions';
 
 const colors = {
   yellow: '#fbbf24',
@@ -35,7 +38,8 @@ export default function CreateUser() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<'admin' | 'technician' | 'hr'>('technician');
-  const [permissions, setPermissions] = useState<string[]>([]);
+  // New users start with the normal "view" switches already on.
+  const [permissions, setPermissions] = useState<string[]>(defaultPermissionsFor('technician'));
   const [loading, setLoading] = useState(false);
 
   const theme = {
@@ -49,17 +53,13 @@ export default function CreateUser() {
   };
 
   function togglePermission(key: string) {
-    setPermissions(prev =>
-      prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key]
-    );
+    setPermissions(prev => togglePermissionKey(prev, key));
   }
 
   function selectRole(newRole: 'admin' | 'technician' | 'hr') {
     setRole(newRole);
-    // Permissions only mean anything for admin/hr — clear them out
-    // when switching to technician so a stale selection doesn't get
-    // silently saved against a technician account.
-    if (newRole === 'technician') setPermissions([]);
+    // Each role has its own set of switches, so start from that role's defaults.
+    setPermissions(defaultPermissionsFor(newRole));
   }
 
   async function handleCreate() {
@@ -90,21 +90,31 @@ export default function CreateUser() {
           password,
           full_name: fullName,
           role,
-          permissions: role === 'admin' || role === 'hr' ? sanitizePermissions(role, permissions) : [],
+          permissions: sanitizePermissions(role, permissions),
         }),
       }
     );
 
     const result = await response.json();
-    setLoading(false);
 
     if (result.success) {
+      // Make sure the switches are saved for every role (including
+      // technicians), whatever the edge function does with them.
+      const newId = result.user_id ?? result.user?.id ?? result.id ?? null;
+      let syncError: string | null = null;
+      if (newId) syncError = await syncUserPermissions(String(newId), sanitizePermissions(role, permissions));
+      setLoading(false);
+      if (syncError) {
+        notify('User created, but permissions may not have saved', syncError);
+        return;
+      }
       notify(
         'User created',
         `${fullName} has been created as ${role}.`,
         () => router.back()
       );
     } else {
+      setLoading(false);
       notify('Error', result.error || 'Something went wrong.');
     }
   }

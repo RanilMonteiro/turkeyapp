@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import RequirePermission from '../../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
@@ -53,7 +54,7 @@ async function fileToUint8Array(uri: string): Promise<Uint8Array> {
   return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
 }
 
-export default function SiteDetail() {
+function SiteDetail() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
   const siteId = id as string;
@@ -915,3 +916,12 @@ const styles = StyleSheet.create({
   },
   saveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
 });
+
+// Guarded entry point: the screen only opens while the "Sites" switch is on for this user.
+export default function SiteDetailScreen() {
+  return (
+    <RequirePermission permission="view_sites" name="Sites">
+      <SiteDetail />
+    </RequirePermission>
+  );
+}

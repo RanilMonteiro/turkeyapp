@@ -28,20 +28,20 @@ export default function PermissionToggles({ role, selected, onToggle, theme, acc
   const grantable = permissionsGrantableTo(role);
   const alwaysOn = permissionsAlwaysOn(role);
 
-  if (role === 'technician' || role === 'superuser') return null;
+  if (role === 'superuser') return null; // superuser always has everything
 
-  const roleName = role === 'hr' ? 'HR' : 'admin';
+  const roleName = role === 'hr' ? 'HR user' : role === 'admin' ? 'admin' : 'technician';
 
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <Text style={[styles.title, { color: theme.text }]}>Permissions</Text>
       <Text style={[styles.subtitle, { color: theme.subtext }]}>
-        Choose what this {roleName} can open. Their dashboard and web sidebar update to match.
+        Switch off anything this {roleName} should not see. Switched-off items disappear from their dashboard and sidebar, and the screen is blocked.
       </Text>
 
       {alwaysOn.length > 0 && (
         <Text style={[styles.alwaysOn, { color: theme.subtext }]}>
-          Included automatically for HR: {alwaysOn.map(p => p.label).join(', ')}.
+          Included automatically for this role: {alwaysOn.map(p => p.label).join(', ')}.
         </Text>
       )}
 
@@ -61,14 +61,23 @@ export default function PermissionToggles({ role, selected, onToggle, theme, acc
             </Text>
             {items.map(perm => {
               const on = selected.includes(perm.key);
+              // Dependent switches (e.g. "Edit sites") are locked until
+              // their parent switch ("Sites") is on.
+              const locked = !!perm.requires && !selected.includes(perm.requires);
               return (
-                <View key={perm.key} style={[styles.row, { borderBottomColor: theme.border }]}>
+                <View
+                  key={perm.key}
+                  style={[styles.row, { borderBottomColor: theme.border }, locked && { opacity: 0.45 }]}
+                >
                   <View style={styles.info}>
                     <Text style={[styles.label, { color: theme.text }]}>{perm.label}</Text>
-                    <Text style={[styles.desc, { color: theme.subtext }]}>{perm.description}</Text>
+                    <Text style={[styles.desc, { color: theme.subtext }]}>
+                      {locked ? 'Switch on the item above first. ' : ''}{perm.description}
+                    </Text>
                   </View>
                   <Switch
-                    value={on}
+                    value={on && !locked}
+                    disabled={locked}
                     onValueChange={() => onToggle(perm.key)}
                     trackColor={{ false: theme.trackOff, true: `${accent}80` }}
                     thumbColor={on ? accent : theme.thumbOff}

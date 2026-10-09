@@ -8,8 +8,9 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify } from '../../../lib/notify';
+import { syncUserPermissions } from '../../../lib/permissionsSync';
 import PermissionToggles from '../../../components/PermissionToggles';
-import { sanitizePermissions } from '../../../constants/permissions';
+import { sanitizePermissions, togglePermissionKey } from '../../../constants/permissions';
 
 const colors = {
   yellow: '#fbbf24',
@@ -79,17 +80,13 @@ export default function EditUser() {
   }
 
   function togglePermission(key: string) {
-    setPermissions(prev =>
-      prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key]
-    );
+    setPermissions(prev => togglePermissionKey(prev, key));
   }
 
   function selectRole(newRole: 'admin' | 'technician' | 'hr') {
+    // Keep the selection as-is: each role only shows (and saves) the
+    // switches that apply to it, so nothing stale is written.
     setRole(newRole);
-    // Permissions only mean anything for admin/hr — clear them out
-    // when switching to technician so a stale selection doesn't get
-    // silently saved against a technician account.
-    if (newRole === 'technician') setPermissions([]);
   }
 
   async function handleSave() {
@@ -112,7 +109,7 @@ export default function EditUser() {
       user_id: id,
       full_name: fullName,
       role,
-      permissions: role === 'admin' || role === 'hr' ? sanitizePermissions(role, permissions) : [],
+      permissions: sanitizePermissions(role, permissions),
     };
 
     if (newPassword) payload.password = newPassword;
@@ -130,11 +127,21 @@ export default function EditUser() {
     );
 
     const result = await response.json();
-    setSaving(false);
 
     if (result.success) {
-      notify('Saved', 'User has been updated.', () => router.back());
+      // Write the permission switches ourselves as well, so turning a
+      // switch OFF always revokes it — we don't rely on the edge function
+      // removing rows it no longer lists. (Needs the superuser write
+      // policy from permissions_v2.sql.)
+      const syncError = await syncUserPermissions(String(id), sanitizePermissions(role, permissions));
+      setSaving(false);
+      if (syncError) {
+        notify('Saved, but permissions may not have updated', syncError);
+      } else {
+        notify('Saved', 'User has been updated.', () => router.back());
+      }
     } else {
+      setSaving(false);
       notify('Error', result.error || 'Something went wrong.');
     }
   }

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import RequirePermission from '../../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, RefreshControl,
@@ -41,7 +42,7 @@ type Callout = {
   assigned_to: string | null;
 };
 
-export default function TechnicianJobs() {
+function TechnicianJobs() {
   const isDark = useColorScheme() === 'dark';
   const [callouts, setCallouts] = useState<Callout[]>([]);
   const [myCallouts, setMyCallouts] = useState<Callout[]>([]);
@@ -906,3 +907,12 @@ submitBlurText: {
   borderRadius: 8,
 },
 });
+
+// Guarded entry point: the screen only opens while the "Callouts" switch is on for this user.
+export default function TechnicianJobsScreen() {
+  return (
+    <RequirePermission permission="view_callouts_tech" name="Callouts">
+      <TechnicianJobs />
+    </RequirePermission>
+  );
+}
