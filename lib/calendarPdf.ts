@@ -29,7 +29,8 @@ const COLOUR_HEX: Record<string, string> = Object.fromEntries(
 
 type PdfEntry = {
   entry_date: string;
-  mine_name: string;
+  // null for note-only days (no site picked)
+  mine_name: string | null;
   contact_person: string | null;
   contact_number: string | null;
   comments: string | null;
@@ -290,10 +291,15 @@ function cellHtml(
     ? `${docAbbr} ${entry.financial_document_number}`.trim()
     : '';
 
+  // Note-only days have no site name, so just the day number is shown on top.
+  const mineHtml = entry.mine_name
+    ? `<div class="mine" style="font-size:calc(7.5pt * var(--s) * ${titleFactor(entry.mine_name)});">${esc(entry.mine_name)}</div>`
+    : '';
+
   return `
     <div class="cell filled"${styleAttr}>
       <div class="body">
-      <div class="top"><div class="day">${day}</div><div class="mine" style="font-size:calc(7.5pt * var(--s) * ${titleFactor(entry.mine_name)});">${esc(entry.mine_name)}</div></div>
+      <div class="top"><div class="day">${day}</div>${mineHtml}</div>
       ${leaveHtml}
       ${entry.contact_person ? `<div class="sub">${esc(entry.contact_person)}</div>` : ''}
       ${entry.contact_number ? `<div class="sub">${esc(entry.contact_number)}</div>` : ''}
@@ -317,8 +323,10 @@ function footerHtml(generated: string, pageLabel: string): string {
 function estimateEntryHeight(e: PdfEntry): number {
   const lines = (text: string, perLine: number) => Math.max(1, Math.ceil(text.length / perLine));
   let h = 6 + 9.5; // cell padding + day-number line
-  const f = titleFactor(e.mine_name);
-  h += 8.5 * f * lines(e.mine_name, 20 / f);
+  if (e.mine_name) {
+    const f = titleFactor(e.mine_name);
+    h += 8.5 * f * lines(e.mine_name, 20 / f);
+  }
   if (e.contact_person) h += 7.6 * lines(e.contact_person, 28);
   if (e.contact_number) h += 7.6 * lines(e.contact_number, 28);
   if (e.comments) h += 7 + 7.1 * lines(e.comments, 24);

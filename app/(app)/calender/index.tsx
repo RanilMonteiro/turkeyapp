@@ -88,6 +88,7 @@ type CalendarEntry = {
   id: string;
   technician_id: string;
   entry_date: string;
+  // null for note-only days (no site picked)
   mine_name: string | null;
   contact_person: string | null;
   contact_number: string | null;
@@ -796,11 +797,22 @@ function OperationalCalendar() {
     setSiteSearch('');
   }
 
+  // Removes the chosen site so the day becomes a note-only day.
+  // Contact fields are left alone in case they were typed in by hand.
+  function clearSite() {
+    setSelectedSiteId(null);
+    setMineName('');
+    setShowSiteDropdown(false);
+    setSiteSearch('');
+  }
+
   async function handleSaveEntry() {
-   if (!mineName.trim() && !comments.trim()) {
-  notify('Nothing to save', 'Add a site or a note.');
-  return;
-}
+    // A site is optional now, but a day can't be completely empty:
+    // it needs at least a site or a note.
+    if (!mineName.trim() && !comments.trim()) {
+      notify('Nothing to save', 'Add a site or a note.');
+      return;
+    }
     if (!dateFrom || !selectedTechnicianId) return;
 
     if (!editingEntry && dateTo < dateFrom) {
@@ -857,7 +869,7 @@ function OperationalCalendar() {
     const basePayload = {
       technician_id: selectedTechnicianId,
       mine_name: mineName.trim() || null,
-      site_id: selectedSiteId,
+      site_id: mineName.trim() ? selectedSiteId : null,
       contact_person: contactPerson.trim() || null,
       contact_number: contactNumber.trim() || null,
       comments: comments.trim() || null,
@@ -1165,14 +1177,14 @@ function OperationalCalendar() {
                       {entry && (
                         <View style={styles.dayCellContent}>
                           {!!entry.mine_name && (
-                              <Text
-                                  style={[styles.cellMineName, { fontSize: titleFontSize(entry.mine_name), lineHeight: Math.round(titleFontSize(entry.mine_name) * 1.2) }]}
-                                  numberOfLines={3}
-                                  adjustsFontSizeToFit
-                                  minimumFontScale={0.7}
-                                >
-                                  {entry.mine_name}
-                              </Text>
+                            <Text
+                              style={[styles.cellMineName, { fontSize: titleFontSize(entry.mine_name), lineHeight: Math.round(titleFontSize(entry.mine_name) * 1.2) }]}
+                              numberOfLines={3}
+                              adjustsFontSizeToFit
+                              minimumFontScale={0.7}
+                            >
+                              {entry.mine_name}
+                            </Text>
                           )}
                           {entry.contact_person && (
                             <Text style={styles.cellSubText} numberOfLines={2}>
@@ -1187,7 +1199,7 @@ function OperationalCalendar() {
                           {entry.comments && (
                             <View style={styles.cellCommentBox}>
                               <Text style={styles.cellCommentText} numberOfLines={entry.mine_name ? 2 : 6}>
-                                    {entry.comments}
+                                {entry.comments}
                               </Text>
                             </View>
                           )}
@@ -1307,8 +1319,8 @@ function OperationalCalendar() {
                 </View>
 
                 {!!detailEntry.mine_name && (
-  <Text style={[styles.mineName, { color: theme.text }]}>{detailEntry.mine_name}</Text>
-)}
+                  <Text style={[styles.mineName, { color: theme.text }]}>{detailEntry.mine_name}</Text>
+                )}
 
                 {(detailEntry.contact_person || detailEntry.contact_number) && (
                   <View style={styles.metaRow}>
@@ -1434,7 +1446,7 @@ function OperationalCalendar() {
             )}
 
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SITE *</Text>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SITE (OPTIONAL)</Text>
               <TouchableOpacity
                 style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
                 onPress={() => setShowSiteDropdown(v => !v)}
@@ -1443,7 +1455,7 @@ function OperationalCalendar() {
                   style={[styles.dropdownBtnText, { color: mineName ? theme.text : theme.subtext }]}
                   numberOfLines={1}
                 >
-                  {mineName || 'Select site'}
+                  {mineName || 'No site (note only)'}
                 </Text>
                 <ChevronDown color={theme.muted} size={16} />
               </TouchableOpacity>
@@ -1458,18 +1470,13 @@ function OperationalCalendar() {
                   />
                   <ScrollView style={{ maxHeight: 280 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
                     {!!mineName && (
-                    <TouchableOpacity
-                      style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
-                      onPress={() => {
-                        setSelectedSiteId(null);
-                        setMineName('');
-                        setShowSiteDropdown(false);
-                        setSiteSearch('');
-                      }}
-                    >
-                      <Text style={[styles.dropdownItemText, { color: '#ef4444' }]}>No site (clear)</Text>
-                    </TouchableOpacity>
-                  )}
+                      <TouchableOpacity
+                        style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
+                        onPress={clearSite}
+                      >
+                        <Text style={[styles.dropdownItemText, { color: '#ef4444' }]}>No site (clear)</Text>
+                      </TouchableOpacity>
+                    )}
                     {filteredSites.length === 0 ? (
                       <Text style={[styles.dropdownItemSub, { color: theme.subtext, padding: 14 }]}>
                         {sites.length === 0 ? 'No sites yet. Sites are added on the Sites screen.' : 'No sites match that search.'}
