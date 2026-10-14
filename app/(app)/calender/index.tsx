@@ -88,7 +88,7 @@ type CalendarEntry = {
   id: string;
   technician_id: string;
   entry_date: string;
-  mine_name: string;
+  mine_name: string | null;
   contact_person: string | null;
   contact_number: string | null;
   comments: string | null;
@@ -764,7 +764,7 @@ function OperationalCalendar() {
     setEditingEntry(entry);
     setDateFrom(entry.entry_date);
     setDateTo(entry.entry_date);
-    setMineName(entry.mine_name);
+    setMineName(entry.mine_name ?? '');
     setContactPerson(entry.contact_person ?? '');
     setContactNumber(entry.contact_number ?? '');
     setComments(entry.comments ?? '');
@@ -797,10 +797,10 @@ function OperationalCalendar() {
   }
 
   async function handleSaveEntry() {
-    if (!mineName.trim()) {
-      notify('Missing site', 'Please select a site.');
-      return;
-    }
+   if (!mineName.trim() && !comments.trim()) {
+  notify('Nothing to save', 'Add a site or a note.');
+  return;
+}
     if (!dateFrom || !selectedTechnicianId) return;
 
     if (!editingEntry && dateTo < dateFrom) {
@@ -856,7 +856,7 @@ function OperationalCalendar() {
 
     const basePayload = {
       technician_id: selectedTechnicianId,
-      mine_name: mineName.trim(),
+      mine_name: mineName.trim() || null,
       site_id: selectedSiteId,
       contact_person: contactPerson.trim() || null,
       contact_number: contactNumber.trim() || null,
@@ -926,7 +926,7 @@ function OperationalCalendar() {
   function handleDeleteEntry(entry: CalendarEntry) {
     confirm(
       'Delete Entry',
-      `Delete the entry for "${entry.mine_name}" on ${entry.entry_date}?`,
+      `Delete the ${entry.mine_name ? `entry for "${entry.mine_name}"` : 'note'} on ${entry.entry_date}?`,
       async () => {
         const { error } = await supabase.from('operational_calendar_entries').delete().eq('id', entry.id);
         if (error) {
@@ -1164,14 +1164,16 @@ function OperationalCalendar() {
 
                       {entry && (
                         <View style={styles.dayCellContent}>
-                          <Text
-                            style={[styles.cellMineName, { fontSize: titleFontSize(entry.mine_name), lineHeight: Math.round(titleFontSize(entry.mine_name) * 1.2) }]}
-                            numberOfLines={3}
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.7}
-                          >
-                            {entry.mine_name}
-                          </Text>
+                          {!!entry.mine_name && (
+                              <Text
+                                  style={[styles.cellMineName, { fontSize: titleFontSize(entry.mine_name), lineHeight: Math.round(titleFontSize(entry.mine_name) * 1.2) }]}
+                                  numberOfLines={3}
+                                  adjustsFontSizeToFit
+                                  minimumFontScale={0.7}
+                                >
+                                  {entry.mine_name}
+                              </Text>
+                          )}
                           {entry.contact_person && (
                             <Text style={styles.cellSubText} numberOfLines={2}>
                               {entry.contact_person}
@@ -1184,8 +1186,8 @@ function OperationalCalendar() {
                           )}
                           {entry.comments && (
                             <View style={styles.cellCommentBox}>
-                              <Text style={styles.cellCommentText} numberOfLines={2}>
-                                {entry.comments}
+                              <Text style={styles.cellCommentText} numberOfLines={entry.mine_name ? 2 : 6}>
+                                    {entry.comments}
                               </Text>
                             </View>
                           )}
@@ -1304,7 +1306,9 @@ function OperationalCalendar() {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={[styles.mineName, { color: theme.text }]}>{detailEntry.mine_name}</Text>
+                {!!detailEntry.mine_name && (
+  <Text style={[styles.mineName, { color: theme.text }]}>{detailEntry.mine_name}</Text>
+)}
 
                 {(detailEntry.contact_person || detailEntry.contact_number) && (
                   <View style={styles.metaRow}>
@@ -1453,6 +1457,19 @@ function OperationalCalendar() {
                     onChangeText={setSiteSearch}
                   />
                   <ScrollView style={{ maxHeight: 280 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {!!mineName && (
+                    <TouchableOpacity
+                      style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
+                      onPress={() => {
+                        setSelectedSiteId(null);
+                        setMineName('');
+                        setShowSiteDropdown(false);
+                        setSiteSearch('');
+                      }}
+                    >
+                      <Text style={[styles.dropdownItemText, { color: '#ef4444' }]}>No site (clear)</Text>
+                    </TouchableOpacity>
+                  )}
                     {filteredSites.length === 0 ? (
                       <Text style={[styles.dropdownItemSub, { color: theme.subtext, padding: 14 }]}>
                         {sites.length === 0 ? 'No sites yet. Sites are added on the Sites screen.' : 'No sites match that search.'}
