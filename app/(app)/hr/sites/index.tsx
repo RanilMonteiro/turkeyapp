@@ -3,10 +3,11 @@ import RequirePermission from '../../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Alert, TextInput, Modal
+  TextInput, Modal
 } from 'react-native';
 import { Plus, MapPin, Edit, Trash2, X, ChevronRight } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { notify, confirm } from '../../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
@@ -113,7 +114,7 @@ function SitesManager() {
 
   async function handleSave() {
     if (!siteName.trim()) {
-      Alert.alert('Missing name', 'Please enter a site name.');
+      notify('Missing name', 'Please enter a site name.');
       return;
     }
 
@@ -121,13 +122,15 @@ function SitesManager() {
     const { data: userData } = await supabase.auth.getUser();
 
     if (editingSite) {
+      // Renaming also updates the name on every Operational Calendar entry
+      // linked to this site (done by a database trigger).
       const { error } = await supabase
         .from('sites')
         .update({ name: siteName.trim() })
         .eq('id', editingSite.id);
 
       if (error) {
-        Alert.alert('Error', error.message);
+        notify('Error', error.message);
       } else {
         setModalVisible(false);
         fetchSites();
@@ -138,7 +141,7 @@ function SitesManager() {
         .insert({ name: siteName.trim(), created_by: userData.user?.id });
 
       if (error) {
-        Alert.alert('Error', error.message);
+        notify('Error', error.message);
       } else {
         setModalVisible(false);
         fetchSites();
@@ -147,29 +150,30 @@ function SitesManager() {
     setSaving(false);
   }
 
-  async function handleDelete(site: Site) {
-    Alert.alert(
+  // Uses confirm()/notify() from lib/notify instead of Alert.alert, because
+  // Alert.alert does nothing on web, which is why delete never fired there.
+  function handleDelete(site: Site) {
+    confirm(
       'Delete Site',
       `Are you sure you want to delete "${site.name}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const { error } = await supabase
-              .from('sites')
-              .delete()
-              .eq('id', site.id);
+      async () => {
+        const { data, error } = await supabase
+          .from('sites')
+          .delete()
+          .eq('id', site.id)
+          .select('id');
 
-            if (error) {
-              Alert.alert('Error', error.message);
-            } else {
-              fetchSites();
-            }
-          }
+        if (error) {
+          notify('Could not delete site', error.message);
+          return;
         }
-      ]
+        // RLS can silently block a delete without raising an error, so check a row really went.
+        if (!data || data.length === 0) {
+          notify('Not deleted', 'The site could not be deleted. You may not have permission to manage sites.');
+          return;
+        }
+        fetchSites();
+      }
     );
   }
 
