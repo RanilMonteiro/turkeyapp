@@ -47,10 +47,10 @@ export default function BranchesScreen() {
   );
 
   async function fetchBranches() {
-    const { data, error } = await supabase
-      .from('branches')
-      .select('id, name, profiles(count)')
-      .order('name', { ascending: true });
+   const { data, error } = await supabase
+  .from('branches')
+  .select('id, name, profiles!branch_id(count)')
+  .order('name', { ascending: true });
 
     if (error) {
       notify('Error', error.message);
