@@ -2,7 +2,7 @@ import type { ComponentType } from 'react';
 import {
   LayoutDashboard, Users, UserCog, FileText, ClipboardList, MapPin,
   CheckCircle, Calendar, CalendarDays, CalendarCheck, Wrench, HardHat,
-  FolderOpen, Eye, ShieldCheck,
+  FolderOpen, Eye, ShieldCheck, Building2,
 } from 'lucide-react-native';
 import { PermissionKey, Role, hasPermission } from './permissions';
 
@@ -144,6 +144,15 @@ export const FEATURES: Feature[] = [
     description: 'Manage employee profiles',
     icon: Users,
     route: '/(app)/hr/employees',
+    group: 'people',
+    roles: ['superuser', 'hr'],
+  },
+    {
+    id: 'branches',
+    title: 'Branches',
+    description: 'Manage branches and see who works there',
+    icon: Building2,
+    route: '/(app)/hr/branches',
     group: 'people',
     roles: ['superuser', 'hr'],
   },
