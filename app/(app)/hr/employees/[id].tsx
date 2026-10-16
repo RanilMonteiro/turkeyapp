@@ -4,15 +4,14 @@ import {
   StyleSheet, useColorScheme, ActivityIndicator,
   TextInput, Modal, Platform
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
   ArrowLeft, User, MapPin, Phone, Briefcase, Hash, ChevronDown, X,
   Plus, Trash2, GitBranch, FileText, Clock, CheckCircle, XCircle,
-  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye
+  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye, Building2
 } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
-import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -67,12 +66,16 @@ type Employee = {
   date_joined: string | null;
   site_id: string | null;
   sites: { name: string } | null;
+  branch_id: string | null;
+  branches: { name: string } | null;
 };
 
 type Site = { id: string; name: string };
+type Branch = { id: string; name: string };
 type Profile = { id: string; full_name: string; role: string };
 type CustomField = { id: string; field_name: string; field_value: string | null; field_order: number };
-type ApprovalChainRow = { id: string; approver_id: string; approval_order: number; template_id: string | null; approver: { full_name: string } | null };type Submission = {
+type ApprovalChainRow = { id: string; approver_id: string; approval_order: number; template_id: string | null; approver: { full_name: string } | null };
+type Submission = {
   id: string;
   status: string;
   submitted_at: string;
@@ -92,8 +95,8 @@ type FormTemplateOption = { id: string; name: string; category: string | null };
 type DocGrant = { admin_id: string; categories: string[] | null; admin: { full_name: string } | null };
 type EditableGrant = { granted: boolean; categories: string[] | null };
 // Leave calendar access: this employee (when they're an admin) can be
-// granted visibility into whole sites and/or specific individuals.
-type LeavePerson = { id: string; full_name: string; site_id: string | null };
+// granted visibility into whole branches and/or specific individuals.
+type LeavePerson = { id: string; full_name: string; branch_id: string | null };
 
 export default function EmployeeProfile() {
   const router = useRouter();
@@ -102,10 +105,12 @@ export default function EmployeeProfile() {
 
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [editModal, setEditModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showSiteDropdown, setShowSiteDropdown] = useState(false);
+  const [showBranchDropdown, setShowBranchDropdown] = useState(false);
 
   // Edit fields
   const [employeeNumber, setEmployeeNumber] = useState('');
@@ -115,6 +120,7 @@ export default function EmployeeProfile() {
   const [idNumber, setIdNumber] = useState('');
   const [dateJoined, setDateJoined] = useState('');
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
 
   // Custom fields
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
@@ -130,7 +136,7 @@ export default function EmployeeProfile() {
   const [showApproverDropdown, setShowApproverDropdown] = useState<number | null>(null);
   const [savingChain, setSavingChain] = useState(false);
   const [chainsByTemplate, setChainsByTemplate] = useState<Record<string, ApprovalChainRow[]>>({});
-const [activeChainTemplateId, setActiveChainTemplateId] = useState<string | null>(null);
+  const [activeChainTemplateId, setActiveChainTemplateId] = useState<string | null>(null);
 
   // Submissions (search + filter)
   const [submissions, setSubmissions] = useState<Submission[]>([]);
@@ -154,8 +160,8 @@ const [activeChainTemplateId, setActiveChainTemplateId] = useState<string | null
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [docExpiryDate, setDocExpiryDate] = useState('');
   const [docDateFilterFrom, setDocDateFilterFrom] = useState('');
-const [docDateFilterTo, setDocDateFilterTo] = useState('');
-const [showDocDateFilter, setShowDocDateFilter] = useState(false);
+  const [docDateFilterTo, setDocDateFilterTo] = useState('');
+  const [showDocDateFilter, setShowDocDateFilter] = useState(false);
 
   // Form visibility (per-employee)
   const [allTemplates, setAllTemplates] = useState<FormTemplateOption[]>([]);
@@ -172,14 +178,14 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
   const [savingDocAccess, setSavingDocAccess] = useState(false);
 
   // Leave calendar access (only meaningful when this employee is an admin) —
-  // which sites and/or individual people they're allowed to see on the
+  // which branches and/or individual people they're allowed to see on the
   // leave calendar. Loaded state mirrors doc access grants above; the
   // editable copies are only populated when the modal is opened.
   const [leavePeople, setLeavePeople] = useState<LeavePerson[]>([]);
-  const [leaveGrantedSiteIds, setLeaveGrantedSiteIds] = useState<Set<string>>(new Set());
+  const [leaveGrantedBranchIds, setLeaveGrantedBranchIds] = useState<Set<string>>(new Set());
   const [leaveOverrides, setLeaveOverrides] = useState<Record<string, boolean>>({});
   const [leaveAccessModalVisible, setLeaveAccessModalVisible] = useState(false);
-  const [editableLeaveSiteIds, setEditableLeaveSiteIds] = useState<Set<string>>(new Set());
+  const [editableLeaveBranchIds, setEditableLeaveBranchIds] = useState<Set<string>>(new Set());
   const [editableLeaveOverrides, setEditableLeaveOverrides] = useState<Record<string, boolean>>({});
   const [savingLeaveAccess, setSavingLeaveAccess] = useState(false);
 
@@ -215,9 +221,10 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
   }
 
   async function fetchProfile() {
-    const [{ data: emp }, { data: siteData }] = await Promise.all([
-      supabase.from('profiles').select('*, sites!site_id(name)').eq('id', id).single(),
+    const [{ data: emp }, { data: siteData }, { data: branchData }] = await Promise.all([
+      supabase.from('profiles').select('*, sites!site_id(name), branches!branch_id(name)').eq('id', id).single(),
       supabase.from('sites').select('*').order('name', { ascending: true }),
+      supabase.from('branches').select('id, name').order('name', { ascending: true }),
     ]);
 
     if (emp) {
@@ -229,8 +236,10 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
       setIdNumber(emp.id_number ?? '');
       setDateJoined(emp.date_joined ?? '');
       setSelectedSiteId(emp.site_id ?? null);
+      setSelectedBranchId(emp.branch_id ?? null);
     }
     if (siteData) setSites(siteData);
+    if (branchData) setBranches(branchData);
   }
 
   async function fetchCustomFields() {
@@ -242,37 +251,37 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
     if (data) setCustomFields(data);
   }
 
- async function fetchChain() {
-  const [{ data: chainData }, { data: adminData }, { data: templateData }] = await Promise.all([
-    supabase
-      .from('approval_chains')
-      .select('id, approver_id, approval_order, template_id, approver:approver_id(full_name)')
-      .eq('employee_id', id)
-      .order('approval_order'),
-    supabase
-      .from('profiles')
-      .select('id, full_name, role')
-      .in('role', ['admin', 'hr', 'superuser'])
-      .order('full_name'),
-    supabase
-      .from('form_templates')
-      .select('id, name, category')
-      .eq('is_active', true)
-      .order('name'),
-  ]);
+  async function fetchChain() {
+    const [{ data: chainData }, { data: adminData }, { data: templateData }] = await Promise.all([
+      supabase
+        .from('approval_chains')
+        .select('id, approver_id, approval_order, template_id, approver:approver_id(full_name)')
+        .eq('employee_id', id)
+        .order('approval_order'),
+      supabase
+        .from('profiles')
+        .select('id, full_name, role')
+        .in('role', ['admin', 'hr', 'superuser'])
+        .order('full_name'),
+      supabase
+        .from('form_templates')
+        .select('id, name, category')
+        .eq('is_active', true)
+        .order('name'),
+    ]);
 
-  if (adminData) setAdmins(adminData);
-  if (templateData) setAllTemplates(templateData);
+    if (adminData) setAdmins(adminData);
+    if (templateData) setAllTemplates(templateData);
 
-  if (chainData) {
-    const grouped: Record<string, ApprovalChainRow[]> = {};
-    (chainData as any[]).forEach(row => {
-      const key = row.template_id ?? '__general__';
-      (grouped[key] ??= []).push(row);
-    });
-    setChainsByTemplate(grouped);
+    if (chainData) {
+      const grouped: Record<string, ApprovalChainRow[]> = {};
+      (chainData as any[]).forEach(row => {
+        const key = row.template_id ?? '__general__';
+        (grouped[key] ??= []).push(row);
+      });
+      setChainsByTemplate(grouped);
+    }
   }
-}
 
   async function fetchSubmissions() {
     const { data } = await supabase
@@ -325,17 +334,17 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
   }
 
   // This employee's leave-calendar visibility, when they are an admin:
-  // which sites they see everyone from, plus per-person overrides on
+  // which branches they see everyone from, plus per-person overrides on
   // top of that. Fetched regardless of role since it's cheap and the
   // section itself is only rendered for admins.
   async function fetchLeaveAccess() {
-    const [{ data: siteGrants }, { data: personOverrides }, { data: peopleData }] = await Promise.all([
-      supabase.from('leave_calendar_site_grants').select('site_id').eq('admin_id', id),
+    const [{ data: branchGrants }, { data: personOverrides }, { data: peopleData }] = await Promise.all([
+      supabase.from('leave_calendar_branch_grants').select('branch_id').eq('admin_id', id),
       supabase.from('leave_calendar_person_overrides').select('employee_id, included').eq('admin_id', id),
-      supabase.from('profiles').select('id, full_name, site_id').neq('role', 'superuser').order('full_name'),
+      supabase.from('profiles').select('id, full_name, branch_id').neq('role', 'superuser').order('full_name'),
     ]);
 
-    setLeaveGrantedSiteIds(new Set((siteGrants ?? []).map((s: { site_id: string }) => s.site_id)));
+    setLeaveGrantedBranchIds(new Set((branchGrants ?? []).map((b: { branch_id: string }) => b.branch_id)));
     const overrideMap: Record<string, boolean> = {};
     (personOverrides ?? []).forEach((o: { employee_id: string; included: boolean }) => {
       overrideMap[o.employee_id] = o.included;
@@ -388,6 +397,7 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
         id_number: idNumber || null,
         date_joined: dateJoined || null,
         site_id: selectedSiteId,
+        branch_id: selectedBranchId,
       })
       .eq('id', id);
 
@@ -397,8 +407,7 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
       return;
     }
 
-  // Reconcile custom fields: delete removed, update changed, broadcast new
-   // Reconcile custom fields: delete removed, update changed, broadcast new
+    // Reconcile custom fields: delete removed, update changed, broadcast new
     const originalIds = customFields.map(f => f.id);
     const keptIds = editableCustomFields.filter(f => f.id).map(f => f.id!) as string[];
     const removedIds = originalIds.filter(oid => !keptIds.includes(oid));
@@ -410,38 +419,38 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
     const toUpdate = editableCustomFields.filter(f => f.id && f.field_name.trim());
     const toBroadcast = editableCustomFields.filter(f => !f.id && f.field_name.trim());
 
-  for (const f of toUpdate) {
-  const original = customFields.find(orig => orig.id === f.id);
-  const nameChanged = original && original.field_name !== f.field_name.trim();
+    for (const f of toUpdate) {
+      const original = customFields.find(orig => orig.id === f.id);
+      const nameChanged = original && original.field_name !== f.field_name.trim();
 
-  if (nameChanged) {
-    // Rename broadcasts to every employee's row with the OLD name,
-    // so "Address" becomes "Home Address" everywhere — but only this
-    // person's actual value changes here, since we .eq('id', f.id)
-    // for the value, and separately rename by field_name for everyone.
-    await supabase
-      .from('employee_custom_fields')
-      .update({ field_name: f.field_name.trim() })
-      .eq('field_name', original!.field_name);
+      if (nameChanged) {
+        // Rename broadcasts to every employee's row with the OLD name,
+        // so "Address" becomes "Home Address" everywhere — but only this
+        // person's actual value changes here, since we .eq('id', f.id)
+        // for the value, and separately rename by field_name for everyone.
+        await supabase
+          .from('employee_custom_fields')
+          .update({ field_name: f.field_name.trim() })
+          .eq('field_name', original!.field_name);
 
-    // Now update this specific person's value on their own row
-    await supabase
-      .from('employee_custom_fields')
-      .update({ field_value: f.field_value })
-      .eq('id', f.id);
-  } else {
-    // No rename — just update this person's value as before
-    await supabase
-      .from('employee_custom_fields')
-      .update({ field_name: f.field_name.trim(), field_value: f.field_value })
-      .eq('id', f.id);
-  }
-}
+        // Now update this specific person's value on their own row
+        await supabase
+          .from('employee_custom_fields')
+          .update({ field_value: f.field_value })
+          .eq('id', f.id);
+      } else {
+        // No rename — just update this person's value as before
+        await supabase
+          .from('employee_custom_fields')
+          .update({ field_name: f.field_name.trim(), field_value: f.field_value })
+          .eq('id', f.id);
+      }
+    }
 
     if (toBroadcast.length > 0) {
       const { data: allEmployees } = await supabase
-  .from('profiles')
-  .select('id');
+        .from('profiles')
+        .select('id');
 
       const rows: any[] = [];
       toBroadcast.forEach((f, i) => {
@@ -474,20 +483,21 @@ const [showDocDateFilter, setShowDocDateFilter] = useState(false);
     fetchProfile();
     fetchCustomFields();
   }
+
   // ---------- Approval chain (scoped to this employee) ----------
 
-function openChainModal(templateId: string) {
-  const existing = chainsByTemplate[templateId] ?? [];
-  if (existing.length > 0) {
-    setEditableApprovers(
-      existing.map(c => admins.find(a => a.id === c.approver_id) ?? null)
-    );
-  } else {
-    setEditableApprovers([null]);
+  function openChainModal(templateId: string) {
+    const existing = chainsByTemplate[templateId] ?? [];
+    if (existing.length > 0) {
+      setEditableApprovers(
+        existing.map(c => admins.find(a => a.id === c.approver_id) ?? null)
+      );
+    } else {
+      setEditableApprovers([null]);
+    }
+    setActiveChainTemplateId(templateId);
+    setChainModalVisible(true);
   }
-  setActiveChainTemplateId(templateId);
-  setChainModalVisible(true);
-}
 
   function addApproverSlot() {
     if (editableApprovers.length >= 4) {
@@ -510,61 +520,61 @@ function openChainModal(templateId: string) {
     setShowApproverDropdown(null);
   }
 
- async function handleSaveChain() {
-  if (editableApprovers.some(a => a === null) || !activeChainTemplateId) {
-    notify('Missing approvers', 'Please select all approvers.');
-    return;
-  }
-
-  setSavingChain(true);
-
-  await supabase
-    .from('approval_chains')
-    .delete()
-    .eq('employee_id', id)
-    .eq('template_id', activeChainTemplateId);
-
-  const { data: userData } = await supabase.auth.getUser();
-  const rows = editableApprovers.map((approver, index) => ({
-    employee_id: id,
-    approver_id: approver!.id,
-    approval_order: index + 1,
-    template_id: activeChainTemplateId,
-    created_by: userData.user?.id,
-  }));
-
-  const { error } = await supabase.from('approval_chains').insert(rows);
-
-  setSavingChain(false);
-
-  if (error) {
-    notify('Error', error.message);
-    return;
-  }
-
-  setChainModalVisible(false);
-  setActiveChainTemplateId(null);
-  fetchChain();
-}
-
-function deleteChain(templateId: string, templateName: string) {
-  confirm(
-    'Remove Approval Chain',
-    `Remove the approval chain for "${templateName}"?`,
-    async () => {
-      const { error } = await supabase
-        .from('approval_chains')
-        .delete()
-        .eq('employee_id', id)
-        .eq('template_id', templateId);
-      if (error) {
-        notify('Error', error.message);
-      } else {
-        fetchChain();
-      }
+  async function handleSaveChain() {
+    if (editableApprovers.some(a => a === null) || !activeChainTemplateId) {
+      notify('Missing approvers', 'Please select all approvers.');
+      return;
     }
-  );
-}
+
+    setSavingChain(true);
+
+    await supabase
+      .from('approval_chains')
+      .delete()
+      .eq('employee_id', id)
+      .eq('template_id', activeChainTemplateId);
+
+    const { data: userData } = await supabase.auth.getUser();
+    const rows = editableApprovers.map((approver, index) => ({
+      employee_id: id,
+      approver_id: approver!.id,
+      approval_order: index + 1,
+      template_id: activeChainTemplateId,
+      created_by: userData.user?.id,
+    }));
+
+    const { error } = await supabase.from('approval_chains').insert(rows);
+
+    setSavingChain(false);
+
+    if (error) {
+      notify('Error', error.message);
+      return;
+    }
+
+    setChainModalVisible(false);
+    setActiveChainTemplateId(null);
+    fetchChain();
+  }
+
+  function deleteChain(templateId: string, templateName: string) {
+    confirm(
+      'Remove Approval Chain',
+      `Remove the approval chain for "${templateName}"?`,
+      async () => {
+        const { error } = await supabase
+          .from('approval_chains')
+          .delete()
+          .eq('employee_id', id)
+          .eq('template_id', templateId);
+        if (error) {
+          notify('Error', error.message);
+        } else {
+          fetchChain();
+        }
+      }
+    );
+  }
 
   // ---------- Form visibility (which forms this employee can see) ----------
 
@@ -699,15 +709,15 @@ function deleteChain(templateId: string, templateName: string) {
   // ---------- Leave calendar access (this employee's admin visibility) ----------
 
   function openLeaveAccessModal() {
-    setEditableLeaveSiteIds(new Set(leaveGrantedSiteIds));
+    setEditableLeaveBranchIds(new Set(leaveGrantedBranchIds));
     setEditableLeaveOverrides({ ...leaveOverrides });
     setLeaveAccessModalVisible(true);
   }
 
-  function toggleLeaveSite(siteId: string) {
-    setEditableLeaveSiteIds(prev => {
+  function toggleLeaveBranch(branchId: string) {
+    setEditableLeaveBranchIds(prev => {
       const next = new Set(prev);
-      if (next.has(siteId)) next.delete(siteId); else next.add(siteId);
+      if (next.has(branchId)) next.delete(branchId); else next.add(branchId);
       return next;
     });
   }
@@ -729,34 +739,34 @@ function deleteChain(templateId: string, templateName: string) {
     });
   }
 
-  function isLeaveSiteDefaultVisible(person: LeavePerson): boolean {
-    return !!person.site_id && editableLeaveSiteIds.has(person.site_id);
+  function isLeaveBranchDefaultVisible(person: LeavePerson): boolean {
+    return !!person.branch_id && editableLeaveBranchIds.has(person.branch_id);
   }
 
   function leaveEffectiveLabel(person: LeavePerson): { label: string; color: string } {
     const override = editableLeaveOverrides[person.id];
     if (override === true) return { label: 'Always shown', color: '#10b981' };
     if (override === false) return { label: 'Always hidden', color: '#ef4444' };
-    return isLeaveSiteDefaultVisible(person)
-      ? { label: 'Shown (via site)', color: colors.yellow }
+    return isLeaveBranchDefaultVisible(person)
+      ? { label: 'Shown (via branch)', color: colors.yellow }
       : { label: 'Not visible', color: colors.gray[400] };
   }
 
   async function handleSaveLeaveAccess() {
     setSavingLeaveAccess(true);
 
-    await supabase.from('leave_calendar_site_grants').delete().eq('admin_id', id);
+    await supabase.from('leave_calendar_branch_grants').delete().eq('admin_id', id);
     await supabase.from('leave_calendar_person_overrides').delete().eq('admin_id', id);
 
     const { data: userData } = await supabase.auth.getUser();
 
-    if (editableLeaveSiteIds.size > 0) {
-      const siteRows = Array.from(editableLeaveSiteIds).map(siteId => ({
+    if (editableLeaveBranchIds.size > 0) {
+      const branchRows = Array.from(editableLeaveBranchIds).map(branchId => ({
         admin_id: id,
-        site_id: siteId,
+        branch_id: branchId,
         granted_by: userData.user?.id,
       }));
-      await supabase.from('leave_calendar_site_grants').insert(siteRows);
+      await supabase.from('leave_calendar_branch_grants').insert(branchRows);
     }
 
     const overrideEntries = Object.entries(editableLeaveOverrides);
@@ -835,29 +845,29 @@ function deleteChain(templateId: string, templateName: string) {
   // list across all categories instead of the folder breakdown.
   const docSearchActive = docSearch.trim().length > 0;
 
- const filteredFlatDocuments = documents.filter(d =>
-  d.name.toLowerCase().includes(docSearch.trim().toLowerCase()) && matchesDateFilter(d)
-);
+  const filteredFlatDocuments = documents.filter(d =>
+    d.name.toLowerCase().includes(docSearch.trim().toLowerCase()) && matchesDateFilter(d)
+  );
 
   // Only categories that actually have at least one document show up
   // as a folder — no empty subfolders.
-const docsByCategory = documents.reduce((acc, doc) => {
-  if (!matchesDateFilter(doc)) return acc;
-  (acc[doc.category] ??= []).push(doc);
-  return acc;
-}, {} as Record<string, Document[]>);
+  const docsByCategory = documents.reduce((acc, doc) => {
+    if (!matchesDateFilter(doc)) return acc;
+    (acc[doc.category] ??= []).push(doc);
+    return acc;
+  }, {} as Record<string, Document[]>);
 
   const categoriesWithDocs = DOC_CATEGORIES.filter(c => (docsByCategory[c.value]?.length ?? 0) > 0);
 
-function openDocModal() {
-  setDocName('');
-  setDocCategory('');
-  setSelectedFile(null);
-  setVisibleToEmployee(true);
-  setDocDate('');
-  setDocExpiryDate('');
-  setDocModalVisible(true);
-}
+  function openDocModal() {
+    setDocName('');
+    setDocCategory('');
+    setSelectedFile(null);
+    setVisibleToEmployee(true);
+    setDocDate('');
+    setDocExpiryDate('');
+    setDocModalVisible(true);
+  }
 
   async function pickDocFile() {
     try {
@@ -910,7 +920,7 @@ function openDocModal() {
 
       const { data: urlData } = supabase.storage.from('documents').getPublicUrl(fileName);
 
-     const { error: dbError } = await supabase.from('documents').insert({
+      const { error: dbError } = await supabase.from('documents').insert({
         name: docName.trim(),
         category: docCategory,
         file_url: urlData.publicUrl,
@@ -936,12 +946,12 @@ function openDocModal() {
   }
 
   function getExpiryStatus(expiryDate: string | null): { label: string; color: string } {
-  if (!expiryDate) return { label: 'No expiry set', color: theme.muted };
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const expiry = new Date(expiryDate + 'T00:00:00');
-  if (expiry < today) return { label: 'Expired', color: '#ef4444' };
-  return { label: `Expires ${expiry.toLocaleDateString('en-ZA')}`, color: '#f59e0b' };
+    if (!expiryDate) return { label: 'No expiry set', color: theme.muted };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expiry = new Date(expiryDate + 'T00:00:00');
+    if (expiry < today) return { label: 'Expired', color: '#ef4444' };
+    return { label: `Expires ${expiry.toLocaleDateString('en-ZA')}`, color: '#f59e0b' };
   }
 
   function deleteDocument(doc: Document) {
@@ -965,7 +975,7 @@ function openDocModal() {
       case 'policy': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
       case 'procedure': return { bg: isDark ? '#064e3b' : '#d1fae5', text: '#10b981' };
       case 'contract': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
-      case 'disciplinary': return { bg: isDark ? '#7f1d1d' : '#fee2e2', text: '#dc2626'};
+      case 'disciplinary': return { bg: isDark ? '#7f1d1d' : '#fee2e2', text: '#dc2626' };
       default: return { bg: isDark ? colors.gray[800] : colors.gray[200], text: colors.gray[500] };
     }
   }
@@ -979,6 +989,7 @@ function openDocModal() {
   }
 
   const selectedSite = sites.find(s => s.id === selectedSiteId);
+  const selectedBranch = branches.find(b => b.id === selectedBranchId);
 
   if (loading) {
     return (
@@ -1023,6 +1034,12 @@ function openDocModal() {
               {employee.role.charAt(0).toUpperCase() + employee.role.slice(1)}
             </Text>
           </View>
+          {employee.branches && (
+            <View style={styles.siteRow}>
+              <Building2 color={colors.yellow} size={14} />
+              <Text style={[styles.siteName, { color: theme.subtext }]}>{employee.branches.name}</Text>
+            </View>
+          )}
           {employee.sites && (
             <View style={styles.siteRow}>
               <MapPin color={colors.yellow} size={14} />
@@ -1052,52 +1069,52 @@ function openDocModal() {
           ))}
         </View>
 
-       {/* Approval Chains (per form template) */}
-<View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-  <View style={styles.cardHeaderLeft}>
-    <GitBranch color={colors.yellow} size={18} />
-    <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Approval Chains</Text>
-  </View>
-  <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
-    Set a specific approver chain per form type for {employee.full_name}.
-  </Text>
-
-  {allTemplates.length === 0 ? (
-    <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No forms exist yet.</Text>
-  ) : (
-    allTemplates.map(t => {
-      const chain = chainsByTemplate[t.id] ?? [];
-      return (
-        <View key={t.id} style={styles.docAccessBlock}>
-          <View style={styles.switchRow}>
-            <View style={styles.switchInfo}>
-              <Text style={[styles.switchLabel, { color: theme.text }]}>{t.name}</Text>
-              <Text style={[styles.switchDesc, { color: theme.subtext }]}>
-                {chain.length === 0
-                  ? 'No approvers set'
-                  : chain
-                      .sort((a, b) => a.approval_order - b.approval_order)
-                      .map(c => c.approver?.full_name)
-                      .filter(Boolean)
-                      .join(' → ')}
-              </Text>
-            </View>
-            {chain.length > 0 && (
-              <TouchableOpacity onPress={() => deleteChain(t.id, t.name)} style={{ marginRight: 12 }}>
-                <Trash2 color="#ef4444" size={16} />
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity onPress={() => openChainModal(t.id)}>
-              <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>
-                {chain.length === 0 ? 'Set Up' : 'Edit'}
-              </Text>
-            </TouchableOpacity>
+        {/* Approval Chains (per form template) */}
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={styles.cardHeaderLeft}>
+            <GitBranch color={colors.yellow} size={18} />
+            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Approval Chains</Text>
           </View>
+          <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
+            Set a specific approver chain per form type for {employee.full_name}.
+          </Text>
+
+          {allTemplates.length === 0 ? (
+            <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No forms exist yet.</Text>
+          ) : (
+            allTemplates.map(t => {
+              const chain = chainsByTemplate[t.id] ?? [];
+              return (
+                <View key={t.id} style={styles.docAccessBlock}>
+                  <View style={styles.switchRow}>
+                    <View style={styles.switchInfo}>
+                      <Text style={[styles.switchLabel, { color: theme.text }]}>{t.name}</Text>
+                      <Text style={[styles.switchDesc, { color: theme.subtext }]}>
+                        {chain.length === 0
+                          ? 'No approvers set'
+                          : chain
+                              .sort((a, b) => a.approval_order - b.approval_order)
+                              .map(c => c.approver?.full_name)
+                              .filter(Boolean)
+                              .join(' → ')}
+                      </Text>
+                    </View>
+                    {chain.length > 0 && (
+                      <TouchableOpacity onPress={() => deleteChain(t.id, t.name)} style={{ marginRight: 12 }}>
+                        <Trash2 color="#ef4444" size={16} />
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity onPress={() => openChainModal(t.id)}>
+                      <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>
+                        {chain.length === 0 ? 'Set Up' : 'Edit'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
         </View>
-      );
-    })
-  )}
-</View>
 
         {/* Form Access (which forms this employee can/can't see) */}
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -1130,11 +1147,11 @@ function openDocModal() {
             onChangeText={setSubmissionSearch}
           />
           <TouchableOpacity
-              style={[styles.inlineActionBtn, { borderColor: colors.yellow, marginTop: 8 }]}
-              onPress={() => router.push(`/(app)/hr/employees/${id}/fill-form` as any)}
-            >
-              <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Fill a Form for {employee.full_name}</Text>
-            </TouchableOpacity>
+            style={[styles.inlineActionBtn, { borderColor: colors.yellow, marginTop: 8 }]}
+            onPress={() => router.push(`/(app)/hr/employees/${id}/fill-form` as any)}
+          >
+            <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Fill a Form for {employee.full_name}</Text>
+          </TouchableOpacity>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
             {(['all', 'pending', 'in_review', 'approved', 'declined'] as const).map(f => (
@@ -1211,44 +1228,44 @@ function openDocModal() {
           </View>
 
           <TouchableOpacity
-  style={[styles.dateFilterToggle, { borderColor: theme.border }]}
-  onPress={() => setShowDocDateFilter(!showDocDateFilter)}
->
-  <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>
-    {showDocDateFilter ? 'Hide date filter' : 'Filter by date'}
-    {(docDateFilterFrom || docDateFilterTo) ? ' (active)' : ''}
-  </Text>
-</TouchableOpacity>
+            style={[styles.dateFilterToggle, { borderColor: theme.border }]}
+            onPress={() => setShowDocDateFilter(!showDocDateFilter)}
+          >
+            <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>
+              {showDocDateFilter ? 'Hide date filter' : 'Filter by date'}
+              {(docDateFilterFrom || docDateFilterTo) ? ' (active)' : ''}
+            </Text>
+          </TouchableOpacity>
 
-{showDocDateFilter && (
-  <View style={{ marginBottom: 12, gap: 10 }}>
-    <View>
-      <Text style={[styles.fieldLabel, { color: theme.subtext }]}>FROM</Text>
-      <DatePickerField
-        value={docDateFilterFrom}
-        onChange={setDocDateFilterFrom}
-        placeholder="Any"
-        isDark={isDark}
-        theme={theme}
-      />
-    </View>
-    <View>
-      <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TO</Text>
-      <DatePickerField
-        value={docDateFilterTo}
-        onChange={setDocDateFilterTo}
-        placeholder="Any"
-        isDark={isDark}
-        theme={theme}
-      />
-    </View>
-    {(docDateFilterFrom || docDateFilterTo) && (
-      <TouchableOpacity onPress={() => { setDocDateFilterFrom(''); setDocDateFilterTo(''); }}>
-        <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '600' }}>Clear date filter</Text>
-      </TouchableOpacity>
-    )}
-  </View>
-)}
+          {showDocDateFilter && (
+            <View style={{ marginBottom: 12, gap: 10 }}>
+              <View>
+                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>FROM</Text>
+                <DatePickerField
+                  value={docDateFilterFrom}
+                  onChange={setDocDateFilterFrom}
+                  placeholder="Any"
+                  isDark={isDark}
+                  theme={theme}
+                />
+              </View>
+              <View>
+                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TO</Text>
+                <DatePickerField
+                  value={docDateFilterTo}
+                  onChange={setDocDateFilterTo}
+                  placeholder="Any"
+                  isDark={isDark}
+                  theme={theme}
+                />
+              </View>
+              {(docDateFilterFrom || docDateFilterTo) && (
+                <TouchableOpacity onPress={() => { setDocDateFilterFrom(''); setDocDateFilterTo(''); }}>
+                  <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '600' }}>Clear date filter</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           {documents.length === 0 ? (
             <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No documents for this employee yet.</Text>
@@ -1328,9 +1345,9 @@ function openDocModal() {
               <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Leave Calendar Access</Text>
             </View>
             <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
-              {leaveGrantedSiteIds.size === 0 && Object.keys(leaveOverrides).length === 0
+              {leaveGrantedBranchIds.size === 0 && Object.keys(leaveOverrides).length === 0
                 ? `${employee.full_name} can only see their own leave on the calendar.`
-                : `Sees leave for ${leaveGrantedSiteIds.size} site${leaveGrantedSiteIds.size === 1 ? '' : 's'}, with ${Object.keys(leaveOverrides).length} individual override${Object.keys(leaveOverrides).length === 1 ? '' : 's'}.`}
+                : `Sees leave for ${leaveGrantedBranchIds.size} branch${leaveGrantedBranchIds.size === 1 ? '' : 'es'}, with ${Object.keys(leaveOverrides).length} individual override${Object.keys(leaveOverrides).length === 1 ? '' : 's'}.`}
             </Text>
             <TouchableOpacity style={[styles.inlineActionBtn, { borderColor: colors.yellow }]} onPress={openLeaveAccessModal}>
               <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Manage Leave Calendar Access</Text>
@@ -1373,6 +1390,44 @@ function openDocModal() {
                 theme={theme}
               />
             </View>
+
+            {/* Branch */}
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>BRANCH</Text>
+              <TouchableOpacity
+                style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
+                onPress={() => setShowBranchDropdown(!showBranchDropdown)}
+              >
+                <Building2 color={colors.yellow} size={16} />
+                <Text style={[styles.dropdownBtnText, { color: selectedBranchId ? theme.text : theme.subtext }]}>
+                  {selectedBranch?.name ?? 'Select a branch'}
+                </Text>
+                <ChevronDown color={theme.muted} size={16} />
+              </TouchableOpacity>
+              {showBranchDropdown && (
+                <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  <TouchableOpacity
+                    style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
+                    onPress={() => { setSelectedBranchId(null); setShowBranchDropdown(false); }}
+                  >
+                    <Text style={[styles.dropdownItemText, { color: theme.subtext }]}>No branch</Text>
+                  </TouchableOpacity>
+                  {branches.map(b => (
+                    <TouchableOpacity
+                      key={b.id}
+                      style={[styles.dropdownItem, { borderBottomColor: theme.border }, selectedBranchId === b.id && { backgroundColor: `${colors.yellow}20` }]}
+                      onPress={() => { setSelectedBranchId(b.id); setShowBranchDropdown(false); }}
+                    >
+                      <Text style={[styles.dropdownItemText, { color: selectedBranchId === b.id ? colors.yellow : theme.text }]}>
+                        {b.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Site */}
             <View style={styles.fieldGroup}>
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SITE</Text>
               <TouchableOpacity
@@ -1795,7 +1850,7 @@ function openDocModal() {
         </ScrollView>
       </Modal>
 
-      {/* Leave Calendar Access Modal — sites this admin sees by default,
+      {/* Leave Calendar Access Modal — branches this admin sees by default,
           plus per-person overrides on top of that. */}
       <Modal visible={leaveAccessModalVisible} animationType="slide" transparent={false} onRequestClose={() => setLeaveAccessModalVisible(false)}>
         <ScrollView
@@ -1812,33 +1867,37 @@ function openDocModal() {
           </View>
 
           <Text style={[styles.fieldHint, { color: theme.muted, marginHorizontal: 16, marginTop: 16 }]}>
-            Choose which sites and/or specific people {employee.full_name} can see on the leave
+            Choose which branches and/or specific people {employee.full_name} can see on the leave
             calendar. They always see their own leave regardless of these settings.
           </Text>
 
-          {/* Sites */}
+          {/* Branches */}
           <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <View style={styles.cardHeaderLeft}>
-              <MapPin color={colors.yellow} size={18} />
-              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Sites</Text>
+              <Building2 color={colors.yellow} size={18} />
+              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Branches</Text>
             </View>
             <Text style={[styles.fieldHint, { color: theme.subtext, marginBottom: 12 }]}>
-              Everyone at a checked site is visible by default — override specific people below.
+              Everyone in a checked branch is visible by default — override specific people below.
             </Text>
-            {sites.map(site => {
-              const checked = editableLeaveSiteIds.has(site.id);
-              return (
-                <View key={site.id} style={styles.switchRow}>
-                  <Text style={[styles.switchLabel, { color: theme.text }]}>{site.name}</Text>
-                  <TouchableOpacity
-                    style={[styles.toggle, { backgroundColor: checked ? colors.yellow : theme.input, borderColor: theme.border }]}
-                    onPress={() => toggleLeaveSite(site.id)}
-                  >
-                    <View style={[styles.toggleThumb, { backgroundColor: colors.white, transform: [{ translateX: checked ? 20 : 2 }] }]} />
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
+            {branches.length === 0 ? (
+              <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No branches exist yet.</Text>
+            ) : (
+              branches.map(branch => {
+                const checked = editableLeaveBranchIds.has(branch.id);
+                return (
+                  <View key={branch.id} style={styles.switchRow}>
+                    <Text style={[styles.switchLabel, { color: theme.text, flex: 1 }]}>{branch.name}</Text>
+                    <TouchableOpacity
+                      style={[styles.toggle, { backgroundColor: checked ? colors.yellow : theme.input, borderColor: theme.border }]}
+                      onPress={() => toggleLeaveBranch(branch.id)}
+                    >
+                      <View style={[styles.toggleThumb, { backgroundColor: colors.white, transform: [{ translateX: checked ? 20 : 2 }] }]} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
           </View>
 
           {/* Individual overrides */}
@@ -2062,13 +2121,13 @@ const styles = StyleSheet.create({
     borderRadius: 12, paddingHorizontal: 12, height: 48, gap: 8,
   },
   dateFilterToggle: {
-  borderWidth: 1,
-  borderRadius: 10,
-  paddingVertical: 8,
-  paddingHorizontal: 12,
-  alignSelf: 'flex-start',
-  marginBottom: 12,
-},
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+  },
   filePicker: {
     borderWidth: 2, borderRadius: 14, borderStyle: 'dashed',
     padding: 24, alignItems: 'center', gap: 10, marginBottom: 20,
