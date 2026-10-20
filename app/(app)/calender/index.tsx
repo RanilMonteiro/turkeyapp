@@ -42,6 +42,7 @@ const COMMENT_BG = '#fff176';
 const COMMENT_BORDER = '#000000';
 // Greyed-out days outside the month
 const CELL_PAD_BG = '#e2e8f0';
+const WEEKEND_BG = '#d5dbe3'; // empty Saturdays / Sundays (matches the PDF)
 const CELL_PAD_TEXT = '#94a3b8';
 // Highlighted (selected) days
 const DRAG_FILL_BORDER = '#2563eb';
@@ -1179,6 +1180,12 @@ function OperationalCalendar() {
                     ? (paintPreview === 'erase' ? undefined : COLOUR_HEX[paintPreview])
                     : savedColour;
 
+                  // Empty Saturdays/Sundays are greyed out (same as the PDF).
+                  // Anything on the day - an entry, a colour, or approved
+                  // leave - makes it a normal white cell again.
+                  const isEmptyWeekend =
+                    (di === 0 || di === 6) && !entry && !cellColour && leaveDays[dateStr] === undefined;
+
                   return (
                     <TouchableOpacity
                       key={di}
@@ -1186,12 +1193,12 @@ function OperationalCalendar() {
                       onPress={canEdit ? undefined : () => handleDayPress(dateStr)}
                       style={[
                         styles.dayCell,
-                        { width: cellWidth, height: rowHeight, backgroundColor: getCellBackground(cellColour), borderColor: CELL_BORDER },
+                        { width: cellWidth, height: rowHeight, backgroundColor: isEmptyWeekend ? WEEKEND_BG : getCellBackground(cellColour), borderColor: CELL_BORDER },
                         isSelected && !isDragSource && styles.dayCellFillHighlight,
                         isDragSource && styles.dayCellDragSource,
                       ]}
                     >
-                      <Text style={styles.dayNumber}>{dayNum}</Text>
+                      <Text style={[styles.dayNumber, isEmptyWeekend && { color: '#64748b' }]}>{dayNum}</Text>
 
                       {leaveDays[dateStr] !== undefined && (
                         <View style={styles.cellLeaveBadge}>

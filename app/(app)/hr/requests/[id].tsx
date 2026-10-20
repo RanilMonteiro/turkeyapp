@@ -80,6 +80,8 @@ export default function SubmissionDetail() {
   // Superuser override: which pending approval step (if any) they've
   // chosen to act on instead of their own assigned step, if any.
   const [overrideTargetId, setOverrideTargetId] = useState<string | null>(null);
+  // Whose turn it is, from the database (an approver can't read other approvers' rows directly)
+  const [currentStep, setCurrentStep] = useState<{ approval_order: number; approver_id: string; approver_name: string } | null | undefined>(undefined);
 
   const theme = {
     background: isDark ? colors.black : '#f8fafc',
@@ -136,6 +138,10 @@ export default function SubmissionDetail() {
 
     if (approvalData) setApprovals(approvalData as any);
 
+    const { data: stepData, error: stepError } = await supabase.rpc('get_current_approval_step', { p_submission_ids: [id] });
+    if (stepError) setCurrentStep(undefined); // function not installed yet - fall back to the rows we can see
+    else setCurrentStep(stepData && stepData.length > 0 ? stepData[0] : null);
+
     setLoading(false);
   }
 
@@ -148,9 +154,18 @@ export default function SubmissionDetail() {
   // and once anyone declines, the whole request is finished.
   const activeApproval = isFinal
     ? null
-    : approvals
-        .filter(a => a.status === 'pending')
-        .sort((a, b) => a.approval_order - b.approval_order)[0] ?? null;
+    : currentStep === undefined
+      ? approvals
+          .filter(a => a.status === 'pending')
+          .sort((a, b) => a.approval_order - b.approval_order)[0] ?? null
+      : currentStep
+        ? approvals.find(a => a.status === 'pending' && a.approval_order === currentStep.approval_order) ?? null
+        : null;
+
+  // Name of whoever's turn it is (for the "waiting" message)
+  const waitingOnName =
+    currentStep?.approver_name ?? activeApproval?.approver?.full_name ?? 'the approver before you';
+  const waitingOnOrder = currentStep?.approval_order ?? activeApproval?.approval_order;
 
   // The active step, if it belongs to the current user.
   const myPendingApproval =
@@ -789,12 +804,12 @@ function cancelSubmission() {
 
           {/* Waiting message — this user has a step on the request, but an
               earlier approver hasn't actioned theirs yet. */}
-          {!isFinal && !myPendingApproval && activeApproval &&
+          {!isFinal && !myPendingApproval && (activeApproval || currentStep) &&
             approvals.some(a => a.approver_id === currentUserId && a.status === 'pending') && (
             <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>Waiting on previous approver</Text>
               <Text style={[styles.actionHint, { color: theme.subtext }]}>
-                Waiting for {activeApproval.approver?.full_name ?? 'the approver before you'} (Step {activeApproval.approval_order}) to approve first. You'll be able to approve or decline once they have.
+                Waiting for {waitingOnName}{waitingOnOrder ? ` (Step ${waitingOnOrder})` : ''} to approve first. You'll be able to approve or decline once they have.
               </Text>
             </View>
           )}
