@@ -34,15 +34,15 @@ type LeaveEntry = {
   submissionId: string;
   employeeId: string;
   employeeName: string;
-  siteId: string | null;
-  siteName: string | null;
+  branchId: string | null;
+  branchName: string | null;
   leaveType: string | null;
   status: string;
   fromDate: string;
   toDate: string;
 };
 
-type Site = { id: string; name: string };
+type Branch = { id: string; name: string };
 type PersonOption = { id: string; full_name: string };
 
 // One row per leave record, clipped to whichever month is being
@@ -66,15 +66,15 @@ export default function LeaveCalendar() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [entries, setEntries] = useState<LeaveEntry[]>([]);
-  const [sites, setSites] = useState<Site[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [people, setPeople] = useState<PersonOption[]>([]);
   const [leaveTypes, setLeaveTypes] = useState<string[]>([]);
 
   // Filters
-  const [filterSite, setFilterSite] = useState<string | null>(null);
+  const [filterBranch, setFilterBranch] = useState<string | null>(null);
   const [filterPerson, setFilterPerson] = useState<string | null>(null);
   const [filterLeaveType, setFilterLeaveType] = useState<string | null>(null);
-  const [showSiteDropdown, setShowSiteDropdown] = useState(false);
+  const [showBranchDropdown, setShowBranchDropdown] = useState(false);
   const [showPersonDropdown, setShowPersonDropdown] = useState(false);
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
 
@@ -118,8 +118,8 @@ export default function LeaveCalendar() {
     const myRole = profile?.role ?? null;
     setRole(myRole);
 
-    const { data: siteData } = await supabase.from('sites').select('*').order('name');
-    if (siteData) setSites(siteData);
+    const { data: branchData } = await supabase.from('branches').select('*').order('name');
+    if (branchData) setBranches(branchData);
 
     // Person list scope depends on role
     if (myRole === 'hr' || myRole === 'superuser') {
@@ -130,12 +130,23 @@ export default function LeaveCalendar() {
         .order('full_name');
       if (everyone) setPeople(everyone);
     } else if (myRole === 'admin') {
-      const { data: grants } = await supabase
-        .from('leave_calendar_access_grants')
-        .select('employee_id, employee:employee_id(id, full_name)')
-        .eq('admin_id', uid);
-      const grantedPeople = (grants ?? []).map((g: any) => g.employee).filter(Boolean);
-      const { data: me } = await supabase.from('profiles').select('id, full_name').eq('id', uid).single();
+      // Admin sees: themselves + everyone in a branch they were granted,
+      // with per-person overrides winning (included=false hides, true shows).
+      const [{ data: branchGrants }, { data: overrides }, { data: allPeople }] = await Promise.all([
+        supabase.from('leave_calendar_branch_grants').select('branch_id').eq('admin_id', uid),
+        supabase.from('leave_calendar_person_overrides').select('employee_id, included').eq('admin_id', uid),
+        supabase.from('profiles').select('id, full_name, branch_id').neq('role', 'superuser').order('full_name'),
+      ]);
+      const grantedBranches = new Set((branchGrants ?? []).map((g: any) => g.branch_id));
+      const overrideMap = new Map((overrides ?? []).map((o: any) => [o.employee_id, o.included]));
+      const grantedPeople = (allPeople ?? []).filter((p: any) => {
+        if (p.id === uid) return false;
+        const o = overrideMap.get(p.id);
+        if (o !== undefined) return o;
+        return !!p.branch_id && grantedBranches.has(p.branch_id);
+      });
+      const me = (allPeople ?? []).find((p: any) => p.id === uid)
+        ?? (await supabase.from('profiles').select('id, full_name').eq('id', uid).single()).data;
       const combined = me ? [me, ...grantedPeople] : grantedPeople;
       setPeople(combined);
     }
@@ -162,7 +173,7 @@ export default function LeaveCalendar() {
 
     let query = supabase
       .from('form_submissions')
-      .select('id, employee_id, status, form_data, template_id, employee:employee_id(full_name, site_id, sites!site_id(name))')
+      .select('id, employee_id, status, form_data, template_id, employee:employee_id(full_name, branch_id, branches!branch_id(name))')
       .in('template_id', templateIds);
 
     // Technician: only their own. RLS also enforces this, but scoping
@@ -196,8 +207,8 @@ export default function LeaveCalendar() {
         submissionId: s.id,
         employeeId: s.employee_id,
         employeeName: s.employee?.full_name ?? 'Unknown',
-        siteId: s.employee?.site_id ?? null,
-        siteName: s.employee?.sites?.name ?? null,
+        branchId: s.employee?.branch_id ?? null,
+        branchName: s.employee?.branches?.name ?? null,
         leaveType: typeFieldId ? s.form_data[typeFieldId] : null,
         status: s.status,
         fromDate: fromFieldId ? s.form_data[fromFieldId] : null,
@@ -212,7 +223,7 @@ export default function LeaveCalendar() {
   }
 
   const filteredEntries = entries.filter(e => {
-    if (filterSite && e.siteId !== filterSite) return false;
+    if (filterBranch && e.branchId !== filterBranch) return false;
     if (filterPerson && e.employeeId !== filterPerson) return false;
     if (filterLeaveType && e.leaveType !== filterLeaveType) return false;
     return true;
@@ -259,7 +270,7 @@ function expandDateRange(from: string, to: string): string[] {
     ? filteredEntries.filter(e => expandDateRange(e.fromDate, e.toDate).includes(selectedDate))
     : [];
 
-  const showSiteFilter = role === 'hr' || role === 'superuser' || role === 'admin';
+  const showBranchFilter = role === 'hr' || role === 'superuser' || role === 'admin';
   const showPersonFilter = role === 'hr' || role === 'superuser' || role === 'admin';
   const showTypeFilter = role !== null; // everyone can filter by type, including technicians (their own leaves)
 
@@ -422,14 +433,14 @@ function expandDateRange(from: string, to: string): string[] {
               </Text>
             </TouchableOpacity>
           )}
-          {showSiteFilter && (
+          {showBranchFilter && (
             <TouchableOpacity
-              style={[styles.filterChip, { backgroundColor: theme.card, borderColor: filterSite ? colors.yellow : theme.border }]}
-              onPress={() => setShowSiteDropdown(true)}
+              style={[styles.filterChip, { backgroundColor: theme.card, borderColor: filterBranch ? colors.yellow : theme.border }]}
+              onPress={() => setShowBranchDropdown(true)}
             >
-              <MapPin color={filterSite ? colors.yellow : theme.subtext} size={14} />
-              <Text style={[styles.filterChipText, { color: filterSite ? colors.yellow : theme.subtext }]}>
-                {filterSite ? sites.find(s => s.id === filterSite)?.name ?? 'Site' : 'All Sites'}
+              <MapPin color={filterBranch ? colors.yellow : theme.subtext} size={14} />
+              <Text style={[styles.filterChipText, { color: filterBranch ? colors.yellow : theme.subtext }]}>
+                {filterBranch ? branches.find(b => b.id === filterBranch)?.name ?? 'Branch' : 'All Branches'}
               </Text>
             </TouchableOpacity>
           )}
@@ -444,10 +455,10 @@ function expandDateRange(from: string, to: string): string[] {
               </Text>
             </TouchableOpacity>
           )}
-          {(filterSite || filterPerson || filterLeaveType) && (
+          {(filterBranch || filterPerson || filterLeaveType) && (
             <TouchableOpacity
               style={styles.clearFiltersBtn}
-              onPress={() => { setFilterSite(null); setFilterPerson(null); setFilterLeaveType(null); }}
+              onPress={() => { setFilterBranch(null); setFilterPerson(null); setFilterLeaveType(null); }}
             >
               <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '600' }}>Clear</Text>
             </TouchableOpacity>
@@ -511,7 +522,7 @@ function expandDateRange(from: string, to: string): string[] {
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.entryName, { color: theme.text }]}>{entry.employeeName}</Text>
                     <Text style={[styles.entryMeta, { color: theme.subtext }]}>
-                      {entry.leaveType ?? 'Leave'} {entry.siteName ? `· ${entry.siteName}` : ''}
+                      {entry.leaveType ?? 'Leave'} {entry.branchName ? `· ${entry.branchName}` : ''}
                     </Text>
                     <Text style={[styles.entryDates, { color: theme.muted }]}>
                       {entry.fromDate} → {entry.toDate}
@@ -550,22 +561,22 @@ function expandDateRange(from: string, to: string): string[] {
         </TouchableOpacity>
       </Modal>
 
-      {/* Site picker */}
-      <Modal visible={showSiteDropdown} transparent animationType="fade" onRequestClose={() => setShowSiteDropdown(false)}>
-        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowSiteDropdown(false)}>
+      {/* Branch picker */}
+      <Modal visible={showBranchDropdown} transparent animationType="fade" onRequestClose={() => setShowBranchDropdown(false)}>
+        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowBranchDropdown(false)}>
           <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.pickerTitle, { color: theme.text }]}>Filter by Site</Text>
+            <Text style={[styles.pickerTitle, { color: theme.text }]}>Filter by Branch</Text>
             <ScrollView style={{ maxHeight: 360 }}>
-              <TouchableOpacity style={[styles.dropdownItem, { borderBottomColor: theme.border }]} onPress={() => { setFilterSite(null); setShowSiteDropdown(false); }}>
-                <Text style={[styles.dropdownItemText, { color: theme.text }]}>All Sites</Text>
+              <TouchableOpacity style={[styles.dropdownItem, { borderBottomColor: theme.border }]} onPress={() => { setFilterBranch(null); setShowBranchDropdown(false); }}>
+                <Text style={[styles.dropdownItemText, { color: theme.text }]}>All Branches</Text>
               </TouchableOpacity>
-              {sites.map(s => (
+              {branches.map(s => (
                 <TouchableOpacity
                   key={s.id}
-                  style={[styles.dropdownItem, { borderBottomColor: theme.border }, filterSite === s.id && { backgroundColor: `${colors.yellow}20` }]}
-                  onPress={() => { setFilterSite(s.id); setShowSiteDropdown(false); }}
+                  style={[styles.dropdownItem, { borderBottomColor: theme.border }, filterBranch === s.id && { backgroundColor: `${colors.yellow}20` }]}
+                  onPress={() => { setFilterBranch(s.id); setShowBranchDropdown(false); }}
                 >
-                  <Text style={[styles.dropdownItemText, { color: filterSite === s.id ? colors.yellow : theme.text }]}>{s.name}</Text>
+                  <Text style={[styles.dropdownItemText, { color: filterBranch === s.id ? colors.yellow : theme.text }]}>{s.name}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>

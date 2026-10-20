@@ -76,7 +76,27 @@ export default function MyApprovals() {
       .eq('status', 'pending')
       .order('approval_order');
 
-    if (data) setApprovals(data);
+    if (data) {
+      // Only show a step when it's actually that person's turn: the
+      // request is still open and no earlier step is still pending.
+      const open = data.filter((a: any) =>
+        a.submission && !['approved', 'declined', 'cancelled'].includes(a.submission.status)
+      );
+      const ids = open.map((a: any) => a.submission.id);
+      let minPending: Record<string, number> = {};
+      if (ids.length > 0) {
+        const { data: pendingRows } = await supabase
+          .from('form_approvals')
+          .select('submission_id, approval_order')
+          .in('submission_id', ids)
+          .eq('status', 'pending');
+        (pendingRows ?? []).forEach((r: any) => {
+          const cur = minPending[r.submission_id];
+          if (cur === undefined || r.approval_order < cur) minPending[r.submission_id] = r.approval_order;
+        });
+      }
+      setApprovals(open.filter((a: any) => minPending[a.submission.id] === a.approval_order));
+    }
     setLoading(false);
     setRefreshing(false);
   }

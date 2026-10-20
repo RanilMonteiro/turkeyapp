@@ -20,8 +20,8 @@ const colors = {
 };
 
 type Admin = { id: string; full_name: string };
-type Site = { id: string; name: string };
-type Person = { id: string; full_name: string; site_id: string | null };
+type Branch = { id: string; name: string };
+type Person = { id: string; full_name: string; branch_id: string | null };
 type PersonOverride = { employee_id: string; included: boolean };
 
 export default function LeaveAccessManagement() {
@@ -29,13 +29,13 @@ export default function LeaveAccessManagement() {
   const isDark = useColorScheme() === 'dark';
 
   const [admins, setAdmins] = useState<Admin[]>([]);
-  const [sites, setSites] = useState<Site[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [selectedAdmin, setSelectedAdmin] = useState<Admin | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [grantedSiteIds, setGrantedSiteIds] = useState<Set<string>>(new Set());
+  const [grantedBranchIds, setGrantedBranchIds] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Record<string, boolean>>({}); // employee_id -> included
   const [saving, setSaving] = useState(false);
 
@@ -55,13 +55,13 @@ export default function LeaveAccessManagement() {
   );
 
   async function fetchAll() {
-    const [{ data: adminData }, { data: siteData }, { data: peopleData }] = await Promise.all([
+    const [{ data: adminData }, { data: branchData }, { data: peopleData }] = await Promise.all([
       supabase.from('profiles').select('id, full_name').eq('role', 'admin').order('full_name'),
-      supabase.from('sites').select('*').order('name'),
-      supabase.from('profiles').select('id, full_name, site_id').neq('role', 'superuser').order('full_name'),
+      supabase.from('branches').select('*').order('name'),
+      supabase.from('profiles').select('id, full_name, branch_id').neq('role', 'superuser').order('full_name'),
     ]);
     if (adminData) setAdmins(adminData);
-    if (siteData) setSites(siteData);
+    if (branchData) setBranches(branchData);
     if (peopleData) setPeople(peopleData);
     setLoading(false);
   }
@@ -69,12 +69,12 @@ export default function LeaveAccessManagement() {
   async function openAdminConfig(admin: Admin) {
     setSelectedAdmin(admin);
 
-    const [{ data: siteGrants }, { data: personOverrides }] = await Promise.all([
-      supabase.from('leave_calendar_site_grants').select('site_id').eq('admin_id', admin.id),
+    const [{ data: branchGrants }, { data: personOverrides }] = await Promise.all([
+      supabase.from('leave_calendar_branch_grants').select('branch_id').eq('admin_id', admin.id),
       supabase.from('leave_calendar_person_overrides').select('employee_id, included').eq('admin_id', admin.id),
     ]);
 
-    setGrantedSiteIds(new Set((siteGrants ?? []).map(s => s.site_id)));
+    setGrantedBranchIds(new Set((branchGrants ?? []).map(b => b.branch_id)));
     const overrideMap: Record<string, boolean> = {};
     (personOverrides ?? []).forEach((o: PersonOverride) => { overrideMap[o.employee_id] = o.included; });
     setOverrides(overrideMap);
@@ -82,10 +82,10 @@ export default function LeaveAccessManagement() {
     setModalVisible(true);
   }
 
-  function toggleSite(siteId: string) {
-    setGrantedSiteIds(prev => {
+  function toggleBranch(branchId: string) {
+    setGrantedBranchIds(prev => {
       const next = new Set(prev);
-      if (next.has(siteId)) next.delete(siteId); else next.add(siteId);
+      if (next.has(branchId)) next.delete(branchId); else next.add(branchId);
       return next;
     });
   }
@@ -107,16 +107,16 @@ export default function LeaveAccessManagement() {
     });
   }
 
-  function isSiteDefaultVisible(person: Person): boolean {
-    return !!person.site_id && grantedSiteIds.has(person.site_id);
+  function isBranchDefaultVisible(person: Person): boolean {
+    return !!person.branch_id && grantedBranchIds.has(person.branch_id);
   }
 
   function effectiveLabel(person: Person): { label: string; color: string } {
     const override = overrides[person.id];
     if (override === true) return { label: 'Always shown', color: '#10b981' };
     if (override === false) return { label: 'Always hidden', color: '#ef4444' };
-    return isSiteDefaultVisible(person)
-      ? { label: 'Shown (via site)', color: colors.yellow }
+    return isBranchDefaultVisible(person)
+      ? { label: 'Shown (via branch)', color: colors.yellow }
       : { label: 'Not visible', color: colors.gray[400] };
   }
 
@@ -124,18 +124,18 @@ export default function LeaveAccessManagement() {
     if (!selectedAdmin) return;
     setSaving(true);
 
-    await supabase.from('leave_calendar_site_grants').delete().eq('admin_id', selectedAdmin.id);
+    await supabase.from('leave_calendar_branch_grants').delete().eq('admin_id', selectedAdmin.id);
     await supabase.from('leave_calendar_person_overrides').delete().eq('admin_id', selectedAdmin.id);
 
     const { data: userData } = await supabase.auth.getUser();
 
-    if (grantedSiteIds.size > 0) {
-      const siteRows = Array.from(grantedSiteIds).map(siteId => ({
+    if (grantedBranchIds.size > 0) {
+      const branchRows = Array.from(grantedBranchIds).map(branchId => ({
         admin_id: selectedAdmin.id,
-        site_id: siteId,
+        branch_id: branchId,
         granted_by: userData.user?.id,
       }));
-      await supabase.from('leave_calendar_site_grants').insert(siteRows);
+      await supabase.from('leave_calendar_branch_grants').insert(branchRows);
     }
 
     const overrideEntries = Object.entries(overrides);
@@ -174,7 +174,7 @@ export default function LeaveAccessManagement() {
         </View>
 
         <Text style={[styles.hint, { color: theme.subtext }]}>
-          Choose which sites and/or specific people each admin can see on the leave calendar.
+          Choose which branches and/or specific people each admin can see on the leave calendar.
           Admins always see their own leave regardless of these settings.
         </Text>
 
@@ -206,24 +206,24 @@ export default function LeaveAccessManagement() {
             <View style={{ width: 24 }} />
           </View>
 
-          {/* Sites */}
+          {/* Branches */}
           <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <View style={styles.cardHeaderLeft}>
               <MapPin color={colors.yellow} size={18} />
-              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Sites</Text>
+              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Branches</Text>
             </View>
             <Text style={[styles.hint, { color: theme.subtext, marginBottom: 12 }]}>
-              Everyone at a checked site is visible by default — override specific people below.
+              Everyone at a checked branch is visible by default — override specific people below.
             </Text>
-            {sites.map(site => {
-              const checked = grantedSiteIds.has(site.id);
+            {branches.map(branch => {
+              const checked = grantedBranchIds.has(branch.id);
               return (
                 <TouchableOpacity
-                  key={site.id}
+                  key={branch.id}
                   style={[styles.switchRow, { borderBottomColor: theme.border }]}
-                  onPress={() => toggleSite(site.id)}
+                  onPress={() => toggleBranch(branch.id)}
                 >
-                  <Text style={[styles.switchLabel, { color: theme.text }]}>{site.name}</Text>
+                  <Text style={[styles.switchLabel, { color: theme.text }]}>{branch.name}</Text>
                   <View style={[styles.toggle, { backgroundColor: checked ? colors.yellow : theme.border }]}>
                     <View style={[styles.toggleThumb, { transform: [{ translateX: checked ? 20 : 2 }] }]} />
                   </View>

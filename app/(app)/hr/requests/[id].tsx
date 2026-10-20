@@ -141,28 +141,32 @@ export default function SubmissionDetail() {
 
   const isSuperuser = currentUserRole === 'superuser';
 
-  // The step assigned to the current user, if any.
-  const myPendingApproval = approvals.find(
-    a => a.approver_id === currentUserId && a.status === 'pending'
-  );
+  const isFinal = submission?.status === 'approved' || submission?.status === 'declined' || submission?.status === 'cancelled';
 
-  // All steps still awaiting action — a superuser can pick any of
-  // these to override, not just their own.
-  const pendingApprovals = approvals.filter(a => a.status === 'pending');
+  // Approvals run strictly in order: the ONLY step that can be actioned
+  // is the lowest-numbered one still pending. Later steps wait their turn,
+  // and once anyone declines, the whole request is finished.
+  const activeApproval = isFinal
+    ? null
+    : approvals
+        .filter(a => a.status === 'pending')
+        .sort((a, b) => a.approval_order - b.approval_order)[0] ?? null;
 
-  // The step actually being acted on right now: either the current
-  // user's own assigned step, or — for a superuser — whichever step
-  // they've explicitly chosen to override.
+  // The active step, if it belongs to the current user.
+  const myPendingApproval =
+    activeApproval && activeApproval.approver_id === currentUserId ? activeApproval : undefined;
+
+  // A superuser can override only the active step (not skip ahead).
+  const pendingApprovals = activeApproval ? [activeApproval] : [];
+
+  // The step actually being acted on right now.
   const targetApproval = overrideTargetId
-    ? approvals.find(a => a.id === overrideTargetId) ?? null
-    : myPendingApproval;
+    ? (activeApproval && activeApproval.id === overrideTargetId ? activeApproval : null)
+    : myPendingApproval ?? null;
 
   const isOverride = !!overrideTargetId && overrideTargetId !== myPendingApproval?.id;
 
-  const canAct =
-    !!targetApproval &&
-    submission?.status !== 'approved' &&
-    submission?.status !== 'declined';
+  const canAct = !!targetApproval && !isFinal;
 
   async function uploadSignature(base64: string): Promise<string | null> {
     try {
@@ -232,27 +236,36 @@ export default function SubmissionDetail() {
     let submissionUpdateError = null;
 
     if (type === 'declined') {
-      // Decline the whole submission
+      // Any decline (normal or superuser override) ends the whole request
       const { error } = await supabase
         .from('form_submissions')
         .update({ status: 'declined' })
         .eq('id', id);
       submissionUpdateError = error;
+      // Close out the steps that never got their turn
+      await supabase
+        .from('form_approvals')
+        .update({ status: 'cancelled' })
+        .eq('submission_id', id)
+        .eq('status', 'pending')
+        .neq('id', targetApproval.id);
     } else {
-      // Check if there are more approvers after this step
+      // More steps still waiting after this one? (a superuser override
+      // that approves a step still hands the request to the next person)
       const nextApproval = approvals.find(
-        a => a.approval_order === targetApproval.approval_order + 1
+        a => a.id !== targetApproval.id &&
+             a.status === 'pending' &&
+             a.approval_order > targetApproval.approval_order
       );
 
       if (nextApproval) {
-        // Move to next approver
         const { error } = await supabase
           .from('form_submissions')
           .update({ status: 'in_review' })
           .eq('id', id);
         submissionUpdateError = error;
       } else {
-        // All approved
+        // Last step approved - all done
         const { error } = await supabase
           .from('form_submissions')
           .update({ status: 'approved' })
@@ -743,14 +756,14 @@ function cancelSubmission() {
 
           {/* Superuser Override picker — lets a superuser choose ANY
               pending step to act on, not just their own. */}
-          {isSuperuser && submission.status !== 'approved' && submission.status !== 'declined' && pendingApprovals.length > 0 && (
+          {isSuperuser && !isFinal && pendingApprovals.length > 0 && (
             <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <View style={styles.overrideHeaderRow}>
                 <ShieldAlert color="#f59e0b" size={18} />
                 <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Superuser Override</Text>
               </View>
               <Text style={[styles.actionHint, { color: theme.subtext, marginBottom: 12 }]}>
-                Act on behalf of any pending approver — useful if someone is unavailable or this needs urgent sign-off.
+                Act on behalf of the approver whose turn it is — useful if they are unavailable or this needs urgent sign-off. Approving still passes the request to the next approver; declining ends it.
               </Text>
               {pendingApprovals.map(a => {
                 const selected = targetApproval?.id === a.id;
