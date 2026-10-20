@@ -38,6 +38,7 @@ type PdfEntry = {
   tam_status: string | null;
   financial_document_type: string | null;
   financial_document_number: string | null;
+  sales_order_number: string | null;
 };
 
 const MONTH_NAMES = [
@@ -45,11 +46,46 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 const FINANCIAL_DOC_ABBR: Record<string, string> = {
+  Quote: 'QT',
+  'Sales Order': 'SO',
+  Invoice: 'INV',
+  // legacy values, still displayed correctly
   'Invoice Number': 'INV',
   'Order Number': 'PO',
-  'Sales Order': 'SO',
 };
+
+export type DocPart = { abbr: string; label: string; value: string };
+
+// Quote alone / Sales Order alone show one line.
+// An Invoice also shows its Sales Order line (when one is stored) plus the invoice line.
+export function financialDocParts(
+  type: string | null,
+  number: string | null,
+  salesOrder: string | null
+): DocPart[] {
+  const isInvoice = type === 'Invoice' || type === 'Invoice Number';
+  const parts: DocPart[] = [];
+  if (isInvoice && salesOrder?.trim()) {
+    parts.push({ abbr: 'SO', label: 'Sales Order', value: salesOrder.trim() });
+  }
+  if (number?.trim()) {
+    parts.push({
+      abbr: FINANCIAL_DOC_ABBR[type ?? ''] ?? '',
+      label: isInvoice ? 'Invoice' : type || 'Financial Document',
+      value: number.trim(),
+    });
+  }
+  return parts;
+}
+
+// Day number for the greyed-out cells before day 1 / after the last day.
+// `index` is the cell's position in the grid (weekIndex * 7 + dayIndex).
+export function adjacentDayNumber(year: number, month: number, index: number): number {
+  const startWeekday = new Date(year, month, 1).getDay();
+  return new Date(year, month, index - startWeekday + 1).getDate();
+}
 
 // A4 landscape in points (1pt = 1/72in)
 const PAGE_W = 842;
@@ -229,7 +265,7 @@ const CSS = `
 
   /* Fit-to-cell: every size scales with --s, which is chosen per month in
      monthPageHtml so the busiest day just fits and quiet months stay roomy.
-     The financial document line is pinned to the bottom of the cell. */
+     The financial document lines are pinned to the bottom of the cell. */
   .page { padding: 16pt 20pt; }
   .grid { --s: 1; }
   .cell { display: flex; flex-direction: column; padding: calc(3pt * var(--s)) calc(4pt * var(--s)); }
@@ -259,6 +295,10 @@ const CSS = `
   .top .day { position: static; text-align: left; min-width: 0; }
   .top .mine { text-align: center; padding: 0; margin-top: calc(1pt * var(--s)); }
   .sub { text-align: center; }
+
+  /* Greyed-out days outside the month */
+  .cell.pad { background: #e2e8f0; }
+  .cell.pad .day { color: #94a3b8; font-weight: 700; }
 `;
 
 // Long site names are printed smaller so they stay on fewer lines and never
@@ -286,10 +326,14 @@ function cellHtml(
       : '';
   if (!entry) return `<div class="cell"${styleAttr}><div class="day">${day}</div>${leaveHtml}</div>`;
 
-  const docAbbr = FINANCIAL_DOC_ABBR[entry.financial_document_type ?? ''] ?? '';
-  const doc = entry.financial_document_number
-    ? `${docAbbr} ${entry.financial_document_number}`.trim()
-    : '';
+  const docParts = financialDocParts(
+    entry.financial_document_type,
+    entry.financial_document_number,
+    entry.sales_order_number
+  );
+  const doc = docParts
+    .map(p => `<div>${esc(`${p.abbr} ${p.value}`.trim())}</div>`)
+    .join('');
 
   // Note-only days have no site name, so just the day number is shown on top.
   const mineHtml = entry.mine_name
@@ -307,7 +351,7 @@ function cellHtml(
       ${entry.testing_type ? `<div class="pill test">${esc(entry.testing_type)}</div>` : ''}
       ${entry.tam_status ? `<div class="pill tam">${esc(entry.tam_status)}</div>` : ''}
       </div>
-      ${doc ? `<div class="inv">${esc(doc)}</div>` : ''}
+      ${doc ? `<div class="inv">${doc}</div>` : ''}
     </div>`;
 }
 
@@ -332,7 +376,7 @@ function estimateEntryHeight(e: PdfEntry): number {
   if (e.comments) h += 7 + 7.1 * lines(e.comments, 24);
   if (e.testing_type) h += 13.1;
   if (e.tam_status) h += 13.1;
-  if (e.financial_document_number) h += 10.6 * lines(e.financial_document_number, 22);
+  h += 10.6 * financialDocParts(e.financial_document_type, e.financial_document_number, e.sales_order_number).length;
   return h;
 }
 
@@ -369,9 +413,13 @@ function monthPageHtml(
   const scale = monthScale(heights, weeks.length);
 
   const cells = weeks
-    .map(week =>
+    .map((week, wi) =>
       week
-        .map(dateStr => (dateStr ? cellHtml(dateStr, byDate[dateStr], colours[dateStr], leave[dateStr]) : `<div class="cell pad"></div>`))
+        .map((dateStr, di) =>
+          dateStr
+            ? cellHtml(dateStr, byDate[dateStr], colours[dateStr], leave[dateStr])
+            : `<div class="cell pad"><div class="day">${adjacentDayNumber(year, month, wi * 7 + di)}</div></div>`
+        )
         .join('')
     )
     .join('');
@@ -474,7 +522,7 @@ async function fetchEntriesForRange(technicianId: string, from: string, to: stri
   const { data, error } = await supabase
     .from('operational_calendar_entries')
     .select(
-      'entry_date, mine_name, contact_person, contact_number, comments, testing_type, tam_status, financial_document_type, financial_document_number'
+      'entry_date, mine_name, contact_person, contact_number, comments, testing_type, tam_status, financial_document_type, financial_document_number, sales_order_number'
     )
     .eq('technician_id', technicianId)
     .gte('entry_date', from)

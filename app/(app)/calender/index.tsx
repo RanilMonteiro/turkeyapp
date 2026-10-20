@@ -9,7 +9,10 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
-import { exportCalendarPdf, PdfScope, HIGHLIGHT_COLOURS, HighlightKey } from '../../../lib/calendarPdf';
+import {
+  exportCalendarPdf, PdfScope, HIGHLIGHT_COLOURS, HighlightKey,
+  financialDocParts, adjacentDayNumber,
+} from '../../../lib/calendarPdf';
 import DatePickerField from '../../../components/DatepickerField';
 
 const colors = {
@@ -37,25 +40,23 @@ const CELL_TEXT_DARK = '#0f172a';
 const CELL_SUBTEXT_DARK = '#334155';
 const COMMENT_BG = '#fff176';
 const COMMENT_BORDER = '#000000';
+// Greyed-out days outside the month
+const CELL_PAD_BG = '#e2e8f0';
+const CELL_PAD_TEXT = '#94a3b8';
+// Highlighted (selected) days
 const DRAG_FILL_BORDER = '#2563eb';
-const DRAG_FILL_TINT = 'rgba(37, 99, 235, 0.18)';
-const DRAG_DELETE_BORDER = '#dc2626';
-const DRAG_DELETE_TINT = 'rgba(220, 38, 38, 0.22)';
+const DRAG_FILL_TINT = '#bfdbfe';
 const DRAG_SOURCE_BORDER = '#b45309';
 
 const TESTING_TYPE_OPTIONS = ['Brake Testing', 'Lux Testing', 'Brake and Lux Testing', 'Inspections'];
 const TAM_STATUS_OPTIONS = ['On TAM', 'Not On TAM', 'Brake and Inspection'];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const FINANCIAL_DOCUMENT_OPTIONS = ['Invoice Number', 'Order Number', 'Sales Order'];
-// Short prefix shown on the grid cell itself, where space is tight.
-const FINANCIAL_DOC_ABBR: Record<string, string> = {
-  'Invoice Number': 'INV',
-  'Order Number': 'PO',
-  'Sales Order': 'SO',
-};
+// Quote -> Sales Order -> Invoice. A Quote/Sales Order stands alone; once it
+// becomes an Invoice the Sales Order number is kept alongside it.
+const FINANCIAL_DOCUMENT_OPTIONS = ['Quote', 'Sales Order', 'Invoice'];
 function financialDocPlaceholder(type: string | null): string {
-  if (type === 'Order Number') return 'e.g. PO 12345';
+  if (type === 'Quote') return 'e.g. QT 12345';
   if (type === 'Sales Order') return 'e.g. SO 16617';
   return 'e.g. INV 50521';
 }
@@ -66,8 +67,8 @@ function financialDocPlaceholder(type: string | null): string {
 const PORTRAIT_ROW_HEIGHT = 272;
 const LANDSCAPE_ROW_HEIGHT = 250;
 
-// Whether dragging one day onto others also copies its financial document
-// (type + number). On by default: a fill-drag is usually one job spanning
+// Whether copying one day onto others also copies its financial document
+// (type + numbers). On by default: a copy is usually one job spanning
 // several days, so it makes sense for them to share the same document.
 const COPY_FINANCIAL_DOC_ON_FILL = true;
 
@@ -97,13 +98,17 @@ type CalendarEntry = {
   tam_status: string | null;
   financial_document_type: string | null;
   financial_document_number: string | null;
+  sales_order_number: string | null;
   site_id: string | null;
 };
 
+// While a finger is down: either highlighting a range of days, or painting colours.
 type DragInfo =
-  | { type: 'fill'; sourceDate: string; dates: string[] }
-  | { type: 'delete'; dates: string[] }
+  | { type: 'select'; sourceDate: string; dates: string[] }
   | { type: 'paint'; color: PaintColor; dates: string[] };
+
+// What stays highlighted after the finger lifts (until copied, deleted or cleared).
+type Selection = { sourceDate: string; dates: string[] };
 
 function toDateString(year: number, month: number, day: number): string {
   const mm = String(month + 1).padStart(2, '0');
@@ -113,7 +118,7 @@ function toDateString(year: number, month: number, day: number): string {
 
 // Every date string between from/to inclusive — used to spread one
 // entry across multiple days when the person sets a date range, and
-// to work out which days a fill-drag gesture passed over.
+// to work out which days a highlight-drag gesture passed over.
 function expandDateRange(from: string, to: string): string[] {
   const dates: string[] = [];
   let current = new Date(from + 'T00:00:00');
@@ -195,7 +200,7 @@ function OperationalCalendar() {
   });
 
   // Day detail modal (tap a filled day — shows everything including
-  // comments, plus Edit/Delete if permitted)
+  // comments, plus Edit if permitted)
   const [detailEntry, setDetailEntry] = useState<CalendarEntry | null>(null);
   const [detailDate, setDetailDate] = useState<string | null>(null);
 
@@ -212,6 +217,7 @@ function OperationalCalendar() {
   const [tamStatus, setTamStatus] = useState<string | null>(null);
   const [financialDocType, setFinancialDocType] = useState<string | null>(null);
   const [financialDocNumber, setFinancialDocNumber] = useState('');
+  const [salesOrderNumber, setSalesOrderNumber] = useState('');
   const [showTestingTypeDropdown, setShowTestingTypeDropdown] = useState(false);
   const [showTamStatusDropdown, setShowTamStatusDropdown] = useState(false);
   const [showFinancialDocDropdown, setShowFinancialDocDropdown] = useState(false);
@@ -228,10 +234,10 @@ function OperationalCalendar() {
   const [showColourPanel, setShowColourPanel] = useState(false);
   const [paintColor, setPaintColor] = useState<PaintColor | null>(null);
 
-  // ---------- Drag-to-fill / drag-to-delete ----------
-  const [deleteMode, setDeleteMode] = useState(false);
+  // ---------- Highlight (select) days, then copy / delete ----------
   const [isDragging, setIsDragging] = useState(false);
   const [dragInfo, setDragInfo] = useState<DragInfo | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
 
   const gridRef = useRef<View>(null);
   const gridOriginRef = useRef({ pageX: 0, pageY: 0 });
@@ -245,7 +251,7 @@ function OperationalCalendar() {
   // stale ones captured on its first render.
   const liveRef = useRef({
     canEdit: false,
-    deleteMode: false,
+    selection: null as Selection | null,
     weeks: [] as (string | null)[][],
     cellWidth: 0,
     rowHeight: PORTRAIT_ROW_HEIGHT,
@@ -408,10 +414,15 @@ function OperationalCalendar() {
   const selectedTechnician = technicians.find(t => t.id === selectedTechnicianId);
   const weeks = buildMonthGrid(viewDate.year, viewDate.month);
 
+  // How many highlighted days actually hold an entry (what Delete would remove),
+  // and whether Copy makes sense (first highlighted day has an entry + more days).
+  const selectedEntryCount = selection ? selection.dates.filter(d => !!entriesByDate[d]).length : 0;
+  const canCopySelection = !!selection && !!entriesByDate[selection.sourceDate] && selection.dates.length > 1;
+
   // Keep the live ref in sync every render so gesture handlers (bound
   // once) always see current data.
   liveRef.current.canEdit = canEdit;
-  liveRef.current.deleteMode = deleteMode;
+  liveRef.current.selection = selection;
   liveRef.current.weeks = weeks;
   liveRef.current.cellWidth = cellWidth;
   liveRef.current.rowHeight = rowHeight;
@@ -421,9 +432,11 @@ function OperationalCalendar() {
   liveRef.current.leaveDays = leaveDays;
 
   function goToPreviousMonth() {
+    setSelection(null);
     setViewDate(prev => (prev.month === 0 ? { year: prev.year - 1, month: 11 } : { year: prev.year, month: prev.month - 1 }));
   }
   function goToNextMonth() {
+    setSelection(null);
     setViewDate(prev => (prev.month === 11 ? { year: prev.year + 1, month: 0 } : { year: prev.year, month: prev.month + 1 }));
   }
 
@@ -517,6 +530,7 @@ function OperationalCalendar() {
       tam_status: sourceEntry.tam_status,
       financial_document_type: COPY_FINANCIAL_DOC_ON_FILL ? sourceEntry.financial_document_type : null,
       financial_document_number: COPY_FINANCIAL_DOC_ON_FILL ? sourceEntry.financial_document_number : null,
+      sales_order_number: COPY_FINANCIAL_DOC_ON_FILL ? sourceEntry.sales_order_number : null,
       updated_by: uid,
       created_by: uid,
     }));
@@ -533,19 +547,24 @@ function OperationalCalendar() {
     fetchEntries(technicianId);
   }
 
-  function finishFillDrag(info: Extract<DragInfo, { type: 'fill' }>) {
-    const sourceEntry = liveRef.current.entriesByDate[info.sourceDate];
+  // Copies the first highlighted day's entry onto the other highlighted days.
+  function copySelection() {
+    if (!selection) return;
+    const sourceEntry = entriesByDate[selection.sourceDate];
     if (!sourceEntry) return;
-    const targetDates = info.dates.filter(d => d !== info.sourceDate);
+    const targetDates = selection.dates.filter(d => d !== selection.sourceDate);
     if (targetDates.length === 0) return;
 
-    const overlapping = targetDates.filter(d => !!liveRef.current.entriesByDate[d]);
-    const apply = () => performFillSave(sourceEntry, targetDates);
+    const overlapping = targetDates.filter(d => !!entriesByDate[d]);
+    const apply = async () => {
+      await performFillSave(sourceEntry, targetDates);
+      setSelection(null);
+    };
 
     if (overlapping.length > 0) {
       confirm(
         'Overwrite existing entries?',
-        `${overlapping.length} day${overlapping.length === 1 ? '' : 's'} in this range already ${overlapping.length === 1 ? 'has' : 'have'} an entry. Filling will replace ${overlapping.length === 1 ? 'it' : 'them'}.`,
+        `${overlapping.length} day${overlapping.length === 1 ? '' : 's'} in this range already ${overlapping.length === 1 ? 'has' : 'have'} an entry. Copying will replace ${overlapping.length === 1 ? 'it' : 'them'}.`,
         apply
       );
     } else {
@@ -571,13 +590,18 @@ function OperationalCalendar() {
     if (technicianId) fetchEntries(technicianId);
   }
 
-  function finishDeleteDrag(info: Extract<DragInfo, { type: 'delete' }>) {
-    const targets = info.dates.filter(d => !!liveRef.current.entriesByDate[d]);
+  // Deletes every entry on the highlighted days (after a confirmation).
+  function deleteSelection() {
+    if (!selection) return;
+    const targets = selection.dates.filter(d => !!entriesByDate[d]);
     if (targets.length === 0) return;
     confirm(
       'Delete Entries',
       `Delete ${targets.length} entr${targets.length === 1 ? 'y' : 'ies'}? This can't be undone.`,
-      () => deleteEntriesForDates(targets)
+      async () => {
+        await deleteEntriesForDates(targets);
+        setSelection(null);
+      }
     );
   }
 
@@ -648,22 +672,15 @@ function OperationalCalendar() {
           return;
         }
 
+        // Press & hold on any day starts highlighting; drag to extend the range.
         if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = setTimeout(() => {
           if (!startDate) return;
-          if (liveRef.current.deleteMode) {
-            if (liveRef.current.entriesByDate[startDate]) {
-              const info: DragInfo = { type: 'delete', dates: [startDate] };
-              dragInfoRef.current = info;
-              setDragInfo(info);
-              setIsDragging(true);
-            }
-          } else if (liveRef.current.entriesByDate[startDate]) {
-            const info: DragInfo = { type: 'fill', sourceDate: startDate, dates: [startDate] };
-            dragInfoRef.current = info;
-            setDragInfo(info);
-            setIsDragging(true);
-          }
+          const info: DragInfo = { type: 'select', sourceDate: startDate, dates: [startDate] };
+          dragInfoRef.current = info;
+          setDragInfo(info);
+          setSelection(null);
+          setIsDragging(true);
         }, 350);
       },
       onPanResponderMove: (evt) => {
@@ -696,18 +713,10 @@ function OperationalCalendar() {
         const dateStr = dateAtTouch(evt);
         if (!dateStr) return;
 
-        if (current.type === 'fill') {
-          const dates = computeRangeDates(current.sourceDate, dateStr);
-          const next: DragInfo = { ...current, dates };
-          dragInfoRef.current = next;
-          setDragInfo(next);
-        } else {
-          if (!current.dates.includes(dateStr) && liveRef.current.entriesByDate[dateStr]) {
-            const next: DragInfo = { ...current, dates: [...current.dates, dateStr] };
-            dragInfoRef.current = next;
-            setDragInfo(next);
-          }
-        }
+        const dates = computeRangeDates(current.sourceDate, dateStr);
+        const next: DragInfo = { ...current, dates };
+        dragInfoRef.current = next;
+        setDragInfo(next);
       },
       onPanResponderRelease: () => {
         if (longPressTimerRef.current) {
@@ -720,11 +729,12 @@ function OperationalCalendar() {
         setIsDragging(false);
 
         if (info) {
-          if (info.type === 'fill') finishFillDrag(info);
-          else if (info.type === 'paint') savePaint(info.color, info.dates);
-          else finishDeleteDrag(info);
+          if (info.type === 'paint') savePaint(info.color, info.dates);
+          else setSelection({ sourceDate: info.sourceDate, dates: info.dates });
         } else if (touchStartDateRef.current) {
-          handleDayPress(touchStartDateRef.current);
+          // A tap while days are highlighted just clears the highlight.
+          if (liveRef.current.selection) setSelection(null);
+          else handleDayPress(touchStartDateRef.current);
         }
         touchStartDateRef.current = null;
       },
@@ -755,6 +765,7 @@ function OperationalCalendar() {
     setTamStatus(null);
     setFinancialDocType(null);
     setFinancialDocNumber('');
+    setSalesOrderNumber('');
     setSelectedSiteId(null);
     setShowSiteDropdown(false);
     setSiteSearch('');
@@ -773,6 +784,7 @@ function OperationalCalendar() {
     setTamStatus(entry.tam_status);
     setFinancialDocType(entry.financial_document_type);
     setFinancialDocNumber(entry.financial_document_number ?? '');
+    setSalesOrderNumber(entry.sales_order_number ?? '');
     setSelectedSiteId(entry.site_id ?? null);
     setShowSiteDropdown(false);
     setSiteSearch('');
@@ -843,15 +855,24 @@ function OperationalCalendar() {
 
   // If an edit changes the financial document, look for other days (for
   // the same technician) that currently carry the exact same old
-  // type+number — those are the days that were "made from that" same
-  // document (e.g. created together via a date range or a fill-drag).
+  // type + numbers — those are the days that were "made from that" same
+  // document (e.g. created together via a date range or a copy).
   // Days with a different document are a different job and are left
   // alone.
-  async function updateRelatedFinancialDocs(dates: string[], type: string | null, number: string | null) {
+  async function updateRelatedFinancialDocs(
+    dates: string[],
+    type: string | null,
+    number: string | null,
+    salesOrder: string | null
+  ) {
     if (!selectedTechnicianId || dates.length === 0) return;
     const { error } = await supabase
       .from('operational_calendar_entries')
-      .update({ financial_document_type: type, financial_document_number: number })
+      .update({
+        financial_document_type: type,
+        financial_document_number: number,
+        sales_order_number: salesOrder,
+      })
       .eq('technician_id', selectedTechnicianId)
       .in('entry_date', dates);
     if (error) {
@@ -877,28 +898,33 @@ function OperationalCalendar() {
       tam_status: tamStatus,
       financial_document_type: financialDocType,
       financial_document_number: financialDocNumber.trim() || null,
+      // The sales order number is only kept alongside an Invoice.
+      sales_order_number: financialDocType === 'Invoice' ? (salesOrderNumber.trim() || null) : null,
       updated_by: uid,
     };
 
     let error;
     let relatedDates: string[] = [];
-    let newDocType = basePayload.financial_document_type;
-    let newDocNumber = basePayload.financial_document_number;
+    const newDocType = basePayload.financial_document_type;
+    const newDocNumber = basePayload.financial_document_number;
+    const newSO = basePayload.sales_order_number;
 
     if (editingEntry) {
       const oldDocType = editingEntry.financial_document_type;
       const oldDocNumber = editingEntry.financial_document_number;
-      const docChanged = oldDocType !== newDocType || oldDocNumber !== newDocNumber;
+      const oldSO = editingEntry.sales_order_number ?? null;
+      const docChanged = oldDocType !== newDocType || oldDocNumber !== newDocNumber || oldSO !== newSO;
 
       // Only entries that had a real document before (not blank) can be
       // "related" to this one.
-      if (docChanged && oldDocType && oldDocNumber) {
+      if (docChanged && (oldDocNumber || oldSO)) {
         relatedDates = entries
           .filter(e =>
             e.id !== editingEntry.id &&
             e.technician_id === editingEntry.technician_id &&
             e.financial_document_type === oldDocType &&
-            e.financial_document_number === oldDocNumber
+            e.financial_document_number === oldDocNumber &&
+            (e.sales_order_number ?? null) === oldSO
           )
           .map(e => e.entry_date);
       }
@@ -930,25 +956,9 @@ function OperationalCalendar() {
         `${relatedDates.length} other day${relatedDates.length === 1 ? '' : 's'} ` +
           `${relatedDates.length === 1 ? 'shares' : 'share'} this same financial document. ` +
           `Update ${relatedDates.length === 1 ? 'it' : 'them'} to the new one too?`,
-        () => updateRelatedFinancialDocs(relatedDates, newDocType, newDocNumber)
+        () => updateRelatedFinancialDocs(relatedDates, newDocType, newDocNumber, newSO)
       );
     }
-  }
-
-  function handleDeleteEntry(entry: CalendarEntry) {
-    confirm(
-      'Delete Entry',
-      `Delete the ${entry.mine_name ? `entry for "${entry.mine_name}"` : 'note'} on ${entry.entry_date}?`,
-      async () => {
-        const { error } = await supabase.from('operational_calendar_entries').delete().eq('id', entry.id);
-        if (error) {
-          notify('Error', error.message);
-        } else if (selectedTechnicianId) {
-          setDetailEntry(null);
-          fetchEntries(selectedTechnicianId);
-        }
-      }
-    );
   }
 
   if (loading) {
@@ -968,17 +978,9 @@ function OperationalCalendar() {
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: theme.text }]}>Operational Calendar</Text>
           <View style={styles.headerActions}>
-            <TouchableOpacity onPress={() => setExportModalVisible(true)} style={styles.deleteModeBtn}>
+            <TouchableOpacity onPress={() => setExportModalVisible(true)} style={styles.headerIconBtn}>
               <FileDown color={colors.yellow} size={20} />
             </TouchableOpacity>
-            {canEdit && (
-              <TouchableOpacity
-                onPress={() => { setDeleteMode(d => !d); setPaintColor(null); }}
-                style={[styles.deleteModeBtn, deleteMode && styles.deleteModeBtnActive]}
-              >
-                <Trash2 color={deleteMode ? '#ffffff' : theme.muted} size={18} />
-              </TouchableOpacity>
-            )}
           </View>
         </View>
 
@@ -1038,7 +1040,7 @@ function OperationalCalendar() {
                 ]}
                 onPress={() => {
                   setPaintColor(c.key);
-                  setDeleteMode(false);
+                  setSelection(null);
                   setShowColourPanel(false);
                 }}
               >
@@ -1057,7 +1059,7 @@ function OperationalCalendar() {
                 ]}
                 onPress={() => {
                   setPaintColor('erase');
-                  setDeleteMode(false);
+                  setSelection(null);
                   setShowColourPanel(false);
                 }}
               >
@@ -1081,12 +1083,33 @@ function OperationalCalendar() {
           <Text style={[styles.readOnlyNote, { color: theme.muted }]}>View only</Text>
         )}
 
-        {canEdit && !paintColor && (
+        {canEdit && !paintColor && !selection && (
           <Text style={[styles.dragHint, { color: theme.subtext }]}>
-            {deleteMode
-              ? 'Delete mode: press & drag across days to select, then confirm to delete.'
-              : 'Tip: press & hold a filled day, then drag to copy it across other days.'}
+            Tip: press & hold a day, then drag across days to highlight them. Then copy or delete.
           </Text>
+        )}
+
+        {/* Appears once days are highlighted: see what's selected, then copy or delete */}
+        {canEdit && !paintColor && selection && (
+          <View style={[styles.selectionBar, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.selectionText, { color: theme.text }]} numberOfLines={1}>
+              {selection.dates.length} day{selection.dates.length === 1 ? '' : 's'} highlighted
+            </Text>
+            {canCopySelection && (
+              <TouchableOpacity onPress={copySelection}>
+                <Text style={styles.selectionCopy}>Copy</Text>
+              </TouchableOpacity>
+            )}
+            {selectedEntryCount > 0 && (
+              <TouchableOpacity onPress={deleteSelection} style={styles.selectionDeleteBtn}>
+                <Trash2 color="#ef4444" size={14} />
+                <Text style={styles.selectionDelete}>Delete {selectedEntryCount}</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity onPress={() => setSelection(null)}>
+              <X color={theme.muted} size={18} />
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* Month nav */}
@@ -1128,20 +1151,28 @@ function OperationalCalendar() {
             {weeks.map((week, wi) => (
               <View key={wi} style={styles.weekRow}>
                 {week.map((dateStr, di) => {
+                  // Greyed-out day from the neighbouring month
                   if (!dateStr) {
                     return (
                       <View
                         key={di}
-                        style={[styles.dayCell, { width: cellWidth, height: rowHeight, backgroundColor: CELL_EMPTY_BG, borderColor: CELL_BORDER }]}
-                      />
+                        style={[styles.dayCell, { width: cellWidth, height: rowHeight, backgroundColor: CELL_PAD_BG, borderColor: CELL_BORDER }]}
+                      >
+                        <Text style={[styles.dayNumber, { color: CELL_PAD_TEXT }]}>
+                          {adjacentDayNumber(viewDate.year, viewDate.month, wi * 7 + di)}
+                        </Text>
+                      </View>
                     );
                   }
                   const entry = entriesByDate[dateStr];
                   const dayNum = parseInt(dateStr.split('-')[2], 10);
 
-                  const isFillHighlighted = dragInfo?.type === 'fill' && dragInfo.dates.includes(dateStr);
-                  const isDragSource = dragInfo?.type === 'fill' && dragInfo.sourceDate === dateStr;
-                  const isDeleteHighlighted = dragInfo?.type === 'delete' && dragInfo.dates.includes(dateStr);
+                  const isSelected =
+                    (dragInfo?.type === 'select' && dragInfo.dates.includes(dateStr)) ||
+                    !!selection?.dates.includes(dateStr);
+                  const isDragSource =
+                    (dragInfo?.type === 'select' && dragInfo.sourceDate === dateStr) ||
+                    selection?.sourceDate === dateStr;
                   const paintPreview = dragInfo?.type === 'paint' && dragInfo.dates.includes(dateStr) ? dragInfo.color : null;
                   const savedColour = highlights[dateStr] ? COLOUR_HEX[highlights[dateStr]] : undefined;
                   const cellColour = paintPreview
@@ -1156,9 +1187,8 @@ function OperationalCalendar() {
                       style={[
                         styles.dayCell,
                         { width: cellWidth, height: rowHeight, backgroundColor: getCellBackground(cellColour), borderColor: CELL_BORDER },
-                        isFillHighlighted && !isDragSource && styles.dayCellFillHighlight,
+                        isSelected && !isDragSource && styles.dayCellFillHighlight,
                         isDragSource && styles.dayCellDragSource,
-                        isDeleteHighlighted && styles.dayCellDeleteHighlight,
                       ]}
                     >
                       <Text style={styles.dayNumber}>{dayNum}</Text>
@@ -1217,11 +1247,15 @@ function OperationalCalendar() {
                               </Text>
                             </View>
                           )}
-                          {entry.financial_document_number && (
-                            <Text style={styles.cellInvoiceText} numberOfLines={1}>
-                              {`${FINANCIAL_DOC_ABBR[entry.financial_document_type ?? ''] ?? ''} ${entry.financial_document_number}`.trim()}
+                          {financialDocParts(
+                            entry.financial_document_type,
+                            entry.financial_document_number,
+                            entry.sales_order_number
+                          ).map(p => (
+                            <Text key={p.abbr + p.value} style={styles.cellInvoiceText} numberOfLines={1}>
+                              {`${p.abbr} ${p.value}`.trim()}
                             </Text>
-                          )}
+                          ))}
                         </View>
                       )}
                     </TouchableOpacity>
@@ -1243,7 +1277,7 @@ function OperationalCalendar() {
                 <TouchableOpacity
                   key={t.id}
                   style={[styles.dropdownItem, { borderBottomColor: theme.border }, selectedTechnicianId === t.id && { backgroundColor: `${colors.yellow}20` }]}
-                  onPress={() => { setSelectedTechnicianId(t.id); setShowTechDropdown(false); }}
+                  onPress={() => { setSelection(null); setSelectedTechnicianId(t.id); setShowTechDropdown(false); }}
                 >
                   <Text style={[styles.dropdownItemText, { color: selectedTechnicianId === t.id ? colors.yellow : theme.text }]}>{t.full_name}</Text>
                 </TouchableOpacity>
@@ -1364,19 +1398,20 @@ function OperationalCalendar() {
                   )}
                 </View>
 
-                {detailEntry.financial_document_number && (
-                  <Text style={styles.invoiceText}>
-                    {detailEntry.financial_document_type ?? 'Financial Document'}: {detailEntry.financial_document_number}
+                {financialDocParts(
+                  detailEntry.financial_document_type,
+                  detailEntry.financial_document_number,
+                  detailEntry.sales_order_number
+                ).map(p => (
+                  <Text key={p.abbr + p.value} style={styles.invoiceText}>
+                    {p.label}: {p.value}
                   </Text>
-                )}
+                ))}
 
                 {canEdit && (
                   <View style={styles.entryActionsRow}>
                     <TouchableOpacity onPress={() => openEditEntryModal(detailEntry)}>
                       <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDeleteEntry(detailEntry)}>
-                      <Trash2 color="#ef4444" size={16} />
                     </TouchableOpacity>
                   </View>
                 )}
@@ -1618,12 +1653,35 @@ function OperationalCalendar() {
                     <TouchableOpacity
                       key={opt}
                       style={[styles.dropdownItem, { borderBottomColor: theme.border }, financialDocType === opt && { backgroundColor: `${colors.yellow}20` }]}
-                      onPress={() => { setFinancialDocType(opt); setShowFinancialDocDropdown(false); }}
+                      onPress={() => {
+                        // Sales Order becoming an Invoice: keep the SO number alongside
+                        // and leave the number field free for the new invoice number.
+                        if (
+                          opt === 'Invoice' &&
+                          financialDocType === 'Sales Order' &&
+                          financialDocNumber.trim() &&
+                          !salesOrderNumber.trim()
+                        ) {
+                          setSalesOrderNumber(financialDocNumber.trim());
+                          setFinancialDocNumber('');
+                        }
+                        setFinancialDocType(opt);
+                        setShowFinancialDocDropdown(false);
+                      }}
                     >
                       <Text style={[styles.dropdownItemText, { color: financialDocType === opt ? colors.yellow : theme.text }]}>{opt}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
+              )}
+              {financialDocType === 'Invoice' && (
+                <TextInput
+                  style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, marginTop: 8 }]}
+                  placeholder="Sales order it came from, e.g. SO 16617"
+                  placeholderTextColor={theme.muted}
+                  value={salesOrderNumber}
+                  onChangeText={setSalesOrderNumber}
+                />
               )}
               <TextInput
                 style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, marginTop: 8 }]}
@@ -1632,7 +1690,12 @@ function OperationalCalendar() {
                 value={financialDocNumber}
                 onChangeText={setFinancialDocNumber}
               />
-              {editingEntry && (financialDocType !== editingEntry.financial_document_type || financialDocNumber.trim() !== (editingEntry.financial_document_number ?? '')) && editingEntry.financial_document_type && editingEntry.financial_document_number && (
+              {editingEntry &&
+                editingEntry.financial_document_type &&
+                editingEntry.financial_document_number &&
+                (financialDocType !== editingEntry.financial_document_type ||
+                  financialDocNumber.trim() !== (editingEntry.financial_document_number ?? '') ||
+                  salesOrderNumber.trim() !== (editingEntry.sales_order_number ?? '')) && (
                 <Text style={[styles.rangeHint, { color: theme.subtext, marginTop: 8, marginBottom: 0 }]}>
                   Any other days sharing the current document will be offered the same change when you save.
                 </Text>
@@ -1659,10 +1722,9 @@ const styles = StyleSheet.create({
   headerLandscape: { paddingTop: 24, paddingBottom: 8 },
   headerTitle: { fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4, minWidth: 24 },
-  deleteModeBtn: {
+  headerIconBtn: {
     width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
   },
-  deleteModeBtnActive: { backgroundColor: '#ef4444' },
   techPicker: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, height: 46,
@@ -1671,6 +1733,15 @@ const styles = StyleSheet.create({
   techPickerText: { flex: 1, fontSize: 14, fontWeight: '600' },
   readOnlyNote: { fontSize: 12, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
   dragHint: { fontSize: 11.5, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
+  selectionBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 16,
+    borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, height: 44,
+    marginHorizontal: 16, marginBottom: 8,
+  },
+  selectionText: { flex: 1, fontSize: 12.5, fontWeight: '600' },
+  selectionCopy: { color: DRAG_FILL_BORDER, fontWeight: '700', fontSize: 13 },
+  selectionDeleteBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  selectionDelete: { color: '#ef4444', fontWeight: '700', fontSize: 13 },
   colourBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 8 },
   colourBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, height: 40 },
   colourBtnText: { fontSize: 14, fontWeight: '600' },
@@ -1699,8 +1770,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, padding: 4, overflow: 'hidden',
   },
   dayCellFillHighlight: { borderWidth: 2, borderColor: DRAG_FILL_BORDER, backgroundColor: DRAG_FILL_TINT },
-  dayCellDragSource: { borderWidth: 2, borderColor: DRAG_SOURCE_BORDER },
-  dayCellDeleteHighlight: { borderWidth: 2, borderColor: DRAG_DELETE_BORDER, backgroundColor: DRAG_DELETE_TINT },
+  dayCellDragSource: { borderWidth: 2, borderColor: DRAG_SOURCE_BORDER, backgroundColor: DRAG_FILL_TINT },
   dayCellContent: { marginTop: 4, gap: 6 },
   dayNumber: { fontSize: 18, fontWeight: '700', color: CELL_TEXT_DARK },
   cellMineName: { fontSize: 15.5, fontWeight: '700', lineHeight: 19, color: CELL_TEXT_DARK, textAlign: 'center' },
