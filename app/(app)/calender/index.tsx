@@ -1247,15 +1247,31 @@ function OperationalCalendar() {
                               </Text>
                             </View>
                           )}
-                          {financialDocParts(
-                            entry.financial_document_type,
-                            entry.financial_document_number,
-                            entry.sales_order_number
-                          ).map(p => (
-                            <Text key={p.abbr + p.value} style={styles.cellInvoiceText} numberOfLines={1}>
-                              {`${p.abbr} ${p.value}`.trim()}
-                            </Text>
-                          ))}
+                          {(() => {
+                            const docs = financialDocParts(
+                              entry.financial_document_type,
+                              entry.financial_document_number,
+                              entry.sales_order_number
+                            );
+                            if (docs.length === 0) return null;
+                            const sideBySide = docs.length > 1;
+                            // Sales Order + Invoice sit side by side on one row
+                            return (
+                              <View style={styles.cellDocRow}>
+                                {docs.map(p => (
+                                  <Text
+                                    key={p.abbr + p.value}
+                                    style={[styles.cellInvoiceText, sideBySide && styles.cellInvoiceTextSide]}
+                                    numberOfLines={1}
+                                    adjustsFontSizeToFit
+                                    minimumFontScale={0.6}
+                                  >
+                                    {`${p.abbr} ${p.value}`.trim()}
+                                  </Text>
+                                ))}
+                              </View>
+                            );
+                          })()}
                         </View>
                       )}
                     </TouchableOpacity>
@@ -1782,7 +1798,9 @@ const styles = StyleSheet.create({
   cellCommentText: { fontSize: 13, fontWeight: '700', color: CELL_TEXT_DARK, textAlign: 'center', lineHeight: 16 },
   cellPill: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, marginTop: 2 },
   cellPillText: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
-  cellInvoiceText: { fontSize: 13, fontWeight: '700', color: INVOICE_COLOR, marginTop: 4, textAlign: 'center' },
+  cellInvoiceText: { fontSize: 13, fontWeight: '700', color: INVOICE_COLOR, textAlign: 'center' },
+  cellInvoiceTextSide: { flex: 1, fontSize: 11 },
+  cellDocRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 4 },
   pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   pickerSheet: { width: '100%', maxWidth: 420, borderRadius: 16, borderWidth: 1, padding: 16 },
   pickerTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },

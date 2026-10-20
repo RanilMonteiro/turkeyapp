@@ -296,6 +296,11 @@ const CSS = `
   .top .mine { text-align: center; padding: 0; margin-top: calc(1pt * var(--s)); }
   .sub { text-align: center; }
 
+  /* Sales Order + Invoice side by side on one row */
+  .inv { display: flex; flex-direction: row; justify-content: center; align-items: baseline; gap: calc(5pt * var(--s)); }
+  .inv div { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+  .inv.two { font-size: calc(6.5pt * var(--s)); }
+
   /* Greyed-out days outside the month */
   .cell.pad { background: #e2e8f0; }
   .cell.pad .day { color: #94a3b8; font-weight: 700; }
@@ -351,7 +356,7 @@ function cellHtml(
       ${entry.testing_type ? `<div class="pill test">${esc(entry.testing_type)}</div>` : ''}
       ${entry.tam_status ? `<div class="pill tam">${esc(entry.tam_status)}</div>` : ''}
       </div>
-      ${doc ? `<div class="inv">${doc}</div>` : ''}
+      ${doc ? `<div class="inv${docParts.length > 1 ? ' two' : ''}">${doc}</div>` : ''}
     </div>`;
 }
 
@@ -376,7 +381,8 @@ function estimateEntryHeight(e: PdfEntry): number {
   if (e.comments) h += 7 + 7.1 * lines(e.comments, 24);
   if (e.testing_type) h += 13.1;
   if (e.tam_status) h += 13.1;
-  h += 10.6 * financialDocParts(e.financial_document_type, e.financial_document_number, e.sales_order_number).length;
+  // Sales Order + Invoice share one row, so the document area is a single line.
+  if (financialDocParts(e.financial_document_type, e.financial_document_number, e.sales_order_number).length > 0) h += 10.6;
   return h;
 }
 
