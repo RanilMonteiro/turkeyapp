@@ -336,9 +336,10 @@ function cellHtml(
     entry.financial_document_number,
     entry.sales_order_number
   );
-  const doc = docParts
-    .map(p => `<div>${esc(`${p.abbr} ${p.value}`.trim())}</div>`)
-    .join('');
+  // Sales Order + Invoice share one centred line: "SO 234   INV 344"
+  const doc = docParts.length
+    ? `<div>${docParts.map(p => esc(`${p.abbr} ${p.value}`.trim())).join('&nbsp;&nbsp;&nbsp;')}</div>`
+    : '';
 
   // Note-only days have no site name, so just the day number is shown on top.
   const mineHtml = entry.mine_name
