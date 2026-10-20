@@ -304,6 +304,10 @@ const CSS = `
   /* Greyed-out days outside the month */
   .cell.pad { background: #e2e8f0; }
   .cell.pad .day { color: #94a3b8; font-weight: 700; }
+
+  /* Empty Saturdays / Sundays */
+  .cell.weekend { background: #d5dbe3; }
+  .cell.weekend .day { color: #64748b; font-weight: 700; }
 `;
 
 // Long site names are printed smaller so they stay on fewer lines and never
@@ -329,7 +333,14 @@ function cellHtml(
     leaveType !== undefined
       ? `<div class="leave"><b>LEAVE</b>${leaveType ? `<span>${esc(leaveType)}</span>` : ''}</div>`
       : '';
-  if (!entry) return `<div class="cell"${styleAttr}><div class="day">${day}</div>${leaveHtml}</div>`;
+  if (!entry) {
+    // Empty Saturdays/Sundays are greyed out. As soon as the day has
+    // anything on it (a colour, approved leave, or an entry below) it
+    // is drawn normally.
+    const dow = new Date(dateStr + 'T00:00:00').getDay();
+    const emptyWeekend = (dow === 0 || dow === 6) && !colourKey && leaveType === undefined;
+    return `<div class="cell${emptyWeekend ? ' weekend' : ''}"${styleAttr}><div class="day">${day}</div>${leaveHtml}</div>`;
+  }
 
   const docParts = financialDocParts(
     entry.financial_document_type,

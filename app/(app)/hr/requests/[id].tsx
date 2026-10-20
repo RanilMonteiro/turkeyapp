@@ -787,6 +787,18 @@ function cancelSubmission() {
             </View>
           )}
 
+          {/* Waiting message — this user has a step on the request, but an
+              earlier approver hasn't actioned theirs yet. */}
+          {!isFinal && !myPendingApproval && activeApproval &&
+            approvals.some(a => a.approver_id === currentUserId && a.status === 'pending') && (
+            <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>Waiting on previous approver</Text>
+              <Text style={[styles.actionHint, { color: theme.subtext }]}>
+                Waiting for {activeApproval.approver?.full_name ?? 'the approver before you'} (Step {activeApproval.approval_order}) to approve first. You'll be able to approve or decline once they have.
+              </Text>
+            </View>
+          )}
+
           {/* Action Buttons — shown for the current user's own assigned
               step, OR for a superuser who has selected an override target */}
           {canAct && (
