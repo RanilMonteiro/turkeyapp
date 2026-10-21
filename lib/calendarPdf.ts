@@ -24,6 +24,21 @@ export const HIGHLIGHT_COLOURS = [
 ] as const;
 export type HighlightKey = (typeof HIGHLIGHT_COLOURS)[number]['key'];
 
+// One colour per testing type / TAM status (7 in total). Deliberately deep,
+// solid colours with white text so they never get confused with the pastel
+// day highlights above. Used by the screen AND the PDF.
+export const OPTION_COLOURS: Record<string, string> = {
+  'Brake Testing': '#0f766e',
+  'Lux Testing': '#ea580c',
+  'Brake and Lux Testing': '#4338ca',
+  'Inspections': '#a21caf',
+  'On TAM': '#4d7c0f',
+  'Not On TAM': '#7c2d12',
+  'Brake and Inspection': '#be123c',
+};
+export const optionColour = (name: string | null | undefined): string =>
+  (name && OPTION_COLOURS[name]) || '#475569';
+
 const COLOUR_HEX: Record<string, string> = Object.fromEntries(
   HIGHLIGHT_COLOURS.map(c => [c.key, c.color])
 );
@@ -366,8 +381,8 @@ function cellHtml(
       ${entry.contact_person ? `<div class="sub">${esc(entry.contact_person)}</div>` : ''}
       ${entry.contact_number ? `<div class="sub">${esc(entry.contact_number)}</div>` : ''}
       ${entry.comments ? `<div class="comment">${esc(entry.comments)}</div>` : ''}
-      ${entry.testing_type ? `<div class="pill test">${esc(entry.testing_type)}</div>` : ''}
-      ${entry.tam_status ? `<div class="pill tam">${esc(entry.tam_status)}</div>` : ''}
+      ${entry.testing_type ? `<div class="pill" style="background:${optionColour(entry.testing_type)};color:#fff;">${esc(entry.testing_type)}</div>` : ''}
+      ${entry.tam_status ? `<div class="pill" style="background:${optionColour(entry.tam_status)};color:#fff;">${esc(entry.tam_status)}</div>` : ''}
       </div>
       ${doc ? `<div class="inv${docParts.length > 1 ? ' two' : ''}">${doc}</div>` : ''}
     </div>`;

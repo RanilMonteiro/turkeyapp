@@ -1,16 +1,17 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import RequirePermission from '../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput, useWindowDimensions,
   PanResponder, GestureResponderEvent,
+  BackHandler,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
 import {
-  exportCalendarPdf, PdfScope, HIGHLIGHT_COLOURS, HighlightKey,
+  exportCalendarPdf, PdfScope, HIGHLIGHT_COLOURS, HighlightKey, optionColour,
   financialDocParts, adjacentDayNumber,
 } from '../../../lib/calendarPdf';
 import DatePickerField from '../../../components/DatepickerField';
@@ -26,8 +27,6 @@ const colors = {
 };
 
 // Matches the green / tan / red color coding from the spreadsheet.
-const TESTING_TYPE_COLOR = { bg: '#d1fae5', text: '#059669' };
-const TAM_STATUS_COLOR = { bg: '#fef3c7', text: '#b45309' };
 const INVOICE_COLOR = '#dc2626';
 const DAY_HEADER_BG = '#1e293b';
 
@@ -286,6 +285,8 @@ function OperationalCalendar() {
   const [dragInfo, setDragInfo] = useState<DragInfo | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [clipboard, setClipboard] = useState<Clipboard | null>(null);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
 
   const gridRef = useRef<View>(null);
   const gridOriginRef = useRef({ pageX: 0, pageY: 0 });
@@ -310,6 +311,24 @@ function OperationalCalendar() {
     paintColor: null as PaintColor | null,
     leaveDays: {} as Record<string, string>,
   });
+
+  // Phone back button: close whatever is open on top of the calendar first
+  // (pop-ups, a pending paste, highlighted days) so it returns to the calendar
+  // instead of leaving the screen.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (showMonthPicker) { setShowMonthPicker(false); return true; }
+      if (showTechDropdown) { setShowTechDropdown(false); return true; }
+      if (exportModalVisible && !exporting) { setExportModalVisible(false); return true; }
+      if (entryModalVisible) { setEntryModalVisible(false); return true; }
+      if (detailEntry) { setDetailEntry(null); return true; }
+      if (clipboard) { setClipboard(null); return true; }
+      if (selection) { setSelection(null); return true; }
+      if (paintColor) { setPaintColor(null); return true; }
+      return false;
+    });
+    return () => sub.remove();
+  }, [showMonthPicker, showTechDropdown, exportModalVisible, exporting, entryModalVisible, detailEntry, clipboard, selection, paintColor]);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -1298,9 +1317,15 @@ function OperationalCalendar() {
           <TouchableOpacity onPress={goToPreviousMonth} style={styles.monthNavBtn}>
             <ChevronLeft color={colors.yellow} size={22} />
           </TouchableOpacity>
-          <Text style={[styles.monthNavLabel, { color: theme.text }]}>
-            {new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
-          </Text>
+          <TouchableOpacity
+            onPress={() => { setPickerYear(viewDate.year); setShowMonthPicker(true); }}
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 160 }}
+          >
+            <Text style={[styles.monthNavLabel, { color: theme.text, minWidth: 0 }]}>
+              {new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
+            </Text>
+            <ChevronDown color={theme.muted} size={16} />
+          </TouchableOpacity>
           <TouchableOpacity onPress={goToNextMonth} style={styles.monthNavBtn}>
             <ChevronRight color={colors.yellow} size={22} />
           </TouchableOpacity>
@@ -1421,15 +1446,15 @@ function OperationalCalendar() {
                             </View>
                           )}
                           {entry.testing_type && (
-                            <View style={[styles.cellPill, { backgroundColor: TESTING_TYPE_COLOR.bg }]}>
-                              <Text style={[styles.cellPillText, { color: TESTING_TYPE_COLOR.text }]} numberOfLines={1}>
+                            <View style={[styles.cellPill, { backgroundColor: optionColour(entry.testing_type) }]}>
+                              <Text style={[styles.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
                                 {entry.testing_type}
                               </Text>
                             </View>
                           )}
                           {entry.tam_status && (
-                            <View style={[styles.cellPill, { backgroundColor: TAM_STATUS_COLOR.bg }]}>
-                              <Text style={[styles.cellPillText, { color: TAM_STATUS_COLOR.text }]} numberOfLines={1}>
+                            <View style={[styles.cellPill, { backgroundColor: optionColour(entry.tam_status) }]}>
+                              <Text style={[styles.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
                                 {entry.tam_status}
                               </Text>
                             </View>
@@ -1463,6 +1488,47 @@ function OperationalCalendar() {
           </View>
         </ScrollView>
       </View>
+
+      {/* Jump to any month / year */}
+      <Modal visible={showMonthPicker} transparent animationType="fade" onRequestClose={() => setShowMonthPicker(false)}>
+        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowMonthPicker(false)}>
+          <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <TouchableOpacity onPress={() => setPickerYear(y => y - 1)} style={styles.monthNavBtn}>
+                <ChevronLeft color={colors.yellow} size={22} />
+              </TouchableOpacity>
+              <Text style={[styles.pickerTitle, { color: theme.text, marginBottom: 0 }]}>{pickerYear}</Text>
+              <TouchableOpacity onPress={() => setPickerYear(y => y + 1)} style={styles.monthNavBtn}>
+                <ChevronRight color={colors.yellow} size={22} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {Array.from({ length: 12 }, (_, m) => {
+                const isCurrent = viewDate.year === pickerYear && viewDate.month === m;
+                return (
+                  <TouchableOpacity
+                    key={m}
+                    style={{
+                      width: '31%', paddingVertical: 14, borderRadius: 10, borderWidth: 1, alignItems: 'center',
+                      borderColor: isCurrent ? colors.yellow : theme.border,
+                      backgroundColor: isCurrent ? `${colors.yellow}20` : theme.input,
+                    }}
+                    onPress={() => {
+                      setSelection(null);
+                      setViewDate({ year: pickerYear, month: m });
+                      setShowMonthPicker(false);
+                    }}
+                  >
+                    <Text style={{ color: isCurrent ? colors.yellow : theme.text, fontWeight: '700', fontSize: 14 }}>
+                      {new Date(pickerYear, m, 1).toLocaleDateString('en-ZA', { month: 'short' })}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Technician picker modal */}
       <Modal visible={showTechDropdown} transparent animationType="fade" onRequestClose={() => setShowTechDropdown(false)}>
@@ -1642,13 +1708,13 @@ function OperationalCalendar() {
                     </View>
                   )}
                   {detailEntry.testing_type && (
-                    <View style={[styles.pill, { backgroundColor: TESTING_TYPE_COLOR.bg }]}>
-                      <Text style={[styles.pillText, { color: TESTING_TYPE_COLOR.text }]}>{detailEntry.testing_type}</Text>
+                    <View style={[styles.pill, { backgroundColor: optionColour(detailEntry.testing_type) }]}>
+                      <Text style={[styles.pillText, { color: '#ffffff' }]}>{detailEntry.testing_type}</Text>
                     </View>
                   )}
                   {detailEntry.tam_status && (
-                    <View style={[styles.pill, { backgroundColor: TAM_STATUS_COLOR.bg }]}>
-                      <Text style={[styles.pillText, { color: TAM_STATUS_COLOR.text }]}>{detailEntry.tam_status}</Text>
+                    <View style={[styles.pill, { backgroundColor: optionColour(detailEntry.tam_status) }]}>
+                      <Text style={[styles.pillText, { color: '#ffffff' }]}>{detailEntry.tam_status}</Text>
                     </View>
                   )}
                 </View>
@@ -1840,7 +1906,14 @@ function OperationalCalendar() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TESTING TYPE</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TESTING TYPE</Text>
+                {testingType ? (
+                  <TouchableOpacity onPress={() => { setTestingType(null); setShowTestingTypeDropdown(false); }} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+                    <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700' }}>Clear</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
               <TouchableOpacity
                 style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
                 onPress={() => setShowTestingTypeDropdown(!showTestingTypeDropdown)}
@@ -1858,7 +1931,10 @@ function OperationalCalendar() {
                       style={[styles.dropdownItem, { borderBottomColor: theme.border }, testingType === opt && { backgroundColor: `${colors.yellow}20` }]}
                       onPress={() => { setTestingType(opt); setShowTestingTypeDropdown(false); }}
                     >
-                      <Text style={[styles.dropdownItemText, { color: testingType === opt ? colors.yellow : theme.text }]}>{opt}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: optionColour(opt) }} />
+                        <Text style={[styles.dropdownItemText, { color: testingType === opt ? colors.yellow : theme.text }]}>{opt}</Text>
+                      </View>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1866,7 +1942,14 @@ function OperationalCalendar() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TAM STATUS</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TAM STATUS</Text>
+                {tamStatus ? (
+                  <TouchableOpacity onPress={() => { setTamStatus(null); setShowTamStatusDropdown(false); }} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+                    <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700' }}>Clear</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
               <TouchableOpacity
                 style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
                 onPress={() => setShowTamStatusDropdown(!showTamStatusDropdown)}
@@ -1884,7 +1967,10 @@ function OperationalCalendar() {
                       style={[styles.dropdownItem, { borderBottomColor: theme.border }, tamStatus === opt && { backgroundColor: `${colors.yellow}20` }]}
                       onPress={() => { setTamStatus(opt); setShowTamStatusDropdown(false); }}
                     >
-                      <Text style={[styles.dropdownItemText, { color: tamStatus === opt ? colors.yellow : theme.text }]}>{opt}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: optionColour(opt) }} />
+                        <Text style={[styles.dropdownItemText, { color: tamStatus === opt ? colors.yellow : theme.text }]}>{opt}</Text>
+                      </View>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1892,7 +1978,14 @@ function OperationalCalendar() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>FINANCIAL DOCUMENT</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>FINANCIAL DOCUMENT</Text>
+                {(financialDocType || financialDocNumber || salesOrderNumber) ? (
+                  <TouchableOpacity onPress={() => { setFinancialDocType(null); setFinancialDocNumber(''); setSalesOrderNumber(''); setShowFinancialDocDropdown(false); }} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+                    <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700' }}>Clear</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
               <TouchableOpacity
                 style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
                 onPress={() => setShowFinancialDocDropdown(!showFinancialDocDropdown)}
