@@ -3,11 +3,11 @@ import RequirePermission from '../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput, useWindowDimensions,
-  PanResponder, GestureResponderEvent,
+  PanResponder, GestureResponderEvent, Platform,
   BackHandler,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check } from 'lucide-react-native';
+import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check, Search } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { notify, confirm } from '../../../lib/notify';
 import {
@@ -110,6 +110,74 @@ type DragInfo =
   | { type: 'paint'; color: PaintColor; dates: string[] };
 
 // What stays highlighted after the finger lifts (until copied, deleted or cleared).
+// ---- Site search (across every technician) ----
+type SearchRow = {
+  id: string;
+  technician_id: string;
+  entry_date: string;
+  mine_name: string | null;
+  testing_type: string | null;
+  tam_status: string | null;
+  technician?: { full_name: string | null } | null;
+};
+type SearchRange = {
+  techId: string; techName: string; start: string; end: string; days: number;
+  testing: string | null; tam: string | null;
+};
+type SearchGroup = { key: string; site: string; ranges: SearchRange[]; techCount: number; dayCount: number };
+
+// Turns raw rows into: one group per site -> tidy date ranges per technician
+// (back-to-back days, and Fri -> Mon, are merged into one line "12 – 16 Oct").
+function buildSearchGroups(rows: SearchRow[]): SearchGroup[] {
+  const sorted = [...rows].sort((a, b) =>
+    (a.mine_name ?? '').trim().toLowerCase().localeCompare((b.mine_name ?? '').trim().toLowerCase()) ||
+    a.technician_id.localeCompare(b.technician_id) ||
+    a.entry_date.localeCompare(b.entry_date)
+  );
+  const groups = new Map<string, SearchGroup>();
+  const last = new Map<string, SearchRange>();
+  for (const r of sorted) {
+    const site = (r.mine_name ?? '').trim() || 'Unnamed site';
+    const key = site.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { key, site, ranges: [], techCount: 0, dayCount: 0 });
+    const g = groups.get(key)!;
+    g.dayCount++;
+    const lk = `${key}|${r.technician_id}`;
+    const prev = last.get(lk);
+    const gap = prev ? diffDays(prev.end, r.entry_date) : 0;
+    const prevIsFriday = prev ? new Date(prev.end + 'T00:00:00').getDay() === 5 : false;
+    if (prev && prev.testing === r.testing_type && prev.tam === r.tam_status && (gap === 1 || (gap === 3 && prevIsFriday))) {
+      prev.end = r.entry_date;
+      prev.days++;
+    } else {
+      const range: SearchRange = {
+        techId: r.technician_id,
+        techName: r.technician?.full_name ?? 'Unknown technician',
+        start: r.entry_date, end: r.entry_date, days: 1,
+        testing: r.testing_type, tam: r.tam_status,
+      };
+      g.ranges.push(range);
+      last.set(lk, range);
+    }
+  }
+  const out = Array.from(groups.values());
+  out.forEach(g => {
+    g.ranges.sort((a, b) => a.start.localeCompare(b.start) || a.techName.localeCompare(b.techName));
+    g.techCount = new Set(g.ranges.map(r => r.techId)).size;
+  });
+  return out.sort((a, b) => a.site.localeCompare(b.site));
+}
+
+function formatRangeLabel(start: string, end: string): string {
+  const s = new Date(start + 'T00:00:00');
+  const e = new Date(end + 'T00:00:00');
+  if (start === end) return s.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
+  const left = s.toLocaleDateString('en-ZA', sameMonth ? { day: 'numeric' } : { day: 'numeric', month: 'short' });
+  const right = e.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${left} – ${right}`;
+}
+
 type Selection = { sourceDate: string; dates: string[] };
 
 // Entries picked up with Copy / Move, waiting to be pasted. Each item keeps its
@@ -286,6 +354,12 @@ function OperationalCalendar() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [clipboard, setClipboard] = useState<Clipboard | null>(null);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchScope, setSearchScope] = useState<'upcoming' | 'all'>('upcoming');
+  const [searchRows, setSearchRows] = useState<SearchRow[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchCapped, setSearchCapped] = useState(false);
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
 
   const gridRef = useRef<View>(null);
@@ -317,6 +391,7 @@ function OperationalCalendar() {
   // instead of leaving the screen.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (showSearch) { setShowSearch(false); return true; }
       if (showMonthPicker) { setShowMonthPicker(false); return true; }
       if (showTechDropdown) { setShowTechDropdown(false); return true; }
       if (exportModalVisible && !exporting) { setExportModalVisible(false); return true; }
@@ -328,7 +403,63 @@ function OperationalCalendar() {
       return false;
     });
     return () => sub.remove();
-  }, [showMonthPicker, showTechDropdown, exportModalVisible, exporting, entryModalVisible, detailEntry, clipboard, selection, paintColor]);
+  }, [showSearch, showMonthPicker, showTechDropdown, exportModalVisible, exporting, entryModalVisible, detailEntry, clipboard, selection, paintColor]);
+
+  // Ctrl+F / Cmd+F opens the site search (web only; not for technicians)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || role === 'technician') return;
+    const doc: any = (globalThis as any).document;
+    if (!doc) return;
+    const onKey = (e: any) => {
+      if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'f') {
+        e.preventDefault();
+        setShowSearch(true);
+      } else if (e.key === 'Escape') {
+        setShowSearch(false);
+      }
+    };
+    doc.addEventListener('keydown', onKey);
+    return () => doc.removeEventListener('keydown', onKey);
+  }, [role]);
+
+  // Search every technician's calendar for a site name (debounced)
+  useEffect(() => {
+    if (!showSearch) return;
+    const q = searchQuery.trim();
+    if (q.length < 2) { setSearchRows([]); setSearchCapped(false); setSearchLoading(false); return; }
+    let cancelled = false;
+    setSearchLoading(true);
+    const t = setTimeout(async () => {
+      const safe = q.replace(/[\\%_,()]/g, ' ');
+      let query = supabase
+        .from('operational_calendar_entries')
+        .select('id, technician_id, entry_date, mine_name, testing_type, tam_status, technician:technician_id(full_name)')
+        .ilike('mine_name', `%${safe}%`)
+        .order('entry_date', { ascending: true })
+        .limit(600);
+      if (searchScope === 'upcoming') {
+        const n = new Date();
+        const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+        query = query.gte('entry_date', today);
+      }
+      const { data, error } = await query;
+      if (cancelled) return;
+      setSearchLoading(false);
+      if (error) { notify('Search failed', error.message); return; }
+      setSearchRows((data as any) ?? []);
+      setSearchCapped((data?.length ?? 0) >= 600);
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [searchQuery, searchScope, showSearch]);
+
+  function openSearchResult(r: SearchRange) {
+    setSelection(null);
+    setClipboard(null);
+    const d = new Date(r.start + 'T00:00:00');
+    setViewDate({ year: d.getFullYear(), month: d.getMonth() });
+    setSelectedTechnicianId(r.techId);
+    setShowSearch(false);
+  }
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -1155,6 +1286,11 @@ function OperationalCalendar() {
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: theme.text }]}>Operational Calendar</Text>
           <View style={styles.headerActions}>
+            {role !== 'technician' && (
+              <TouchableOpacity onPress={() => setShowSearch(true)} style={styles.headerIconBtn}>
+                <Search color={colors.yellow} size={20} />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity onPress={() => setExportModalVisible(true)} style={styles.headerIconBtn}>
               <FileDown color={colors.yellow} size={20} />
             </TouchableOpacity>
@@ -1488,6 +1624,116 @@ function OperationalCalendar() {
           </View>
         </ScrollView>
       </View>
+
+      {/* Site search - every technician at once */}
+      <Modal visible={showSearch} transparent animationType="fade" onRequestClose={() => setShowSearch(false)}>
+        <View style={styles.pickerOverlay}>
+          <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border, maxWidth: 680, height: '85%' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.input, borderRadius: 10, paddingHorizontal: 10 }}>
+                <Search color={theme.muted} size={16} />
+                <TextInput
+                  autoFocus
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search a site (e.g. Redpath)…"
+                  placeholderTextColor={theme.muted}
+                  style={{ flex: 1, color: theme.text, paddingVertical: 10, fontSize: 15 }}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <X color={theme.muted} size={16} />
+                  </TouchableOpacity>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => setShowSearch(false)}>
+                <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 14 }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              {(['upcoming', 'all'] as const).map(sc => (
+                <TouchableOpacity
+                  key={sc}
+                  onPress={() => setSearchScope(sc)}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999, borderWidth: 1,
+                    borderColor: searchScope === sc ? colors.yellow : theme.border,
+                    backgroundColor: searchScope === sc ? `${colors.yellow}20` : 'transparent',
+                  }}
+                >
+                  <Text style={{ color: searchScope === sc ? colors.yellow : theme.subtext, fontSize: 12.5, fontWeight: '700' }}>
+                    {sc === 'upcoming' ? 'Upcoming' : 'All dates'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+              {searchQuery.trim().length < 2 ? (
+                <Text style={{ color: theme.subtext, padding: 12 }}>Type at least 2 letters of a site name to see every technician booked there.</Text>
+              ) : searchLoading ? (
+                <ActivityIndicator color={colors.yellow} style={{ marginTop: 24 }} />
+              ) : searchRows.length === 0 ? (
+                <Text style={{ color: theme.subtext, padding: 12 }}>
+                  No {searchScope === 'upcoming' ? 'upcoming ' : ''}entries found for “{searchQuery.trim()}”.
+                </Text>
+              ) : (
+                (() => {
+                  const n = new Date();
+                  const todayLocal = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+                  return buildSearchGroups(searchRows).map(g => (
+                  <View key={g.key} style={{ marginBottom: 16 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', paddingBottom: 6, borderBottomWidth: 2, borderBottomColor: colors.yellow }}>
+                      <Text style={{ color: theme.text, fontSize: 15, fontWeight: '800', flex: 1 }} numberOfLines={1}>{g.site}</Text>
+                      <Text style={{ color: theme.subtext, fontSize: 12, fontWeight: '600' }}>
+                        {g.dayCount} day{g.dayCount === 1 ? '' : 's'} · {g.techCount} technician{g.techCount === 1 ? '' : 's'}
+                      </Text>
+                    </View>
+                    {g.ranges.map((r, i) => {
+                      const isPast = r.end < todayLocal;
+                      return (
+                        <TouchableOpacity
+                          key={`${r.techId}-${r.start}-${i}`}
+                          onPress={() => openSearchResult(r)}
+                          style={{ paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: theme.border, opacity: isPast ? 0.55 : 1 }}
+                        >
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                            <Text style={{ color: theme.text, fontSize: 13.5, fontWeight: '700', flexShrink: 1 }}>
+                              {formatRangeLabel(r.start, r.end)}
+                            </Text>
+                            {r.days > 1 && (
+                              <Text style={{ color: theme.subtext, fontSize: 11.5, fontWeight: '600' }}>{r.days} days</Text>
+                            )}
+                          </View>
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                            <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '700' }}>{r.techName}</Text>
+                            {!!r.testing && (
+                              <View style={{ backgroundColor: optionColour(r.testing), borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                                <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>{r.testing}</Text>
+                              </View>
+                            )}
+                            {!!r.tam && (
+                              <View style={{ backgroundColor: optionColour(r.tam), borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                                <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>{r.tam}</Text>
+                              </View>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  ));
+                })()
+              )}
+              {searchCapped && (
+                <Text style={{ color: theme.subtext, fontSize: 12, padding: 8 }}>Showing the first 600 matches — type more of the site name to narrow it down.</Text>
+              )}
+            </ScrollView>
+            <Text style={{ color: theme.muted, fontSize: 11.5, marginTop: 8 }}>Tap a result to jump to that technician and month.</Text>
+          </View>
+        </View>
+      </Modal>
 
       {/* Jump to any month / year */}
       <Modal visible={showMonthPicker} transparent animationType="fade" onRequestClose={() => setShowMonthPicker(false)}>
