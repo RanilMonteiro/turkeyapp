@@ -20,6 +20,7 @@ export const HIGHLIGHT_COLOURS = [
   { key: 'green', label: 'Not complete', color: '#b6d7a8' },
   { key: 'red', label: 'Not done', color: '#e57373' },
   { key: 'pink', label: 'Medical / Inductions / Training', color: '#f4b6d2' },
+  { key: 'grey', label: 'Public holiday', color: '#b4b9c0' },
 ] as const;
 export type HighlightKey = (typeof HIGHLIGHT_COLOURS)[number]['key'];
 

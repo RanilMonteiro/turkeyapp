@@ -79,7 +79,9 @@ const COLOUR_HEX = Object.fromEntries(HIGHLIGHT_COLOURS.map(c => [c.key, c.color
 const COLOUR_LABEL = Object.fromEntries(HIGHLIGHT_COLOURS.map(c => [c.key, c.label])) as Record<HighlightKey, string>;
 type PaintColor = HighlightKey | 'erase';
 
-type Technician = { id: string; full_name: string };
+type Technician = { id: string; full_name: string; branch_id?: string | null };
+type BranchOption = { id: string; name: string };
+const UNASSIGNED_BRANCH = '__unassigned__';
 
 // Sites (from the Sites screen) that can be picked for a calendar entry, plus
 // each site's contacts, which fill the contact person / number fields.
@@ -188,6 +190,9 @@ function OperationalCalendar() {
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [selectedTechnicianId, setSelectedTechnicianId] = useState<string | null>(null);
   const [showTechDropdown, setShowTechDropdown] = useState(false);
+  // Technician picker is two steps: pick a branch (Field Service / Head Office), then a technician
+  const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
+  const [pickerBranchId, setPickerBranchId] = useState<string | null>(null);
 
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
   const [sites, setSites] = useState<SiteOption[]>([]);
@@ -344,9 +349,17 @@ function OperationalCalendar() {
       const { data: me } = await supabase.from('profiles').select('id, full_name').eq('id', uid).single();
       if (me) setTechnicians([me]);
     } else {
+      // Only the two branches the calendar is organised by
+      const { data: allBranches } = await supabase.from('branches').select('id, name').order('name');
+      const wanted = (allBranches ?? []).filter((b: any) => {
+        const n = String(b.name).trim().toLowerCase();
+        return n.startsWith('field service') || n.startsWith('head office');
+      });
+      setBranchOptions(wanted);
+
       const { data: techs } = await supabase
         .from('profiles')
-        .select('id, full_name')
+        .select('id, full_name, branch_id')
         .eq('role', 'technician')
         .order('full_name');
       if (techs) setTechnicians(techs);
@@ -988,7 +1001,7 @@ function OperationalCalendar() {
         {role !== 'technician' && (
           <TouchableOpacity
             style={[styles.techPicker, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => setShowTechDropdown(true)}
+            onPress={() => { setPickerBranchId(null); setShowTechDropdown(true); }}
           >
             <User color={colors.yellow} size={16} />
             <Text style={[styles.techPickerText, { color: theme.text }]}>
@@ -1288,18 +1301,76 @@ function OperationalCalendar() {
       <Modal visible={showTechDropdown} transparent animationType="fade" onRequestClose={() => setShowTechDropdown(false)}>
         <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowTechDropdown(false)}>
           <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.pickerTitle, { color: theme.text }]}>Select Technician</Text>
-            <ScrollView style={{ maxHeight: 360 }}>
-              {technicians.map(t => (
-                <TouchableOpacity
-                  key={t.id}
-                  style={[styles.dropdownItem, { borderBottomColor: theme.border }, selectedTechnicianId === t.id && { backgroundColor: `${colors.yellow}20` }]}
-                  onPress={() => { setSelection(null); setSelectedTechnicianId(t.id); setShowTechDropdown(false); }}
-                >
-                  <Text style={[styles.dropdownItemText, { color: selectedTechnicianId === t.id ? colors.yellow : theme.text }]}>{t.full_name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            {(() => {
+              // No Field Service / Head Office branches set up yet -> plain technician list
+              const useBranches = branchOptions.length > 0;
+              const inBranch = (t: Technician) =>
+                pickerBranchId === UNASSIGNED_BRANCH
+                  ? !t.branch_id || !branchOptions.some(bo => bo.id === t.branch_id)
+                  : t.branch_id === pickerBranchId;
+              const unassignedCount = technicians.filter(t => !t.branch_id || !branchOptions.some(bo => bo.id === t.branch_id)).length;
+              const showingTechs = !useBranches || pickerBranchId !== null;
+              const list = !useBranches ? technicians : technicians.filter(inBranch);
+              const branchTitle = pickerBranchId === UNASSIGNED_BRANCH
+                ? 'No branch'
+                : branchOptions.find(bo => bo.id === pickerBranchId)?.name;
+
+              return (
+                <>
+                  {showingTechs ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                      {useBranches && (
+                        <TouchableOpacity onPress={() => setPickerBranchId(null)} style={{ paddingRight: 10 }}>
+                          <Text style={{ color: colors.yellow, fontSize: 14, fontWeight: '700' }}>‹ Branches</Text>
+                        </TouchableOpacity>
+                      )}
+                      <Text style={[styles.pickerTitle, { color: theme.text, marginBottom: 0 }]}>
+                        {useBranches ? branchTitle : 'Select Technician'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={[styles.pickerTitle, { color: theme.text }]}>Select Branch</Text>
+                  )}
+                  <ScrollView style={{ maxHeight: 360 }}>
+                    {!showingTechs ? (
+                      <>
+                        {branchOptions.map(bo => (
+                          <TouchableOpacity
+                            key={bo.id}
+                            style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
+                            onPress={() => setPickerBranchId(bo.id)}
+                          >
+                            <Text style={[styles.dropdownItemText, { color: theme.text }]}>
+                              {bo.name}  ({technicians.filter(t => t.branch_id === bo.id).length})
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                        {unassignedCount > 0 && (
+                          <TouchableOpacity
+                            style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
+                            onPress={() => setPickerBranchId(UNASSIGNED_BRANCH)}
+                          >
+                            <Text style={[styles.dropdownItemText, { color: theme.subtext }]}>No branch  ({unassignedCount})</Text>
+                          </TouchableOpacity>
+                        )}
+                      </>
+                    ) : list.length === 0 ? (
+                      <Text style={{ color: theme.subtext, padding: 14 }}>No technicians in this branch.</Text>
+                    ) : (
+                      list.map(t => (
+                        <TouchableOpacity
+                          key={t.id}
+                          style={[styles.dropdownItem, { borderBottomColor: theme.border }, selectedTechnicianId === t.id && { backgroundColor: `${colors.yellow}20` }]}
+                          onPress={() => { setSelection(null); setSelectedTechnicianId(t.id); setShowTechDropdown(false); }}
+                        >
+                          <Text style={[styles.dropdownItemText, { color: selectedTechnicianId === t.id ? colors.yellow : theme.text }]}>{t.full_name}</Text>
+                        </TouchableOpacity>
+                      ))
+                    )}
+                  </ScrollView>
+                </>
+              );
+            })()}
           </View>
         </TouchableOpacity>
       </Modal>
