@@ -113,6 +113,15 @@ type DragInfo =
 // What stays highlighted after the finger lifts (until copied, deleted or cleared).
 type Selection = { sourceDate: string; dates: string[] };
 
+// Entries picked up with Copy / Move, waiting to be pasted. Each item keeps its
+// distance (in days) from the first one, so the layout is preserved wherever
+// you paste it - down a row, diagonally, another month, or another technician.
+type Clipboard = {
+  mode: 'copy' | 'move';
+  sourceTechId: string;
+  items: { offset: number; entry: CalendarEntry }[];
+};
+
 function toDateString(year: number, month: number, day: number): string {
   const mm = String(month + 1).padStart(2, '0');
   const dd = String(day).padStart(2, '0');
@@ -134,6 +143,38 @@ function expandDateRange(from: string, to: string): string[] {
     current.setDate(current.getDate() + 1);
   }
   return dates;
+}
+
+// Whole days between two yyyy-mm-dd strings (b - a), and date + n days.
+function diffDays(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
+}
+function addDaysStr(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + n));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
+}
+
+// Dragging from one day to another highlights the BLOCK of cells between
+// them on the grid (like a spreadsheet), so dragging down or diagonally
+// picks exactly the cells inside that rectangle.
+function rectDates(weeks: (string | null)[][], a: string, b: string): string[] {
+  let ar = -1, ac = -1, br = -1, bc = -1;
+  weeks.forEach((w, r) => w.forEach((d, c) => {
+    if (d === a) { ar = r; ac = c; }
+    if (d === b) { br = r; bc = c; }
+  }));
+  if (ar < 0 || br < 0) return computeRangeDates(a, b);
+  const out: string[] = [];
+  for (let r = Math.min(ar, br); r <= Math.max(ar, br); r++) {
+    for (let c = Math.min(ac, bc); c <= Math.max(ac, bc); c++) {
+      const d = weeks[r]?.[c];
+      if (d) out.push(d);
+    }
+  }
+  return out;
 }
 
 function computeRangeDates(a: string, b: string): string[] {
@@ -244,6 +285,7 @@ function OperationalCalendar() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragInfo, setDragInfo] = useState<DragInfo | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [clipboard, setClipboard] = useState<Clipboard | null>(null);
 
   const gridRef = useRef<View>(null);
   const gridOriginRef = useRef({ pageX: 0, pageY: 0 });
@@ -258,6 +300,8 @@ function OperationalCalendar() {
   const liveRef = useRef({
     canEdit: false,
     selection: null as Selection | null,
+    clipboard: null as Clipboard | null,
+    pasteAt: (_d: string) => {},
     weeks: [] as (string | null)[][],
     cellWidth: 0,
     rowHeight: PORTRAIT_ROW_HEIGHT,
@@ -437,6 +481,8 @@ function OperationalCalendar() {
   // once) always see current data.
   liveRef.current.canEdit = canEdit;
   liveRef.current.selection = selection;
+  liveRef.current.clipboard = clipboard;
+  liveRef.current.pasteAt = pasteAt;
   liveRef.current.weeks = weeks;
   liveRef.current.cellWidth = cellWidth;
   liveRef.current.rowHeight = rowHeight;
@@ -525,6 +571,25 @@ function OperationalCalendar() {
     });
   }
 
+  function buildEntryRow(src: CalendarEntry, entry_date: string, technicianId: string, uid: string | undefined) {
+    return {
+      technician_id: technicianId,
+      entry_date,
+      mine_name: src.mine_name,
+      site_id: src.site_id,
+      contact_person: src.contact_person,
+      contact_number: src.contact_number,
+      comments: src.comments,
+      testing_type: src.testing_type,
+      tam_status: src.tam_status,
+      financial_document_type: COPY_FINANCIAL_DOC_ON_FILL ? src.financial_document_type : null,
+      financial_document_number: COPY_FINANCIAL_DOC_ON_FILL ? src.financial_document_number : null,
+      sales_order_number: COPY_FINANCIAL_DOC_ON_FILL ? src.sales_order_number : null,
+      updated_by: uid,
+      created_by: uid,
+    };
+  }
+
   async function performFillSave(sourceEntry: CalendarEntry, targetDates: string[]) {
     const technicianId = liveRef.current.selectedTechnicianId;
     if (!technicianId) return;
@@ -532,22 +597,7 @@ function OperationalCalendar() {
     const { data: userData } = await supabase.auth.getUser();
     const uid = userData.user?.id;
 
-    const rows = targetDates.map(entry_date => ({
-      technician_id: technicianId,
-      entry_date,
-      mine_name: sourceEntry.mine_name,
-      site_id: sourceEntry.site_id,
-      contact_person: sourceEntry.contact_person,
-      contact_number: sourceEntry.contact_number,
-      comments: sourceEntry.comments,
-      testing_type: sourceEntry.testing_type,
-      tam_status: sourceEntry.tam_status,
-      financial_document_type: COPY_FINANCIAL_DOC_ON_FILL ? sourceEntry.financial_document_type : null,
-      financial_document_number: COPY_FINANCIAL_DOC_ON_FILL ? sourceEntry.financial_document_number : null,
-      sales_order_number: COPY_FINANCIAL_DOC_ON_FILL ? sourceEntry.sales_order_number : null,
-      updated_by: uid,
-      created_by: uid,
-    }));
+    const rows = targetDates.map(entry_date => buildEntryRow(sourceEntry, entry_date, technicianId, uid));
 
     const { error } = await supabase
       .from('operational_calendar_entries')
@@ -584,6 +634,95 @@ function OperationalCalendar() {
     } else {
       apply();
     }
+  }
+
+  // Picks up ONLY the highlighted days that hold an entry. mode 'move' removes
+  // them from where they were once pasted.
+  function pickUpSelection(mode: 'copy' | 'move') {
+    const technicianId = liveRef.current.selectedTechnicianId;
+    if (!selection || !technicianId) return;
+    const dates = selection.dates.filter(d => !!entriesByDate[d]).sort();
+    if (dates.length === 0) return;
+    setClipboard({
+      mode,
+      sourceTechId: technicianId,
+      items: dates.map(d => ({ offset: diffDays(dates[0], d), entry: entriesByDate[d] })),
+    });
+    setSelection(null);
+  }
+
+  // Tap a day while something is picked up: it is pasted there, with the first
+  // picked-up entry landing on the tapped day and the rest keeping their spacing.
+  function pasteAt(targetDate: string) {
+    const cb = liveRef.current.clipboard;
+    const technicianId = liveRef.current.selectedTechnicianId;
+    if (!cb || !technicianId) return;
+
+    const targets = cb.items.map(it => ({ date: addDaysStr(targetDate, it.offset), entry: it.entry }));
+    const sourceIds = new Set(cb.items.map(it => it.entry.id));
+    const existing = liveRef.current.entriesByDate;
+    const overlapping = targets.filter(t => {
+      const ex = existing[t.date];
+      // moving onto your own source cells isn't an overwrite
+      return !!ex && !(cb.sourceTechId === technicianId && sourceIds.has(ex.id));
+    });
+
+    const apply = async () => {
+      setSaving(true);
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData.user?.id;
+      const rows = targets.map(t => buildEntryRow(t.entry, t.date, technicianId, uid));
+      const { error } = await supabase
+        .from('operational_calendar_entries')
+        .upsert(rows, { onConflict: 'technician_id,entry_date' });
+      if (error) {
+        setSaving(false);
+        notify('Error', error.message);
+        return;
+      }
+
+      if (cb.mode === 'move') {
+        const targetDates = new Set(targets.map(t => t.date));
+        // Source days that were pasted over are already replaced; delete the rest.
+        const toDelete = cb.items
+          .filter(it => cb.sourceTechId !== technicianId || !targetDates.has(it.entry.entry_date))
+          .map(it => it.entry.id);
+        if (toDelete.length > 0) {
+          const { error: delErr } = await supabase.from('operational_calendar_entries').delete().in('id', toDelete);
+          if (delErr) notify('Error', delErr.message);
+        }
+        setClipboard(null);
+      }
+      setSaving(false);
+      fetchEntries(technicianId);
+    };
+
+    if (overlapping.length > 0) {
+      confirm(
+        'Overwrite existing entries?',
+        `${overlapping.length} day${overlapping.length === 1 ? '' : 's'} already ${overlapping.length === 1 ? 'has' : 'have'} an entry. Pasting will replace ${overlapping.length === 1 ? 'it' : 'them'}.`,
+        apply
+      );
+    } else {
+      apply();
+    }
+  }
+
+  // Tap a day to add it to / remove it from the highlighted days
+  // (this is how you pick days that aren't next to each other).
+  function toggleSelected(dateStr: string) {
+    const cur = liveRef.current.selection;
+    if (!cur) {
+      setSelection({ sourceDate: dateStr, dates: [dateStr] });
+      return;
+    }
+    const has = cur.dates.includes(dateStr);
+    const dates = has ? cur.dates.filter(d => d !== dateStr) : [...cur.dates, dateStr];
+    if (dates.length === 0) {
+      setSelection(null);
+      return;
+    }
+    setSelection({ sourceDate: dates.includes(cur.sourceDate) ? cur.sourceDate : [...dates].sort()[0], dates });
   }
 
   async function deleteEntriesForDates(dates: string[]) {
@@ -693,7 +832,6 @@ function OperationalCalendar() {
           const info: DragInfo = { type: 'select', sourceDate: startDate, dates: [startDate] };
           dragInfoRef.current = info;
           setDragInfo(info);
-          setSelection(null);
           setIsDragging(true);
         }, 350);
       },
@@ -727,7 +865,7 @@ function OperationalCalendar() {
         const dateStr = dateAtTouch(evt);
         if (!dateStr) return;
 
-        const dates = computeRangeDates(current.sourceDate, dateStr);
+        const dates = rectDates(liveRef.current.weeks, current.sourceDate, dateStr);
         const next: DragInfo = { ...current, dates };
         dragInfoRef.current = next;
         setDragInfo(next);
@@ -744,11 +882,17 @@ function OperationalCalendar() {
 
         if (info) {
           if (info.type === 'paint') savePaint(info.color, info.dates);
-          else setSelection({ sourceDate: info.sourceDate, dates: info.dates });
+          else {
+            // Add the dragged block to whatever is already highlighted
+            const prev = liveRef.current.selection;
+            const merged = prev ? Array.from(new Set([...prev.dates, ...info.dates])) : info.dates;
+            setSelection({ sourceDate: prev?.sourceDate ?? info.sourceDate, dates: merged });
+          }
         } else if (touchStartDateRef.current) {
-          // A tap while days are highlighted just clears the highlight.
-          if (liveRef.current.selection) setSelection(null);
-          else handleDayPress(touchStartDateRef.current);
+          const tapped = touchStartDateRef.current;
+          if (liveRef.current.clipboard) liveRef.current.pasteAt(tapped);   // paste where you tap
+          else if (liveRef.current.selection) toggleSelected(tapped);       // add / remove this day
+          else handleDayPress(tapped);
         }
         touchStartDateRef.current = null;
       },
@@ -1099,19 +1243,42 @@ function OperationalCalendar() {
 
         {canEdit && !paintColor && !selection && (
           <Text style={[styles.dragHint, { color: theme.subtext }]}>
-            Tip: press & hold a day, then drag across days to highlight them. Then copy or delete.
+            Tip: press & hold a day, drag across (down or diagonally) to highlight a block, then tap other days to add or remove them. Then copy, move or delete.
           </Text>
         )}
 
-        {/* Appears once days are highlighted: see what's selected, then copy or delete */}
-        {canEdit && !paintColor && selection && (
+        {/* Something is picked up: tap a day to paste it there */}
+        {canEdit && !paintColor && clipboard && (
+          <View style={[styles.selectionBar, { backgroundColor: theme.card, borderColor: DRAG_FILL_BORDER }]}>
+            <Text style={[styles.selectionText, { color: theme.text, minWidth: 180 }]}>
+              {clipboard.mode === 'move' ? 'Moving' : 'Copied'} {clipboard.items.length} entr{clipboard.items.length === 1 ? 'y' : 'ies'} — tap the day the first one should go
+              {clipboard.items.length > 1 ? ' (the rest keep their spacing)' : ''}
+            </Text>
+            <TouchableOpacity onPress={() => setClipboard(null)}>
+              <Text style={styles.selectionCopy}>{clipboard.mode === 'move' ? 'Cancel' : 'Done'}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Appears once days are highlighted: see what's selected, then copy, move or delete */}
+        {canEdit && !paintColor && !clipboard && selection && (
           <View style={[styles.selectionBar, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.selectionText, { color: theme.text }]} numberOfLines={1}>
-              {selection.dates.length} day{selection.dates.length === 1 ? '' : 's'} highlighted
+              {selection.dates.length} day{selection.dates.length === 1 ? '' : 's'} selected
             </Text>
+            {selectedEntryCount > 0 && (
+              <TouchableOpacity onPress={() => pickUpSelection('copy')}>
+                <Text style={styles.selectionCopy}>Copy {selectedEntryCount}</Text>
+              </TouchableOpacity>
+            )}
+            {selectedEntryCount > 0 && (
+              <TouchableOpacity onPress={() => pickUpSelection('move')}>
+                <Text style={styles.selectionCopy}>Move {selectedEntryCount}</Text>
+              </TouchableOpacity>
+            )}
             {canCopySelection && (
               <TouchableOpacity onPress={copySelection}>
-                <Text style={styles.selectionCopy}>Copy</Text>
+                <Text style={styles.selectionCopy}>Fill</Text>
               </TouchableOpacity>
             )}
             {selectedEntryCount > 0 && (
@@ -1822,8 +1989,8 @@ const styles = StyleSheet.create({
   readOnlyNote: { fontSize: 12, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
   dragHint: { fontSize: 11.5, fontStyle: 'italic', marginHorizontal: 16, marginBottom: 6 },
   selectionBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 16,
-    borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, height: 44,
+    flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+    borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, minHeight: 44,
     marginHorizontal: 16, marginBottom: 8,
   },
   selectionText: { flex: 1, fontSize: 12.5, fontWeight: '600' },
