@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import RequirePermission from '../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
@@ -7,7 +7,7 @@ import {
   BackHandler, Linking,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check, Search, MapPin, Key } from 'lucide-react-native';
+import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check, Search, MapPin, Key, ZoomIn, ZoomOut } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { getHolidayName } from '../../../lib/saHolidays';
 import { mapsUrlFor, isUrl } from '../../../lib/maps';
@@ -268,6 +268,8 @@ function buildMonthGrid(year: number, month: number): (string | null)[][] {
   return weeks;
 }
 
+const ZOOM_STEPS = [0.6, 0.7, 0.8, 0.9, 1, 1.15, 1.3];
+
 function readPref(key: string): string | null {
   try { return (globalThis as any).localStorage?.getItem(key) ?? null; } catch { return null; }
 }
@@ -296,14 +298,37 @@ function OperationalCalendar() {
   const isLandscape = width > height;
   // "Compact" hides everything except the date changer, to give the grid the whole screen
   const [compact, setCompact] = useState<boolean>(() => readPref('opcal_compact') === '1');
-  const rowHeight = isLandscape ? LANDSCAPE_ROW_HEIGHT : PORTRAIT_ROW_HEIGHT;
+  // Zoom: scales row height and the text inside each cell (remembered on web,
+  // so someone on a small laptop only has to set it once).
+  const [zoom, setZoom] = useState<number>(() => {
+    const v = parseFloat(readPref('opcal_zoom') ?? '');
+    return ZOOM_STEPS.includes(v) ? v : 1;
+  });
+  const rowHeight = Math.round((isLandscape ? LANDSCAPE_ROW_HEIGHT : PORTRAIT_ROW_HEIGHT) * zoom);
+
+  // Cell text/padding scaled with the zoom
+  const cs = useMemo(() => {
+    const keys = ['dayCellContent', 'dayNumber', 'cellMineName', 'cellSubText', 'cellCommentBox', 'cellCommentText',
+      'cellPill', 'cellPillText', 'cellInvoiceText', 'cellInvoiceTextSide', 'cellHolidayName',
+      'cellLeaveBadge', 'cellLeaveTitle', 'cellLeaveType', 'cellDocRow'] as const;
+    const scaleProps = ['fontSize', 'lineHeight', 'gap', 'marginTop', 'paddingHorizontal', 'paddingVertical', 'borderRadius'];
+    const out: Record<string, any> = {};
+    keys.forEach(k => {
+      const flat: any = { ...((StyleSheet.flatten((styles as any)[k]) as any) ?? {}) };
+      if (zoom !== 1) {
+        scaleProps.forEach(pr => { if (typeof flat[pr] === 'number') flat[pr] = Math.round(flat[pr] * zoom * 10) / 10; });
+      }
+      out[k] = flat;
+    });
+    return out as Record<typeof keys[number], any>;
+  }, [zoom]);
 
   useEffect(() => {
     try {
       const ls = (globalThis as any).localStorage;
-      if (ls) ls.setItem('opcal_compact', compact ? '1' : '0');
+      if (ls) { ls.setItem('opcal_zoom', String(zoom)); ls.setItem('opcal_compact', compact ? '1' : '0'); }
     } catch {}
-  }, [compact]);
+  }, [zoom, compact]);
 
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -687,6 +712,16 @@ function OperationalCalendar() {
   liveRef.current.paintColor = paintColor;
   liveRef.current.leaveDays = leaveDays;
   liveRef.current.techNames = Object.fromEntries(technicians.map(t => [t.id, t.full_name]));
+
+  function goToToday() {
+    setSelection(null);
+    const now = new Date();
+    setViewDate({ year: now.getFullYear(), month: now.getMonth() });
+  }
+  function stepZoom(dir: 1 | -1) {
+    const i = ZOOM_STEPS.indexOf(zoom);
+    setZoom(ZOOM_STEPS[Math.max(0, Math.min(ZOOM_STEPS.length - 1, i + dir))]);
+  }
 
   function goToPreviousMonth() {
     setSelection(null);
@@ -1535,6 +1570,24 @@ function OperationalCalendar() {
           </TouchableOpacity>
         </View>
 
+        {/* Today + zoom */}
+        {!compact && (
+        <View style={styles.viewControlsRow}>
+          <TouchableOpacity onPress={goToToday} style={[styles.viewPill, { borderColor: theme.border, backgroundColor: theme.card }]}>
+            <Text style={{ color: theme.text, fontSize: 12.5, fontWeight: '700' }}>Today</Text>
+          </TouchableOpacity>
+          <View style={[styles.viewPill, { borderColor: theme.border, backgroundColor: theme.card, gap: 10 }]}>
+            <TouchableOpacity onPress={() => stepZoom(-1)} disabled={zoom === ZOOM_STEPS[0]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <ZoomOut color={zoom === ZOOM_STEPS[0] ? theme.muted : colors.yellow} size={18} />
+            </TouchableOpacity>
+            <Text style={{ color: theme.text, fontSize: 12.5, fontWeight: '700', minWidth: 36, textAlign: 'center' }}>{Math.round(zoom * 100)}%</Text>
+            <TouchableOpacity onPress={() => stepZoom(1)} disabled={zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <ZoomIn color={zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1] ? theme.muted : colors.yellow} size={18} />
+            </TouchableOpacity>
+          </View>
+        </View>
+        )}
+
         <ScrollView
           contentContainerStyle={{ paddingBottom: 24 }}
           scrollEnabled={!isDragging}
@@ -1568,7 +1621,7 @@ function OperationalCalendar() {
                         key={di}
                         style={[styles.dayCell, { width: cellWidth, height: rowHeight, backgroundColor: CELL_PAD_BG, borderColor: CELL_BORDER }]}
                       >
-                        <Text style={[styles.dayNumber, { color: CELL_PAD_TEXT }]}>
+                        <Text style={[cs.dayNumber, { color: CELL_PAD_TEXT }]}>
                           {adjacentDayNumber(viewDate.year, viewDate.month, wi * 7 + di)}
                         </Text>
                       </View>
@@ -1611,17 +1664,17 @@ function OperationalCalendar() {
                         isDragSource && styles.dayCellDragSource,
                       ]}
                     >
-                      <Text style={[styles.dayNumber, isEmptyWeekend && { color: '#64748b' }]}>{dayNum}</Text>
+                      <Text style={[cs.dayNumber, isEmptyWeekend && { color: '#64748b' }]}>{dayNum}</Text>
 
                       {!!holidayName && (
-                        <Text style={styles.cellHolidayName} numberOfLines={2}>{holidayName}</Text>
+                        <Text style={cs.cellHolidayName} numberOfLines={2}>{holidayName}</Text>
                       )}
 
                       {leaveDays[dateStr] !== undefined && (
-                        <View style={styles.cellLeaveBadge}>
-                          <Text style={styles.cellLeaveTitle}>LEAVE</Text>
+                        <View style={cs.cellLeaveBadge}>
+                          <Text style={cs.cellLeaveTitle}>LEAVE</Text>
                           {!!leaveDays[dateStr] && (
-                            <Text style={styles.cellLeaveType} numberOfLines={2}>
+                            <Text style={cs.cellLeaveType} numberOfLines={2}>
                               {leaveDays[dateStr]}
                             </Text>
                           )}
@@ -1629,10 +1682,10 @@ function OperationalCalendar() {
                       )}
 
                       {entry && (
-                        <View style={styles.dayCellContent}>
+                        <View style={cs.dayCellContent}>
                           {!!entry.mine_name && (
                             <Text
-                              style={[styles.cellMineName, { fontSize: titleFontSize(entry.mine_name), lineHeight: Math.round(titleFontSize(entry.mine_name) * 1.2) }]}
+                              style={[cs.cellMineName, { fontSize: Math.round(titleFontSize(entry.mine_name) * zoom * 10) / 10, lineHeight: Math.round(titleFontSize(entry.mine_name) * zoom * 1.2) }]}
                               numberOfLines={3}
                               adjustsFontSizeToFit
                               minimumFontScale={0.7}
@@ -1641,32 +1694,32 @@ function OperationalCalendar() {
                             </Text>
                           )}
                           {entry.contact_person && (
-                            <Text style={styles.cellSubText} numberOfLines={2}>
+                            <Text style={cs.cellSubText} numberOfLines={2}>
                               {entry.contact_person}
                             </Text>
                           )}
                           {entry.contact_number && (
-                            <Text style={styles.cellSubText} numberOfLines={2}>
+                            <Text style={cs.cellSubText} numberOfLines={2}>
                               {entry.contact_number}
                             </Text>
                           )}
                           {entry.comments && (
-                            <View style={styles.cellCommentBox}>
-                              <Text style={styles.cellCommentText} numberOfLines={entry.mine_name ? 2 : 6}>
+                            <View style={cs.cellCommentBox}>
+                              <Text style={cs.cellCommentText} numberOfLines={entry.mine_name ? 2 : 6}>
                                 {entry.comments}
                               </Text>
                             </View>
                           )}
                           {entry.testing_type && (
-                            <View style={[styles.cellPill, { backgroundColor: optionColour(entry.testing_type) }]}>
-                              <Text style={[styles.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
+                            <View style={[cs.cellPill, { backgroundColor: optionColour(entry.testing_type) }]}>
+                              <Text style={[cs.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
                                 {entry.testing_type}
                               </Text>
                             </View>
                           )}
                           {entry.tam_status && (
-                            <View style={[styles.cellPill, { backgroundColor: optionColour(entry.tam_status) }]}>
-                              <Text style={[styles.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
+                            <View style={[cs.cellPill, { backgroundColor: optionColour(entry.tam_status) }]}>
+                              <Text style={[cs.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
                                 {entry.tam_status}
                               </Text>
                             </View>
@@ -1681,7 +1734,7 @@ function OperationalCalendar() {
                             // Sales Order + Invoice on one centred line: "SO 234   INV 344"
                             return (
                               <Text
-                                style={[styles.cellInvoiceText, docs.length > 1 && styles.cellInvoiceTextSide]}
+                                style={[cs.cellInvoiceText, docs.length > 1 && cs.cellInvoiceTextSide]}
                                 numberOfLines={1}
                                 adjustsFontSizeToFit
                                 minimumFontScale={0.6}
@@ -2460,6 +2513,8 @@ const styles = StyleSheet.create({
   cellLeaveType: { fontSize: 12, fontWeight: '700', color: '#5b21b6', textAlign: 'center', marginTop: 1 },
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },
   monthNavBtn: { padding: 8 },
+  viewControlsRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 12, marginBottom: 8 },
+  viewPill: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7 },
   compactToggle: { position: 'absolute', right: 12, top: 6, width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },
   weekRow: { flexDirection: 'row' },
