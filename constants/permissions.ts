@@ -34,6 +34,7 @@ export type PermissionKey =
   | 'view_calendar'
   | 'view_operational_calendar'
   | 'can_edit_operational_calendar'
+  | 'has_own_operational_calendar'
   | 'manage_team'
   | 'can_approve'
   | 'view_sites'
@@ -116,6 +117,16 @@ export const PERMISSIONS: PermissionDef[] = [
     group: 'schedule',
     grantableTo: ['admin'],
     alwaysOnFor: ['hr'],
+    requires: 'view_operational_calendar',
+  },
+  {
+    key: 'has_own_operational_calendar',
+    label: 'Has their own Operational Calendar',
+    description:
+      'Gets a calendar of their own on the job calendar, like a technician (for admins who also go out on jobs).',
+    group: 'schedule',
+    grantableTo: ['admin', 'hr'],
+    alwaysOnFor: [],
     requires: 'view_operational_calendar',
   },
   {

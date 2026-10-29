@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import RequirePermission from '../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
@@ -7,7 +7,7 @@ import {
   BackHandler,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check, Search } from 'lucide-react-native';
+import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check, Search, ZoomIn, ZoomOut } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { getHolidayName } from '../../../lib/saHolidays';
 import { notify, confirm } from '../../../lib/notify';
@@ -267,6 +267,29 @@ function buildMonthGrid(year: number, month: number): (string | null)[][] {
   return weeks;
 }
 
+// ---- View range (1 / 2 / 3 weeks or a whole month) and zoom ----
+type RangeMode = 'month' | 1 | 2 | 3;
+const ZOOM_STEPS = [0.6, 0.7, 0.8, 0.9, 1, 1.15, 1.3];
+
+function readPref(key: string): string | null {
+  try { return (globalThis as any).localStorage?.getItem(key) ?? null; } catch { return null; }
+}
+function todayString(): string {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+}
+// The Sunday on or before a date (the grid starts on Sunday)
+function weekStartOf(dateStr: string): string {
+  return addDaysStr(dateStr, -new Date(dateStr + 'T00:00:00').getDay());
+}
+function buildWeeksFrom(startStr: string, numWeeks: number): (string | null)[][] {
+  const weeks: (string | null)[][] = [];
+  for (let w = 0; w < numWeeks; w++) {
+    weeks.push(Array.from({ length: 7 }, (_, d) => addDaysStr(startStr, w * 7 + d)));
+  }
+  return weeks;
+}
+
 // Cells are white by default (filled or empty). A day only changes colour when
 // someone paints it with one of the highlight colours.
 function getCellBackground(colour: string | undefined): string {
@@ -289,7 +312,42 @@ function OperationalCalendar() {
   const isDark = useColorScheme() === 'dark';
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
-  const rowHeight = isLandscape ? LANDSCAPE_ROW_HEIGHT : PORTRAIT_ROW_HEIGHT;
+  // How much of the calendar is shown, and how big it is (both remembered on web,
+  // so someone on a small laptop only has to pick it once).
+  const [rangeMode, setRangeMode] = useState<RangeMode>(() => {
+    const v = readPref('opcal_range');
+    return v === '1' ? 1 : v === '2' ? 2 : v === '3' ? 3 : 'month';
+  });
+  const [zoom, setZoom] = useState<number>(() => {
+    const v = parseFloat(readPref('opcal_zoom') ?? '');
+    return ZOOM_STEPS.includes(v) ? v : 1;
+  });
+  const [anchor, setAnchor] = useState<string>(() => weekStartOf(todayString()));
+  const rowHeight = Math.round((isLandscape ? LANDSCAPE_ROW_HEIGHT : PORTRAIT_ROW_HEIGHT) * zoom);
+
+  // Cell text/padding scaled with the zoom
+  const cs = useMemo(() => {
+    const keys = ['dayCellContent', 'dayNumber', 'cellMineName', 'cellSubText', 'cellCommentBox', 'cellCommentText',
+      'cellPill', 'cellPillText', 'cellInvoiceText', 'cellInvoiceTextSide', 'cellHolidayName',
+      'cellLeaveBadge', 'cellLeaveTitle', 'cellLeaveType'] as const;
+    const scaleProps = ['fontSize', 'lineHeight', 'gap', 'marginTop', 'paddingHorizontal', 'paddingVertical', 'borderRadius'];
+    const out: Record<string, any> = {};
+    keys.forEach(k => {
+      const flat: any = { ...(StyleSheet.flatten((styles as any)[k]) as any) };
+      if (zoom !== 1) {
+        scaleProps.forEach(pr => { if (typeof flat[pr] === 'number') flat[pr] = Math.round(flat[pr] * zoom * 10) / 10; });
+      }
+      out[k] = flat;
+    });
+    return out as Record<typeof keys[number], any>;
+  }, [zoom]);
+
+  useEffect(() => {
+    try {
+      const ls = (globalThis as any).localStorage;
+      if (ls) { ls.setItem('opcal_range', String(rangeMode)); ls.setItem('opcal_zoom', String(zoom)); }
+    } catch {}
+  }, [rangeMode, zoom]);
 
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -385,6 +443,7 @@ function OperationalCalendar() {
     selectedTechnicianId: null as string | null,
     paintColor: null as PaintColor | null,
     leaveDays: {} as Record<string, string>,
+    techNames: {} as Record<string, string>,
   });
 
   // Phone back button: close whatever is open on top of the calendar first
@@ -447,7 +506,12 @@ function OperationalCalendar() {
       if (cancelled) return;
       setSearchLoading(false);
       if (error) { notify('Search failed', error.message); return; }
-      setSearchRows((data as any) ?? []);
+      setSearchRows(((data as any) ?? []).map((r: any) => ({
+        ...r,
+        technician: r.technician?.full_name
+          ? r.technician
+          : { full_name: liveRef.current.techNames[r.technician_id] ?? null },
+      })));
       setSearchCapped((data?.length ?? 0) >= 600);
     }, 300);
     return () => { cancelled = true; clearTimeout(t); };
@@ -458,6 +522,7 @@ function OperationalCalendar() {
     setClipboard(null);
     const d = new Date(r.start + 'T00:00:00');
     setViewDate({ year: d.getFullYear(), month: d.getMonth() });
+    setAnchor(weekStartOf(r.start));
     setSelectedTechnicianId(r.techId);
     setShowSearch(false);
   }
@@ -552,13 +617,23 @@ function OperationalCalendar() {
       });
       setBranchOptions(wanted);
 
-      const { data: techs } = await supabase
-        .from('profiles')
-        .select('id, full_name, branch_id')
-        .eq('role', 'technician')
-        .order('full_name');
-      if (techs) setTechnicians(techs);
-      setSelectedTechnicianId(prev => prev ?? techs?.[0]?.id ?? null);
+      // Technicians + any admin/HR switched on for "Has their own Operational Calendar".
+      // Done in the database (security definer) because an admin can't read other admins' profiles directly.
+      let people: Technician[] | null = null;
+      const { data: rpcPeople, error: rpcError } = await supabase.rpc('get_calendar_people');
+      if (!rpcError && rpcPeople) {
+        people = rpcPeople as Technician[];
+      } else {
+        const { data: techs } = await supabase
+          .from('profiles')
+          .select('id, full_name, branch_id')
+          .eq('role', 'technician')
+          .order('full_name');
+        people = techs ?? [];
+      }
+      setTechnicians(people);
+      // Open on your own calendar if you have one, otherwise the first person
+      setSelectedTechnicianId(prev => prev ?? people!.find(t => t.id === uid)?.id ?? people![0]?.id ?? null);
     }
 
     setLoading(false);
@@ -621,7 +696,10 @@ function OperationalCalendar() {
   entries.forEach(e => { entriesByDate[e.entry_date] = e; });
 
   const selectedTechnician = technicians.find(t => t.id === selectedTechnicianId);
-  const weeks = buildMonthGrid(viewDate.year, viewDate.month);
+  const weeks = rangeMode === 'month' ? buildMonthGrid(viewDate.year, viewDate.month) : buildWeeksFrom(anchor, rangeMode);
+  const rangeLabel = rangeMode === 'month'
+    ? new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+    : formatRangeLabel(weeks[0][0] as string, weeks[weeks.length - 1][6] as string);
 
   // How many highlighted days actually hold an entry (what Delete would remove),
   // and whether Copy makes sense (first highlighted day has an entry + more days).
@@ -641,6 +719,45 @@ function OperationalCalendar() {
   liveRef.current.selectedTechnicianId = selectedTechnicianId;
   liveRef.current.paintColor = paintColor;
   liveRef.current.leaveDays = leaveDays;
+  liveRef.current.techNames = Object.fromEntries(technicians.map(t => [t.id, t.full_name]));
+
+  function syncViewDateFromAnchor(a: string) {
+    const d = new Date(addDaysStr(a, 3) + 'T00:00:00'); // mid-week decides the month
+    setViewDate({ year: d.getFullYear(), month: d.getMonth() });
+  }
+  function goPrev() {
+    if (rangeMode === 'month') return goToPreviousMonth();
+    setSelection(null);
+    const a = addDaysStr(anchor, -7 * rangeMode);
+    setAnchor(a); syncViewDateFromAnchor(a);
+  }
+  function goNext() {
+    if (rangeMode === 'month') return goToNextMonth();
+    setSelection(null);
+    const a = addDaysStr(anchor, 7 * rangeMode);
+    setAnchor(a); syncViewDateFromAnchor(a);
+  }
+  function goToToday() {
+    setSelection(null);
+    const now = new Date();
+    setViewDate({ year: now.getFullYear(), month: now.getMonth() });
+    setAnchor(weekStartOf(todayString()));
+  }
+  function changeRange(m: RangeMode) {
+    setSelection(null);
+    if (m !== 'month' && rangeMode === 'month') {
+      const now = new Date();
+      const isCurrent = now.getFullYear() === viewDate.year && now.getMonth() === viewDate.month;
+      setAnchor(weekStartOf(isCurrent ? todayString() : toDateString(viewDate.year, viewDate.month, 1)));
+    } else if (m === 'month' && rangeMode !== 'month') {
+      syncViewDateFromAnchor(anchor);
+    }
+    setRangeMode(m);
+  }
+  function stepZoom(dir: 1 | -1) {
+    const i = ZOOM_STEPS.indexOf(zoom);
+    setZoom(ZOOM_STEPS[Math.max(0, Math.min(ZOOM_STEPS.length - 1, i + dir))]);
+  }
 
   function goToPreviousMonth() {
     setSelection(null);
@@ -1451,7 +1568,7 @@ function OperationalCalendar() {
 
         {/* Month nav */}
         <View style={styles.monthNavRow}>
-          <TouchableOpacity onPress={goToPreviousMonth} style={styles.monthNavBtn}>
+          <TouchableOpacity onPress={goPrev} style={styles.monthNavBtn}>
             <ChevronLeft color={colors.yellow} size={22} />
           </TouchableOpacity>
           <TouchableOpacity
@@ -1459,13 +1576,40 @@ function OperationalCalendar() {
             style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 160 }}
           >
             <Text style={[styles.monthNavLabel, { color: theme.text, minWidth: 0 }]}>
-              {new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
+              {rangeLabel}
             </Text>
             <ChevronDown color={theme.muted} size={16} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={goToNextMonth} style={styles.monthNavBtn}>
+          <TouchableOpacity onPress={goNext} style={styles.monthNavBtn}>
             <ChevronRight color={colors.yellow} size={22} />
           </TouchableOpacity>
+        </View>
+
+        {/* View: how much to show + zoom */}
+        <View style={styles.viewControlsRow}>
+          <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: theme.border, borderRadius: 10, overflow: 'hidden' }}>
+            {([[1, '1 wk'], [2, '2 wks'], [3, '3 wks'], ['month', 'Month']] as [RangeMode, string][]).map(([k, label]) => (
+              <TouchableOpacity
+                key={String(k)}
+                onPress={() => changeRange(k)}
+                style={{ paddingHorizontal: 12, paddingVertical: 7, backgroundColor: rangeMode === k ? colors.yellow : theme.card }}
+              >
+                <Text style={{ color: rangeMode === k ? '#1e293b' : theme.subtext, fontSize: 12.5, fontWeight: '700' }}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity onPress={goToToday} style={[styles.viewPill, { borderColor: theme.border, backgroundColor: theme.card }]}>
+            <Text style={{ color: theme.text, fontSize: 12.5, fontWeight: '700' }}>Today</Text>
+          </TouchableOpacity>
+          <View style={[styles.viewPill, { borderColor: theme.border, backgroundColor: theme.card, gap: 10 }]}>
+            <TouchableOpacity onPress={() => stepZoom(-1)} disabled={zoom === ZOOM_STEPS[0]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <ZoomOut color={zoom === ZOOM_STEPS[0] ? theme.muted : colors.yellow} size={18} />
+            </TouchableOpacity>
+            <Text style={{ color: theme.text, fontSize: 12.5, fontWeight: '700', minWidth: 36, textAlign: 'center' }}>{Math.round(zoom * 100)}%</Text>
+            <TouchableOpacity onPress={() => stepZoom(1)} disabled={zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <ZoomIn color={zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1] ? theme.muted : colors.yellow} size={18} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <ScrollView
@@ -1501,7 +1645,7 @@ function OperationalCalendar() {
                         key={di}
                         style={[styles.dayCell, { width: cellWidth, height: rowHeight, backgroundColor: CELL_PAD_BG, borderColor: CELL_BORDER }]}
                       >
-                        <Text style={[styles.dayNumber, { color: CELL_PAD_TEXT }]}>
+                        <Text style={[cs.dayNumber, { color: CELL_PAD_TEXT }]}>
                           {adjacentDayNumber(viewDate.year, viewDate.month, wi * 7 + di)}
                         </Text>
                       </View>
@@ -1544,17 +1688,21 @@ function OperationalCalendar() {
                         isDragSource && styles.dayCellDragSource,
                       ]}
                     >
-                      <Text style={[styles.dayNumber, isEmptyWeekend && { color: '#64748b' }]}>{dayNum}</Text>
+                      <Text style={[cs.dayNumber, isEmptyWeekend && { color: '#64748b' }]}>
+                        {rangeMode !== 'month' && (dayNum === 1 || (wi === 0 && di === 0))
+                          ? `${dayNum} ${new Date(dateStr + 'T00:00:00').toLocaleDateString('en-ZA', { month: 'short' })}`
+                          : dayNum}
+                      </Text>
 
                       {!!holidayName && (
-                        <Text style={styles.cellHolidayName} numberOfLines={2}>{holidayName}</Text>
+                        <Text style={cs.cellHolidayName} numberOfLines={2}>{holidayName}</Text>
                       )}
 
                       {leaveDays[dateStr] !== undefined && (
-                        <View style={styles.cellLeaveBadge}>
-                          <Text style={styles.cellLeaveTitle}>LEAVE</Text>
+                        <View style={cs.cellLeaveBadge}>
+                          <Text style={cs.cellLeaveTitle}>LEAVE</Text>
                           {!!leaveDays[dateStr] && (
-                            <Text style={styles.cellLeaveType} numberOfLines={2}>
+                            <Text style={cs.cellLeaveType} numberOfLines={2}>
                               {leaveDays[dateStr]}
                             </Text>
                           )}
@@ -1562,10 +1710,10 @@ function OperationalCalendar() {
                       )}
 
                       {entry && (
-                        <View style={styles.dayCellContent}>
+                        <View style={cs.dayCellContent}>
                           {!!entry.mine_name && (
                             <Text
-                              style={[styles.cellMineName, { fontSize: titleFontSize(entry.mine_name), lineHeight: Math.round(titleFontSize(entry.mine_name) * 1.2) }]}
+                              style={[cs.cellMineName, { fontSize: Math.round(titleFontSize(entry.mine_name) * zoom * 10) / 10, lineHeight: Math.round(titleFontSize(entry.mine_name) * zoom * 1.2) }]}
                               numberOfLines={3}
                               adjustsFontSizeToFit
                               minimumFontScale={0.7}
@@ -1574,32 +1722,32 @@ function OperationalCalendar() {
                             </Text>
                           )}
                           {entry.contact_person && (
-                            <Text style={styles.cellSubText} numberOfLines={2}>
+                            <Text style={cs.cellSubText} numberOfLines={2}>
                               {entry.contact_person}
                             </Text>
                           )}
                           {entry.contact_number && (
-                            <Text style={styles.cellSubText} numberOfLines={2}>
+                            <Text style={cs.cellSubText} numberOfLines={2}>
                               {entry.contact_number}
                             </Text>
                           )}
                           {entry.comments && (
-                            <View style={styles.cellCommentBox}>
-                              <Text style={styles.cellCommentText} numberOfLines={entry.mine_name ? 2 : 6}>
+                            <View style={cs.cellCommentBox}>
+                              <Text style={cs.cellCommentText} numberOfLines={entry.mine_name ? 2 : 6}>
                                 {entry.comments}
                               </Text>
                             </View>
                           )}
                           {entry.testing_type && (
-                            <View style={[styles.cellPill, { backgroundColor: optionColour(entry.testing_type) }]}>
-                              <Text style={[styles.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
+                            <View style={[cs.cellPill, { backgroundColor: optionColour(entry.testing_type) }]}>
+                              <Text style={[cs.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
                                 {entry.testing_type}
                               </Text>
                             </View>
                           )}
                           {entry.tam_status && (
-                            <View style={[styles.cellPill, { backgroundColor: optionColour(entry.tam_status) }]}>
-                              <Text style={[styles.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
+                            <View style={[cs.cellPill, { backgroundColor: optionColour(entry.tam_status) }]}>
+                              <Text style={[cs.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
                                 {entry.tam_status}
                               </Text>
                             </View>
@@ -1614,7 +1762,7 @@ function OperationalCalendar() {
                             // Sales Order + Invoice on one centred line: "SO 234   INV 344"
                             return (
                               <Text
-                                style={[styles.cellInvoiceText, docs.length > 1 && styles.cellInvoiceTextSide]}
+                                style={[cs.cellInvoiceText, docs.length > 1 && cs.cellInvoiceTextSide]}
                                 numberOfLines={1}
                                 adjustsFontSizeToFit
                                 minimumFontScale={0.6}
@@ -1771,6 +1919,7 @@ function OperationalCalendar() {
                     onPress={() => {
                       setSelection(null);
                       setViewDate({ year: pickerYear, month: m });
+                      setAnchor(weekStartOf(toDateString(pickerYear, m, 1)));
                       setShowMonthPicker(false);
                     }}
                   >
@@ -2366,6 +2515,8 @@ const styles = StyleSheet.create({
   cellLeaveType: { fontSize: 12, fontWeight: '700', color: '#5b21b6', textAlign: 'center', marginTop: 1 },
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },
   monthNavBtn: { padding: 8 },
+  viewControlsRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 12, marginBottom: 8 },
+  viewPill: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7 },
   monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },
   weekRow: { flexDirection: 'row' },
   weekdayHeaderCell: { paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
