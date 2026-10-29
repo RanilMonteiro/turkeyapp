@@ -27,6 +27,7 @@ const colors = {
     500: '#64748b', 700: '#334155', 800: '#1e293b', 900: '#0f172a',
   }
 };
+const [skipWeekends, setSkipWeekends] = useState(false);
 
 // Matches the green / tan / red color coding from the spreadsheet.
 const INVOICE_COLOR = '#dc2626';
@@ -200,15 +201,18 @@ function toDateString(year: number, month: number, day: number): string {
 // Every date string between from/to inclusive — used to spread one
 // entry across multiple days when the person sets a date range, and
 // to work out which days a highlight-drag gesture passed over.
-function expandDateRange(from: string, to: string): string[] {
+function expandDateRange(from: string, to: string, skipWeekends = false): string[] {
   const dates: string[] = [];
   let current = new Date(from + 'T00:00:00');
   const end = new Date(to + 'T00:00:00');
   while (current <= end) {
-    const y = current.getFullYear();
-    const m = String(current.getMonth() + 1).padStart(2, '0');
-    const d = String(current.getDate()).padStart(2, '0');
-    dates.push(`${y}-${m}-${d}`);
+    const dow = current.getDay(); // 0 = Sun, 6 = Sat
+    if (!(skipWeekends && (dow === 0 || dow === 6))) {
+      const y = current.getFullYear();
+      const m = String(current.getMonth() + 1).padStart(2, '0');
+      const d = String(current.getDate()).padStart(2, '0');
+      dates.push(`${y}-${m}-${d}`);
+    }
     current.setDate(current.getDate() + 1);
   }
   return dates;
@@ -1167,6 +1171,7 @@ function OperationalCalendar() {
     setEditingEntry(entry);
     setDateFrom(entry.entry_date);
     setDateTo(entry.entry_date);
+    setSkipWeekends(false);
     setMineName(entry.mine_name ?? '');
     setContactPerson(entry.contact_person ?? '');
     setContactNumber(entry.contact_number ?? '');
@@ -1278,8 +1283,12 @@ function OperationalCalendar() {
       return;
     }
 
-    const targetDates = editingEntry ? [dateFrom] : expandDateRange(dateFrom, dateTo);
+    const targetDates = editingEntry ? [dateFrom] : expandDateRange(dateFrom, dateTo, skipWeekends);
 
+if (targetDates.length === 0) {
+  notify('No days to fill', 'That range only contains weekend days. Turn off "Skip weekends" or pick other dates.');
+  return;
+}
     // Warn before silently overwriting days that already have an
     // entry — only relevant for a fresh multi/single-day save (this
     // branch only runs when editingEntry is null, so any existing
@@ -2253,11 +2262,31 @@ function OperationalCalendar() {
                 </View>
               </View>
             )}
-            {!editingEntry && dateTo !== dateFrom && (
-              <Text style={[styles.rangeHint, { color: theme.subtext }]}>
-                This will fill every day from {dateFrom} to {dateTo}.
-              </Text>
-            )}
+           {!editingEntry && dateTo !== dateFrom && (
+  <>
+    <TouchableOpacity
+      onPress={() => setSkipWeekends(v => !v)}
+      activeOpacity={0.7}
+      style={styles.weekendToggleRow}
+    >
+      <View
+        style={[
+          styles.weekendCheckbox,
+          { borderColor: skipWeekends ? colors.yellow : theme.border, backgroundColor: skipWeekends ? colors.yellow : 'transparent' },
+        ]}
+      >
+        {skipWeekends && <Check color={colors.black} size={14} />}
+      </View>
+      <Text style={[styles.weekendToggleText, { color: theme.text }]}>Skip weekends (Sat & Sun)</Text>
+    </TouchableOpacity>
+
+    <Text style={[styles.rangeHint, { color: theme.subtext, marginTop: 0 }]}>
+      This will fill {expandDateRange(dateFrom, dateTo, skipWeekends).length} day
+      {expandDateRange(dateFrom, dateTo, skipWeekends).length === 1 ? '' : 's'} from {dateFrom} to {dateTo}
+      {skipWeekends ? ' (weekends skipped)' : ''}.
+    </Text>
+  </>
+)}
 
             <View style={styles.fieldGroup}>
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SITE (OPTIONAL)</Text>
@@ -2562,6 +2591,9 @@ const styles = StyleSheet.create({
   selectionCopy: { color: DRAG_FILL_BORDER, fontWeight: '700', fontSize: 13 },
   selectionDeleteBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   selectionDelete: { color: '#ef4444', fontWeight: '700', fontSize: 13 },
+  weekendToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+weekendCheckbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+weekendToggleText: { fontSize: 14, fontWeight: '600' },
   colourBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 8 },
   colourBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, height: 40 },
   colourBtnText: { fontSize: 14, fontWeight: '600' },
