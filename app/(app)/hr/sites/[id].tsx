@@ -11,6 +11,7 @@ import {
   FileText, Upload, MessageSquare, History, X, Image as ImageIcon, Video
 } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { mapsUrlFor, isUrl } from '../../../../lib/maps';
 import { notify, confirm } from '../../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -516,10 +517,19 @@ function SiteDetail() {
               )}
             </View>
             <View style={styles.infoRow}>
-              <Text style={[styles.infoLabel, { color: theme.subtext }]}>ADDRESS / LOCATION</Text>
-              <Text style={[styles.infoValue, { color: details.address ? theme.text : theme.muted }]}>
-                {details.address ?? 'Not set'}
-              </Text>
+              <Text style={[styles.infoLabel, { color: theme.subtext }]}>LOCATION (GOOGLE MAPS)</Text>
+              {details.address ? (
+                <TouchableOpacity onPress={() => Linking.openURL(mapsUrlFor(details.address as string))}>
+                  <Text style={[styles.infoValue, { color: colors.yellow, fontWeight: '700', textDecorationLine: 'underline' }]}>
+                    Open in Google Maps
+                  </Text>
+                  {!isUrl(details.address) && (
+                    <Text style={[styles.infoValue, { color: theme.text }]}>{details.address}</Text>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <Text style={[styles.infoValue, { color: theme.muted }]}>Not set</Text>
+              )}
             </View>
             <View style={styles.infoRow}>
               <Text style={[styles.infoLabel, { color: theme.subtext }]}>ACCESS INFO</Text>
@@ -698,10 +708,10 @@ function SiteDetail() {
           </View>
           <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <View style={styles.fieldGroup}>
-              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>ADDRESS / LOCATION</Text>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>LOCATION (GOOGLE MAPS LINK)</Text>
               <TextInput
                 style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, height: 70, textAlignVertical: 'top' }]}
-                placeholder="e.g. Plot 12, Modderfontein Road"
+                placeholder="Paste the Google Maps link (Share → Copy link). A plain address also works."
                 placeholderTextColor={theme.muted}
                 value={addressInput}
                 onChangeText={setAddressInput}

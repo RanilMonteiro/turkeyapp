@@ -1,15 +1,16 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import RequirePermission from '../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator, Modal, TextInput, useWindowDimensions,
   PanResponder, GestureResponderEvent, Platform,
-  BackHandler,
+  BackHandler, Linking,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check, Search, ZoomIn, ZoomOut } from 'lucide-react-native';
+import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check, Search, MapPin, Key } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { getHolidayName } from '../../../lib/saHolidays';
+import { mapsUrlFor, isUrl } from '../../../lib/maps';
 import { notify, confirm } from '../../../lib/notify';
 import {
   exportCalendarPdf, PdfScope, HIGHLIGHT_COLOURS, HighlightKey, optionColour,
@@ -49,8 +50,8 @@ const DRAG_FILL_BORDER = '#2563eb';
 const DRAG_FILL_TINT = '#bfdbfe';
 const DRAG_SOURCE_BORDER = '#b45309';
 
-const TESTING_TYPE_OPTIONS = ['Brake Testing', 'Lux Testing', 'Brake and Lux Testing', 'Inspections'];
-const TAM_STATUS_OPTIONS = ['On TAM', 'Not On TAM', 'Brake and Inspection'];
+const TESTING_TYPE_OPTIONS = ['Brake Testing', 'Lux Testing', 'Brake and Lux Testing', 'Brake and Inspection', 'Inspections'];
+const TAM_STATUS_OPTIONS = ['On TAM', 'Not On TAM'];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // Quote -> Sales Order -> Invoice. A Quote/Sales Order stands alone; once it
@@ -267,27 +268,8 @@ function buildMonthGrid(year: number, month: number): (string | null)[][] {
   return weeks;
 }
 
-// ---- View range (1 / 2 / 3 weeks or a whole month) and zoom ----
-type RangeMode = 'month' | 1 | 2 | 3;
-const ZOOM_STEPS = [0.6, 0.7, 0.8, 0.9, 1, 1.15, 1.3];
-
 function readPref(key: string): string | null {
   try { return (globalThis as any).localStorage?.getItem(key) ?? null; } catch { return null; }
-}
-function todayString(): string {
-  const n = new Date();
-  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-}
-// The Sunday on or before a date (the grid starts on Sunday)
-function weekStartOf(dateStr: string): string {
-  return addDaysStr(dateStr, -new Date(dateStr + 'T00:00:00').getDay());
-}
-function buildWeeksFrom(startStr: string, numWeeks: number): (string | null)[][] {
-  const weeks: (string | null)[][] = [];
-  for (let w = 0; w < numWeeks; w++) {
-    weeks.push(Array.from({ length: 7 }, (_, d) => addDaysStr(startStr, w * 7 + d)));
-  }
-  return weeks;
 }
 
 // Cells are white by default (filled or empty). A day only changes colour when
@@ -312,44 +294,16 @@ function OperationalCalendar() {
   const isDark = useColorScheme() === 'dark';
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
-  // How much of the calendar is shown, and how big it is (both remembered on web,
-  // so someone on a small laptop only has to pick it once).
-  const [rangeMode, setRangeMode] = useState<RangeMode>(() => {
-    const v = readPref('opcal_range');
-    return v === '1' ? 1 : v === '2' ? 2 : v === '3' ? 3 : 'month';
-  });
-  const [zoom, setZoom] = useState<number>(() => {
-    const v = parseFloat(readPref('opcal_zoom') ?? '');
-    return ZOOM_STEPS.includes(v) ? v : 1;
-  });
-  const [anchor, setAnchor] = useState<string>(() => weekStartOf(todayString()));
   // "Compact" hides everything except the date changer, to give the grid the whole screen
   const [compact, setCompact] = useState<boolean>(() => readPref('opcal_compact') === '1');
-  const rowHeight = Math.round((isLandscape ? LANDSCAPE_ROW_HEIGHT : PORTRAIT_ROW_HEIGHT) * zoom);
-
-  // Cell text/padding scaled with the zoom
-  const cs = useMemo(() => {
-    const keys = ['dayCellContent', 'dayNumber', 'cellMineName', 'cellSubText', 'cellCommentBox', 'cellCommentText',
-      'cellPill', 'cellPillText', 'cellInvoiceText', 'cellInvoiceTextSide', 'cellHolidayName',
-      'cellLeaveBadge', 'cellLeaveTitle', 'cellLeaveType'] as const;
-    const scaleProps = ['fontSize', 'lineHeight', 'gap', 'marginTop', 'paddingHorizontal', 'paddingVertical', 'borderRadius'];
-    const out: Record<string, any> = {};
-    keys.forEach(k => {
-      const flat: any = { ...(StyleSheet.flatten((styles as any)[k]) as any) };
-      if (zoom !== 1) {
-        scaleProps.forEach(pr => { if (typeof flat[pr] === 'number') flat[pr] = Math.round(flat[pr] * zoom * 10) / 10; });
-      }
-      out[k] = flat;
-    });
-    return out as Record<typeof keys[number], any>;
-  }, [zoom]);
+  const rowHeight = isLandscape ? LANDSCAPE_ROW_HEIGHT : PORTRAIT_ROW_HEIGHT;
 
   useEffect(() => {
     try {
       const ls = (globalThis as any).localStorage;
-      if (ls) { ls.setItem('opcal_range', String(rangeMode)); ls.setItem('opcal_zoom', String(zoom)); ls.setItem('opcal_compact', compact ? '1' : '0'); }
+      if (ls) ls.setItem('opcal_compact', compact ? '1' : '0');
     } catch {}
-  }, [rangeMode, zoom, compact]);
+  }, [compact]);
 
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -377,6 +331,8 @@ function OperationalCalendar() {
   // Day detail modal (tap a filled day — shows everything including
   // comments, plus Edit if permitted)
   const [detailEntry, setDetailEntry] = useState<CalendarEntry | null>(null);
+  // Location (Google Maps link) + access info of the site, shown in the day summary
+  const [detailSite, setDetailSite] = useState<{ address: string | null; access_info: string | null } | null>(null);
   const [detailDate, setDetailDate] = useState<string | null>(null);
 
   // Entry edit modal
@@ -467,6 +423,19 @@ function OperationalCalendar() {
     return () => sub.remove();
   }, [showSearch, showMonthPicker, showTechDropdown, exportModalVisible, exporting, entryModalVisible, detailEntry, clipboard, selection, paintColor]);
 
+  // When a day's summary opens, load that site's location + access info
+  useEffect(() => {
+    setDetailSite(null);
+    if (!detailEntry) return;
+    const siteId = detailEntry.site_id
+      ?? sites.find(st => st.name.trim().toLowerCase() === (detailEntry.mine_name ?? '').trim().toLowerCase())?.id;
+    if (!siteId) return;
+    let cancelled = false;
+    supabase.from('site_details').select('address, access_info').eq('site_id', siteId).maybeSingle()
+      .then(({ data }) => { if (!cancelled) setDetailSite(data ?? null); });
+    return () => { cancelled = true; };
+  }, [detailEntry?.id, detailEntry?.site_id]);
+
   // Ctrl+F / Cmd+F opens the site search (web only; not for technicians)
   useEffect(() => {
     if (Platform.OS !== 'web' || role === 'technician') return;
@@ -524,7 +493,6 @@ function OperationalCalendar() {
     setClipboard(null);
     const d = new Date(r.start + 'T00:00:00');
     setViewDate({ year: d.getFullYear(), month: d.getMonth() });
-    setAnchor(weekStartOf(r.start));
     setSelectedTechnicianId(r.techId);
     setShowSearch(false);
   }
@@ -698,10 +666,7 @@ function OperationalCalendar() {
   entries.forEach(e => { entriesByDate[e.entry_date] = e; });
 
   const selectedTechnician = technicians.find(t => t.id === selectedTechnicianId);
-  const weeks = rangeMode === 'month' ? buildMonthGrid(viewDate.year, viewDate.month) : buildWeeksFrom(anchor, rangeMode);
-  const rangeLabel = rangeMode === 'month'
-    ? new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
-    : formatRangeLabel(weeks[0][0] as string, weeks[weeks.length - 1][6] as string);
+  const weeks = buildMonthGrid(viewDate.year, viewDate.month);
 
   // How many highlighted days actually hold an entry (what Delete would remove),
   // and whether Copy makes sense (first highlighted day has an entry + more days).
@@ -722,44 +687,6 @@ function OperationalCalendar() {
   liveRef.current.paintColor = paintColor;
   liveRef.current.leaveDays = leaveDays;
   liveRef.current.techNames = Object.fromEntries(technicians.map(t => [t.id, t.full_name]));
-
-  function syncViewDateFromAnchor(a: string) {
-    const d = new Date(addDaysStr(a, 3) + 'T00:00:00'); // mid-week decides the month
-    setViewDate({ year: d.getFullYear(), month: d.getMonth() });
-  }
-  function goPrev() {
-    if (rangeMode === 'month') return goToPreviousMonth();
-    setSelection(null);
-    const a = addDaysStr(anchor, -7 * rangeMode);
-    setAnchor(a); syncViewDateFromAnchor(a);
-  }
-  function goNext() {
-    if (rangeMode === 'month') return goToNextMonth();
-    setSelection(null);
-    const a = addDaysStr(anchor, 7 * rangeMode);
-    setAnchor(a); syncViewDateFromAnchor(a);
-  }
-  function goToToday() {
-    setSelection(null);
-    const now = new Date();
-    setViewDate({ year: now.getFullYear(), month: now.getMonth() });
-    setAnchor(weekStartOf(todayString()));
-  }
-  function changeRange(m: RangeMode) {
-    setSelection(null);
-    if (m !== 'month' && rangeMode === 'month') {
-      const now = new Date();
-      const isCurrent = now.getFullYear() === viewDate.year && now.getMonth() === viewDate.month;
-      setAnchor(weekStartOf(isCurrent ? todayString() : toDateString(viewDate.year, viewDate.month, 1)));
-    } else if (m === 'month' && rangeMode !== 'month') {
-      syncViewDateFromAnchor(anchor);
-    }
-    setRangeMode(m);
-  }
-  function stepZoom(dir: 1 | -1) {
-    const i = ZOOM_STEPS.indexOf(zoom);
-    setZoom(ZOOM_STEPS[Math.max(0, Math.min(ZOOM_STEPS.length - 1, i + dir))]);
-  }
 
   function goToPreviousMonth() {
     setSelection(null);
@@ -1578,7 +1505,7 @@ function OperationalCalendar() {
 
         {/* Month nav */}
         <View style={[styles.monthNavRow, { position: 'relative' }, compact && !paintColor && { paddingTop: isLandscape ? 14 : 48 }]}>
-          <TouchableOpacity onPress={goPrev} style={styles.monthNavBtn}>
+          <TouchableOpacity onPress={goToPreviousMonth} style={styles.monthNavBtn}>
             <ChevronLeft color={colors.yellow} size={22} />
           </TouchableOpacity>
           <TouchableOpacity
@@ -1586,11 +1513,11 @@ function OperationalCalendar() {
             style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 160 }}
           >
             <Text style={[styles.monthNavLabel, { color: theme.text, minWidth: 0 }]}>
-              {rangeLabel}
+              {new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
             </Text>
             <ChevronDown color={theme.muted} size={16} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={goNext} style={styles.monthNavBtn}>
+          <TouchableOpacity onPress={goToNextMonth} style={styles.monthNavBtn}>
             <ChevronRight color={colors.yellow} size={22} />
           </TouchableOpacity>
 
@@ -1607,35 +1534,6 @@ function OperationalCalendar() {
             {compact ? <Check color="#22c55e" size={18} /> : <X color={theme.muted} size={18} />}
           </TouchableOpacity>
         </View>
-
-        {/* View: how much to show + zoom */}
-        {!compact && (
-        <View style={styles.viewControlsRow}>
-          <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: theme.border, borderRadius: 10, overflow: 'hidden' }}>
-            {([[1, '1 wk'], [2, '2 wks'], [3, '3 wks'], ['month', 'Month']] as [RangeMode, string][]).map(([k, label]) => (
-              <TouchableOpacity
-                key={String(k)}
-                onPress={() => changeRange(k)}
-                style={{ paddingHorizontal: 12, paddingVertical: 7, backgroundColor: rangeMode === k ? colors.yellow : theme.card }}
-              >
-                <Text style={{ color: rangeMode === k ? '#1e293b' : theme.subtext, fontSize: 12.5, fontWeight: '700' }}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <TouchableOpacity onPress={goToToday} style={[styles.viewPill, { borderColor: theme.border, backgroundColor: theme.card }]}>
-            <Text style={{ color: theme.text, fontSize: 12.5, fontWeight: '700' }}>Today</Text>
-          </TouchableOpacity>
-          <View style={[styles.viewPill, { borderColor: theme.border, backgroundColor: theme.card, gap: 10 }]}>
-            <TouchableOpacity onPress={() => stepZoom(-1)} disabled={zoom === ZOOM_STEPS[0]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <ZoomOut color={zoom === ZOOM_STEPS[0] ? theme.muted : colors.yellow} size={18} />
-            </TouchableOpacity>
-            <Text style={{ color: theme.text, fontSize: 12.5, fontWeight: '700', minWidth: 36, textAlign: 'center' }}>{Math.round(zoom * 100)}%</Text>
-            <TouchableOpacity onPress={() => stepZoom(1)} disabled={zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <ZoomIn color={zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1] ? theme.muted : colors.yellow} size={18} />
-            </TouchableOpacity>
-          </View>
-        </View>
-        )}
 
         <ScrollView
           contentContainerStyle={{ paddingBottom: 24 }}
@@ -1670,7 +1568,7 @@ function OperationalCalendar() {
                         key={di}
                         style={[styles.dayCell, { width: cellWidth, height: rowHeight, backgroundColor: CELL_PAD_BG, borderColor: CELL_BORDER }]}
                       >
-                        <Text style={[cs.dayNumber, { color: CELL_PAD_TEXT }]}>
+                        <Text style={[styles.dayNumber, { color: CELL_PAD_TEXT }]}>
                           {adjacentDayNumber(viewDate.year, viewDate.month, wi * 7 + di)}
                         </Text>
                       </View>
@@ -1713,21 +1611,17 @@ function OperationalCalendar() {
                         isDragSource && styles.dayCellDragSource,
                       ]}
                     >
-                      <Text style={[cs.dayNumber, isEmptyWeekend && { color: '#64748b' }]}>
-                        {rangeMode !== 'month' && (dayNum === 1 || (wi === 0 && di === 0))
-                          ? `${dayNum} ${new Date(dateStr + 'T00:00:00').toLocaleDateString('en-ZA', { month: 'short' })}`
-                          : dayNum}
-                      </Text>
+                      <Text style={[styles.dayNumber, isEmptyWeekend && { color: '#64748b' }]}>{dayNum}</Text>
 
                       {!!holidayName && (
-                        <Text style={cs.cellHolidayName} numberOfLines={2}>{holidayName}</Text>
+                        <Text style={styles.cellHolidayName} numberOfLines={2}>{holidayName}</Text>
                       )}
 
                       {leaveDays[dateStr] !== undefined && (
-                        <View style={cs.cellLeaveBadge}>
-                          <Text style={cs.cellLeaveTitle}>LEAVE</Text>
+                        <View style={styles.cellLeaveBadge}>
+                          <Text style={styles.cellLeaveTitle}>LEAVE</Text>
                           {!!leaveDays[dateStr] && (
-                            <Text style={cs.cellLeaveType} numberOfLines={2}>
+                            <Text style={styles.cellLeaveType} numberOfLines={2}>
                               {leaveDays[dateStr]}
                             </Text>
                           )}
@@ -1735,10 +1629,10 @@ function OperationalCalendar() {
                       )}
 
                       {entry && (
-                        <View style={cs.dayCellContent}>
+                        <View style={styles.dayCellContent}>
                           {!!entry.mine_name && (
                             <Text
-                              style={[cs.cellMineName, { fontSize: Math.round(titleFontSize(entry.mine_name) * zoom * 10) / 10, lineHeight: Math.round(titleFontSize(entry.mine_name) * zoom * 1.2) }]}
+                              style={[styles.cellMineName, { fontSize: titleFontSize(entry.mine_name), lineHeight: Math.round(titleFontSize(entry.mine_name) * 1.2) }]}
                               numberOfLines={3}
                               adjustsFontSizeToFit
                               minimumFontScale={0.7}
@@ -1747,32 +1641,32 @@ function OperationalCalendar() {
                             </Text>
                           )}
                           {entry.contact_person && (
-                            <Text style={cs.cellSubText} numberOfLines={2}>
+                            <Text style={styles.cellSubText} numberOfLines={2}>
                               {entry.contact_person}
                             </Text>
                           )}
                           {entry.contact_number && (
-                            <Text style={cs.cellSubText} numberOfLines={2}>
+                            <Text style={styles.cellSubText} numberOfLines={2}>
                               {entry.contact_number}
                             </Text>
                           )}
                           {entry.comments && (
-                            <View style={cs.cellCommentBox}>
-                              <Text style={cs.cellCommentText} numberOfLines={entry.mine_name ? 2 : 6}>
+                            <View style={styles.cellCommentBox}>
+                              <Text style={styles.cellCommentText} numberOfLines={entry.mine_name ? 2 : 6}>
                                 {entry.comments}
                               </Text>
                             </View>
                           )}
                           {entry.testing_type && (
-                            <View style={[cs.cellPill, { backgroundColor: optionColour(entry.testing_type) }]}>
-                              <Text style={[cs.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
+                            <View style={[styles.cellPill, { backgroundColor: optionColour(entry.testing_type) }]}>
+                              <Text style={[styles.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
                                 {entry.testing_type}
                               </Text>
                             </View>
                           )}
                           {entry.tam_status && (
-                            <View style={[cs.cellPill, { backgroundColor: optionColour(entry.tam_status) }]}>
-                              <Text style={[cs.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
+                            <View style={[styles.cellPill, { backgroundColor: optionColour(entry.tam_status) }]}>
+                              <Text style={[styles.cellPillText, { color: '#ffffff' }]} numberOfLines={1}>
                                 {entry.tam_status}
                               </Text>
                             </View>
@@ -1787,7 +1681,7 @@ function OperationalCalendar() {
                             // Sales Order + Invoice on one centred line: "SO 234   INV 344"
                             return (
                               <Text
-                                style={[cs.cellInvoiceText, docs.length > 1 && cs.cellInvoiceTextSide]}
+                                style={[styles.cellInvoiceText, docs.length > 1 && styles.cellInvoiceTextSide]}
                                 numberOfLines={1}
                                 adjustsFontSizeToFit
                                 minimumFontScale={0.6}
@@ -1944,7 +1838,6 @@ function OperationalCalendar() {
                     onPress={() => {
                       setSelection(null);
                       setViewDate({ year: pickerYear, month: m });
-                      setAnchor(weekStartOf(toDateString(pickerYear, m, 1)));
                       setShowMonthPicker(false);
                     }}
                   >
@@ -2120,6 +2013,33 @@ function OperationalCalendar() {
                         <Text style={[styles.metaText, { color: theme.subtext }]}>{detailEntry.contact_number}</Text>
                       </View>
                     )}
+                  </View>
+                )}
+
+                {!!detailSite?.address && (
+                  <TouchableOpacity
+                    onPress={() => Linking.openURL(mapsUrlFor(detailSite.address as string))}
+                    style={[styles.metaItem, { marginTop: 8, alignItems: 'flex-start' }]}
+                  >
+                    <MapPin color={colors.yellow} size={14} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.yellow, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline' }}>
+                        Open in Google Maps
+                      </Text>
+                      {!isUrl(detailSite.address) && (
+                        <Text style={[styles.metaText, { color: theme.subtext }]}>{detailSite.address}</Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                {!!detailSite?.access_info && (
+                  <View style={[styles.metaItem, { marginTop: 8, alignItems: 'flex-start' }]}>
+                    <Key color={theme.subtext} size={14} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: theme.subtext, fontSize: 11, fontWeight: '700', letterSpacing: 0.6 }}>ACCESS INFO</Text>
+                      <Text style={[styles.metaText, { color: theme.text }]}>{detailSite.access_info}</Text>
+                    </View>
                   </View>
                 )}
 
@@ -2541,8 +2461,6 @@ const styles = StyleSheet.create({
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },
   monthNavBtn: { padding: 8 },
   compactToggle: { position: 'absolute', right: 12, top: 6, width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  viewControlsRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 12, marginBottom: 8 },
-  viewPill: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7 },
   monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },
   weekRow: { flexDirection: 'row' },
   weekdayHeaderCell: { paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
