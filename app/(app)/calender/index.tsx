@@ -347,6 +347,7 @@ function OperationalCalendar() {
   const [siteContacts, setSiteContacts] = useState<Record<string, SiteContact[]>>({});
   const [showSiteDropdown, setShowSiteDropdown] = useState(false);
   const [siteSearch, setSiteSearch] = useState('');
+  const [addingSite, setAddingSite] = useState(false);
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
   const [viewDate, setViewDate] = useState(() => {
     const now = new Date();
@@ -1197,6 +1198,61 @@ function OperationalCalendar() {
     setContactNumber(contacts.map(c => c.phone).filter(Boolean).join('/'));
     setShowSiteDropdown(false);
     setSiteSearch('');
+  }
+
+  // The search text doesn't match an existing site exactly -> offer to add it
+  const typedSiteName = siteSearch.trim();
+  const canAddTypedSite =
+    typedSiteName.length > 0 &&
+    !sites.some(st => st.name.trim().toLowerCase() === typedSiteName.toLowerCase());
+
+  // Adds a brand-new site straight from the calendar. It lands in the Sites
+  // list automatically (same `sites` table), and is picked for this day.
+  async function addSiteFromCalendar() {
+    const name = typedSiteName;
+    if (!name || addingSite) return;
+    setAddingSite(true);
+
+    let newId: string | null = null;
+    const { data: rpcId, error: rpcError } = await supabase.rpc('create_site_from_calendar', { p_name: name });
+    if (!rpcError && rpcId) {
+      newId = rpcId as string;
+    } else if (rpcError && !/function|PGRST202|schema cache/i.test(`${rpcError.code ?? ''} ${rpcError.message}`)) {
+      setAddingSite(false);
+      notify('Could not add site', rpcError.message);
+      return;
+    } else {
+      // Function not installed yet - fall back to a direct insert (needs "manage sites")
+      const { data: userData } = await supabase.auth.getUser();
+      const { data: inserted, error } = await supabase
+        .from('sites')
+        .insert({ name, created_by: userData.user?.id })
+        .select('id')
+        .single();
+      if (error) {
+        setAddingSite(false);
+        notify('Could not add site', error.message);
+        return;
+      }
+      newId = inserted.id;
+    }
+
+    // Leave a trail in the site's activity log (best effort)
+    const { data: me } = await supabase.auth.getUser();
+    supabase.from('site_activity_log').insert({
+      site_id: newId,
+      actor_id: me.user?.id,
+      action: 'added_site',
+      description: `Site "${name}" added from the Operational Calendar`,
+    }).then(() => {});
+
+    await fetchSitesAndContacts();
+    // Pick it for this day. Contact boxes are left alone - a new site has no contacts yet.
+    setSelectedSiteId(newId);
+    setMineName(name);
+    setShowSiteDropdown(false);
+    setSiteSearch('');
+    setAddingSite(false);
   }
 
   // Removes the chosen site so the day becomes a note-only day.
@@ -2235,9 +2291,23 @@ function OperationalCalendar() {
                         <Text style={[styles.dropdownItemText, { color: '#ef4444' }]}>No site (clear)</Text>
                       </TouchableOpacity>
                     )}
+                    {canAddTypedSite && (
+                      <TouchableOpacity
+                        style={[styles.dropdownItem, { borderBottomColor: theme.border, backgroundColor: `${colors.yellow}15` }]}
+                        onPress={addSiteFromCalendar}
+                        disabled={addingSite}
+                      >
+                        <Text style={[styles.dropdownItemText, { color: colors.yellow, fontWeight: '700' }]}>
+                          {addingSite ? 'Adding…' : `+ Add “${typedSiteName}” as a new site`}
+                        </Text>
+                        <Text style={[styles.dropdownItemSub, { color: theme.subtext }]}>
+                          It will also appear on the Sites screen
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                     {filteredSites.length === 0 ? (
                       <Text style={[styles.dropdownItemSub, { color: theme.subtext, padding: 14 }]}>
-                        {sites.length === 0 ? 'No sites yet. Sites are added on the Sites screen.' : 'No sites match that search.'}
+                        {sites.length === 0 ? 'No sites yet. Type a name above to add the first one.' : canAddTypedSite ? 'No existing site matches that.' : 'No sites match that search.'}
                       </Text>
                     ) : (
                       filteredSites.map(site => {
