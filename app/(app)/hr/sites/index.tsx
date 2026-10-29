@@ -1,16 +1,15 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import RequirePermission from '../../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
   TextInput, Modal
 } from 'react-native';
-import { Plus, MapPin, Edit, Trash2, X, ChevronRight } from 'lucide-react-native';
+import { Plus, MapPin, Edit, Trash2, X, ChevronRight, Search, ArrowLeft } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
 
 const colors = {
   yellow: '#fbbf24',
@@ -42,6 +41,7 @@ function SitesManager() {
   const [editingSite, setEditingSite] = useState<Site | null>(null);
   const [siteName, setSiteName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
 
   // Only superuser (always) or an admin/hr with can_manage_sites can
   // create/rename/delete a site. Everyone else just browses the list
@@ -58,6 +58,12 @@ function SitesManager() {
     subtext: isDark ? colors.gray[400] : colors.gray[500],
     muted: isDark ? colors.gray[500] : colors.gray[400],
   };
+
+  const filteredSites = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return sites;
+    return sites.filter((s) => s.name.toLowerCase().includes(q));
+  }, [sites, search]);
 
   useFocusEffect(
     useCallback(() => {
@@ -202,19 +208,50 @@ function SitesManager() {
         )}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {sites.length === 0 ? (
+      {/* Search */}
+      <View style={[styles.searchWrap, { backgroundColor: theme.background }]}>
+        <View style={[styles.searchBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Search color={theme.muted} size={18} />
+          <TextInput
+            style={[styles.searchInput, { color: theme.text }]}
+            placeholder="Search sites"
+            placeholderTextColor={theme.muted}
+            value={search}
+            onChangeText={setSearch}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            clearButtonMode="never"
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
+              <X color={theme.muted} size={18} />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {filteredSites.length === 0 ? (
           <View style={[styles.emptyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <MapPin color={theme.muted} size={40} />
-            <Text style={[styles.emptyText, { color: theme.subtext }]}>No sites yet</Text>
-            {canManage && (
+            <Text style={[styles.emptyText, { color: theme.subtext }]}>
+              {sites.length === 0 ? 'No sites yet' : 'No matching sites'}
+            </Text>
+            {sites.length === 0 ? (
+              canManage && (
+                <Text style={[styles.emptyHint, { color: theme.muted }]}>
+                  Tap + to add your first site
+                </Text>
+              )
+            ) : (
               <Text style={[styles.emptyHint, { color: theme.muted }]}>
-                Tap + to add your first site
+                {`Nothing found for "${search.trim()}"`}
               </Text>
             )}
           </View>
         ) : (
-          sites.map((site) => (
+          filteredSites.map((site) => (
             <TouchableOpacity
               key={site.id}
               style={[styles.siteCard, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -328,6 +365,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  searchWrap: { paddingHorizontal: 16, paddingTop: 12 },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 46,
+  },
+  searchInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
   content: { padding: 16, gap: 12 },
   emptyCard: {
     padding: 48,
