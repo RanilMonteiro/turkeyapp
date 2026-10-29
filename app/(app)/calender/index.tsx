@@ -323,6 +323,8 @@ function OperationalCalendar() {
     return ZOOM_STEPS.includes(v) ? v : 1;
   });
   const [anchor, setAnchor] = useState<string>(() => weekStartOf(todayString()));
+  // "Compact" hides everything except the date changer, to give the grid the whole screen
+  const [compact, setCompact] = useState<boolean>(() => readPref('opcal_compact') === '1');
   const rowHeight = Math.round((isLandscape ? LANDSCAPE_ROW_HEIGHT : PORTRAIT_ROW_HEIGHT) * zoom);
 
   // Cell text/padding scaled with the zoom
@@ -345,9 +347,9 @@ function OperationalCalendar() {
   useEffect(() => {
     try {
       const ls = (globalThis as any).localStorage;
-      if (ls) { ls.setItem('opcal_range', String(rangeMode)); ls.setItem('opcal_zoom', String(zoom)); }
+      if (ls) { ls.setItem('opcal_range', String(rangeMode)); ls.setItem('opcal_zoom', String(zoom)); ls.setItem('opcal_compact', compact ? '1' : '0'); }
     } catch {}
-  }, [rangeMode, zoom]);
+  }, [rangeMode, zoom, compact]);
 
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -1398,6 +1400,8 @@ function OperationalCalendar() {
   return (
     <>
       <View style={[styles.container, { backgroundColor: theme.background }]}>
+        {!compact && (
+          <>
         <View style={[styles.header, isLandscape && styles.headerLandscape]}>
           <TouchableOpacity onPress={() => router.back()}>
             <ArrowLeft color={colors.yellow} size={24} />
@@ -1427,9 +1431,13 @@ function OperationalCalendar() {
             <ChevronDown color={theme.muted} size={16} />
           </TouchableOpacity>
         )}
+          </>
+        )}
 
         {/* Colours — open the key, pick a colour, then tap/drag over days */}
-        <View style={styles.colourBar}>
+        {(!compact || paintColor) && (
+        <View style={[styles.colourBar, compact && { marginTop: isLandscape ? 8 : 44 }]}>
+          {!compact && (
           <TouchableOpacity
             onPress={() => setShowColourPanel(v => !v)}
             style={[styles.colourBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
@@ -1438,6 +1446,7 @@ function OperationalCalendar() {
             <Text style={[styles.colourBtnText, { color: theme.text }]}>Colours</Text>
             <ChevronDown color={theme.muted} size={16} />
           </TouchableOpacity>
+          )}
 
           {paintColor && (
             <View style={[styles.paintBanner, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -1456,8 +1465,9 @@ function OperationalCalendar() {
             </View>
           )}
         </View>
+        )}
 
-        {showColourPanel && (
+        {!compact && showColourPanel && (
           <View style={[styles.colourPanel, { backgroundColor: theme.card, borderColor: theme.border }]}>
             {HIGHLIGHT_COLOURS.map(c => (
               <TouchableOpacity
@@ -1510,11 +1520,11 @@ function OperationalCalendar() {
           </View>
         )}
 
-        {!canEdit && (
+        {!compact && !canEdit && (
           <Text style={[styles.readOnlyNote, { color: theme.muted }]}>View only</Text>
         )}
 
-        {canEdit && !paintColor && !selection && (
+        {!compact && canEdit && !paintColor && !selection && (
           <Text style={[styles.dragHint, { color: theme.subtext }]}>
             Tip: press & hold a day, drag across (down or diagonally) to highlight a block, then tap other days to add or remove them. Then copy, move or delete.
           </Text>
@@ -1567,7 +1577,7 @@ function OperationalCalendar() {
         )}
 
         {/* Month nav */}
-        <View style={styles.monthNavRow}>
+        <View style={[styles.monthNavRow, { position: 'relative' }, compact && !paintColor && { paddingTop: isLandscape ? 14 : 48 }]}>
           <TouchableOpacity onPress={goPrev} style={styles.monthNavBtn}>
             <ChevronLeft color={colors.yellow} size={22} />
           </TouchableOpacity>
@@ -1583,9 +1593,23 @@ function OperationalCalendar() {
           <TouchableOpacity onPress={goNext} style={styles.monthNavBtn}>
             <ChevronRight color={colors.yellow} size={22} />
           </TouchableOpacity>
+
+          {/* X hides everything but the date changer; the tick brings it all back */}
+          <TouchableOpacity
+            onPress={() => setCompact(v => !v)}
+            accessibilityLabel={compact ? 'Show toolbar' : 'Hide toolbar'}
+            style={[
+              styles.compactToggle,
+              { borderColor: compact ? '#22c55e' : theme.border, backgroundColor: theme.card },
+              compact && !paintColor && { top: isLandscape ? 14 : 48 },
+            ]}
+          >
+            {compact ? <Check color="#22c55e" size={18} /> : <X color={theme.muted} size={18} />}
+          </TouchableOpacity>
         </View>
 
         {/* View: how much to show + zoom */}
+        {!compact && (
         <View style={styles.viewControlsRow}>
           <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: theme.border, borderRadius: 10, overflow: 'hidden' }}>
             {([[1, '1 wk'], [2, '2 wks'], [3, '3 wks'], ['month', 'Month']] as [RangeMode, string][]).map(([k, label]) => (
@@ -1611,6 +1635,7 @@ function OperationalCalendar() {
             </TouchableOpacity>
           </View>
         </View>
+        )}
 
         <ScrollView
           contentContainerStyle={{ paddingBottom: 24 }}
@@ -2515,6 +2540,7 @@ const styles = StyleSheet.create({
   cellLeaveType: { fontSize: 12, fontWeight: '700', color: '#5b21b6', textAlign: 'center', marginTop: 1 },
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },
   monthNavBtn: { padding: 8 },
+  compactToggle: { position: 'absolute', right: 12, top: 6, width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   viewControlsRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 12, marginBottom: 8 },
   viewPill: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7 },
   monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },
