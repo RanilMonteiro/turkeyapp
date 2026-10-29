@@ -9,6 +9,7 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import { ArrowLeft, User, ChevronDown, ChevronLeft, ChevronRight, X, Trash2, Phone, MessageSquare, FileDown, Palette, Eraser, Check, Search } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
+import { getHolidayName } from '../../../lib/saHolidays';
 import { notify, confirm } from '../../../lib/notify';
 import {
   exportCalendarPdf, PdfScope, HIGHLIGHT_COLOURS, HighlightKey, optionColour,
@@ -1524,8 +1525,12 @@ function OperationalCalendar() {
                   // Empty Saturdays/Sundays are greyed out (same as the PDF).
                   // Anything on the day - an entry, a colour, or approved
                   // leave - makes it a normal white cell again.
+                  // South African public holidays show their name by default, on the
+                  // grey "Public holiday" colour (unless a colour was painted on the day).
+                  const holidayName = getHolidayName(dateStr);
+                  const bgColour = cellColour ?? (holidayName ? COLOUR_HEX.grey : undefined);
                   const isEmptyWeekend =
-                    (di === 0 || di === 6) && !entry && !cellColour && leaveDays[dateStr] === undefined;
+                    (di === 0 || di === 6) && !entry && !bgColour && leaveDays[dateStr] === undefined;
 
                   return (
                     <TouchableOpacity
@@ -1534,12 +1539,16 @@ function OperationalCalendar() {
                       onPress={canEdit ? undefined : () => handleDayPress(dateStr)}
                       style={[
                         styles.dayCell,
-                        { width: cellWidth, height: rowHeight, backgroundColor: isEmptyWeekend ? WEEKEND_BG : getCellBackground(cellColour), borderColor: CELL_BORDER },
+                        { width: cellWidth, height: rowHeight, backgroundColor: isEmptyWeekend ? WEEKEND_BG : getCellBackground(bgColour), borderColor: CELL_BORDER },
                         isSelected && !isDragSource && styles.dayCellFillHighlight,
                         isDragSource && styles.dayCellDragSource,
                       ]}
                     >
                       <Text style={[styles.dayNumber, isEmptyWeekend && { color: '#64748b' }]}>{dayNum}</Text>
+
+                      {!!holidayName && (
+                        <Text style={styles.cellHolidayName} numberOfLines={2}>{holidayName}</Text>
+                      )}
 
                       {leaveDays[dateStr] !== undefined && (
                         <View style={styles.cellLeaveBadge}>
@@ -2352,6 +2361,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ede9fe', borderWidth: 1.5, borderColor: '#7c3aed', borderRadius: 6,
     paddingHorizontal: 6, paddingVertical: 5, marginTop: 4, alignItems: 'center',
   },
+  cellHolidayName: { fontSize: 11, fontWeight: '800', color: '#1f2937', marginTop: 2 },
   cellLeaveTitle: { fontSize: 13, fontWeight: '800', color: '#5b21b6', letterSpacing: 0.6 },
   cellLeaveType: { fontSize: 12, fontWeight: '700', color: '#5b21b6', textAlign: 'center', marginTop: 1 },
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 8 },

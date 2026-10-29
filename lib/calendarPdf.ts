@@ -10,6 +10,7 @@ import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { supabase } from './supabase';
+import { getHolidayName } from './saHolidays';
 
 export type PdfScope = 'month' | 'year';
 
@@ -243,6 +244,13 @@ const CSS = `
     color: #64748b;
   }
 
+  .hol {
+    margin-top: calc(2pt * var(--s));
+    font-size: calc(6.4pt * var(--s));
+    font-weight: 800;
+    color: #1f2937;
+    line-height: 1.15;
+  }
   .leave {
     margin-top: calc(2.5pt * var(--s));
     background: #ede9fe;
@@ -343,7 +351,10 @@ function cellHtml(
   leaveType?: string
 ): string {
   const day = parseInt(dateStr.split('-')[2], 10);
-  const bg = colourKey ? COLOUR_HEX[colourKey] : undefined;
+  const holidayName = getHolidayName(dateStr);
+  // Public holidays default to the grey "Public holiday" colour and show their name
+  const bg = colourKey ? COLOUR_HEX[colourKey] : holidayName ? COLOUR_HEX.grey : undefined;
+  const holHtml = holidayName ? `<div class="hol">${esc(holidayName)}</div>` : '';
   const styleAttr = bg ? ` style="background:${bg};"` : '';
   const leaveHtml =
     leaveType !== undefined
@@ -354,8 +365,8 @@ function cellHtml(
     // anything on it (a colour, approved leave, or an entry below) it
     // is drawn normally.
     const dow = new Date(dateStr + 'T00:00:00').getDay();
-    const emptyWeekend = (dow === 0 || dow === 6) && !colourKey && leaveType === undefined;
-    return `<div class="cell${emptyWeekend ? ' weekend' : ''}"${styleAttr}><div class="day">${day}</div>${leaveHtml}</div>`;
+    const emptyWeekend = (dow === 0 || dow === 6) && !bg && leaveType === undefined;
+    return `<div class="cell${emptyWeekend ? ' weekend' : ''}"${styleAttr}><div class="day">${day}</div>${holHtml}${leaveHtml}</div>`;
   }
 
   const docParts = financialDocParts(
@@ -377,6 +388,7 @@ function cellHtml(
     <div class="cell filled"${styleAttr}>
       <div class="body">
       <div class="top"><div class="day">${day}</div>${mineHtml}</div>
+      ${holHtml}
       ${leaveHtml}
       ${entry.contact_person ? `<div class="sub">${esc(entry.contact_person)}</div>` : ''}
       ${entry.contact_number ? `<div class="sub">${esc(entry.contact_number)}</div>` : ''}
@@ -496,9 +508,11 @@ function miniMonthHtml(
             if (on) scheduled++;
             const bg = colours[dateStr]
               ? COLOUR_HEX[colours[dateStr]]
-              : leave[dateStr] !== undefined
-                ? '#ddd6fe'
-                : '';
+              : getHolidayName(dateStr)
+                ? COLOUR_HEX.grey
+                : leave[dateStr] !== undefined
+                  ? '#ddd6fe'
+                  : '';
             const style = bg ? ` style="background:${bg};${on ? '' : 'font-weight:800;'}"` : '';
             return `<td class="${on ? 'on' : ''}"${style}>${day}</td>`;
           })
