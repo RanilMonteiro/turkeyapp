@@ -188,7 +188,8 @@ type Selection = { sourceDate: string; dates: string[] };
 type Clipboard = {
   mode: 'copy' | 'move';
   sourceTechId: string;
-  items: { offset: number; entry: CalendarEntry }[];
+  // colour = the highlight colour painted on that day (it travels with the entry)
+  items: { offset: number; entry: CalendarEntry; colour: HighlightKey | null }[];
 };
 
 function toDateString(year: number, month: number, day: number): string {
@@ -200,19 +201,15 @@ function toDateString(year: number, month: number, day: number): string {
 // Every date string between from/to inclusive — used to spread one
 // entry across multiple days when the person sets a date range, and
 // to work out which days a highlight-drag gesture passed over.
-// With skipWeekends on, Saturdays and Sundays are left out.
-function expandDateRange(from: string, to: string, skipWeekends = false): string[] {
+function expandDateRange(from: string, to: string): string[] {
   const dates: string[] = [];
   let current = new Date(from + 'T00:00:00');
   const end = new Date(to + 'T00:00:00');
   while (current <= end) {
-    const dow = current.getDay(); // 0 = Sun, 6 = Sat
-    if (!(skipWeekends && (dow === 0 || dow === 6))) {
-      const y = current.getFullYear();
-      const m = String(current.getMonth() + 1).padStart(2, '0');
-      const d = String(current.getDate()).padStart(2, '0');
-      dates.push(`${y}-${m}-${d}`);
-    }
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, '0');
+    const d = String(current.getDate()).padStart(2, '0');
+    dates.push(`${y}-${m}-${d}`);
     current.setDate(current.getDate() + 1);
   }
   return dates;
@@ -383,8 +380,6 @@ function OperationalCalendar() {
   const [showTamStatusDropdown, setShowTamStatusDropdown] = useState(false);
   const [showFinancialDocDropdown, setShowFinancialDocDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
-  // When a date range is picked, leave Saturdays and Sundays empty
-  const [skipWeekends, setSkipWeekends] = useState(false);
 
   // PDF export
   const [exportModalVisible, setExportModalVisible] = useState(false);
@@ -842,11 +837,18 @@ function OperationalCalendar() {
       .from('operational_calendar_entries')
       .upsert(rows, { onConflict: 'technician_id,entry_date' });
 
-    setSaving(false);
     if (error) {
+      setSaving(false);
       notify('Error', error.message);
       return;
     }
+    // The source day's colour goes with it
+    const srcColour = highlights[sourceEntry.entry_date];
+    if (srcColour) {
+      const colourError = await writeColours(technicianId, targetDates.map(date => ({ date, color: srcColour })));
+      if (colourError) notify('Colour not copied', colourError.message);
+    }
+    setSaving(false);
     fetchEntries(technicianId);
   }
 
@@ -885,7 +887,7 @@ function OperationalCalendar() {
     setClipboard({
       mode,
       sourceTechId: technicianId,
-      items: dates.map(d => ({ offset: diffDays(dates[0], d), entry: entriesByDate[d] })),
+      items: dates.map(d => ({ offset: diffDays(dates[0], d), entry: entriesByDate[d], colour: highlights[d] ?? null })),
     });
     setSelection(null);
   }
@@ -920,8 +922,29 @@ function OperationalCalendar() {
         return;
       }
 
+      // Each entry's colour goes with it
+      const newColours = cb.items
+        .filter(it => !!it.colour)
+        .map(it => ({ date: addDaysStr(targetDate, it.offset), color: it.colour as HighlightKey }));
+      const colourError = await writeColours(technicianId, newColours);
+      if (colourError) notify('Colour not copied', colourError.message);
+
       if (cb.mode === 'move') {
         const targetDates = new Set(targets.map(t => t.date));
+        // ...and the old colour is cleared from the days it moved away from (unless a new colour landed there)
+        const newColourDates = new Set(newColours.map(c => c.date));
+        const oldColourDates = cb.items
+          .filter(it => !!it.colour)
+          .map(it => it.entry.entry_date)
+          .filter(d => cb.sourceTechId !== technicianId || !newColourDates.has(d));
+        if (oldColourDates.length > 0) {
+          const { error: clrErr } = await supabase
+            .from(HIGHLIGHT_TABLE)
+            .delete()
+            .eq('technician_id', cb.sourceTechId)
+            .in('entry_date', oldColourDates);
+          if (clrErr) notify('Old colour not cleared', clrErr.message);
+        }
         // Source days that were pasted over are already replaced; delete the rest.
         const toDelete = cb.items
           .filter(it => cb.sourceTechId !== technicianId || !targetDates.has(it.entry.entry_date))
@@ -999,6 +1022,25 @@ function OperationalCalendar() {
 
   // Paint (or clear) a colour on a set of days. Updates the screen straight
   // away, then saves; if the save fails it reloads the real data.
+  // Writes highlight colours for a technician (used when entries are filled / pasted
+  // so each entry's colour goes with it).
+  async function writeColours(technicianId: string, items: { date: string; color: HighlightKey }[]) {
+    if (items.length === 0) return null;
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData.user?.id;
+    const { error } = await supabase.from(HIGHLIGHT_TABLE).upsert(
+      items.map(i => ({
+        technician_id: technicianId,
+        entry_date: i.date,
+        color: i.color,
+        updated_by: uid,
+        updated_at: new Date().toISOString(),
+      })),
+      { onConflict: 'technician_id,entry_date' }
+    );
+    return error;
+  }
+
   async function savePaint(color: PaintColor, dates: string[]) {
     const technicianId = liveRef.current.selectedTechnicianId;
     if (!technicianId || dates.length === 0) return;
@@ -1154,7 +1196,6 @@ function OperationalCalendar() {
     setEditingEntry(null);
     setDateFrom(dateStr);
     setDateTo(dateStr);
-    setSkipWeekends(false);
     setMineName('');
     setContactPerson('');
     setContactNumber('');
@@ -1285,12 +1326,7 @@ function OperationalCalendar() {
       return;
     }
 
-    const targetDates = editingEntry ? [dateFrom] : expandDateRange(dateFrom, dateTo, skipWeekends);
-
-    if (targetDates.length === 0) {
-      notify('No days to fill', 'That range only contains weekend days. Turn off "Skip weekends" or pick other dates.');
-      return;
-    }
+    const targetDates = editingEntry ? [dateFrom] : expandDateRange(dateFrom, dateTo);
 
     // Warn before silently overwriting days that already have an
     // entry — only relevant for a fresh multi/single-day save (this
@@ -2266,29 +2302,9 @@ function OperationalCalendar() {
               </View>
             )}
             {!editingEntry && dateTo !== dateFrom && (
-              <>
-                <TouchableOpacity
-                  onPress={() => setSkipWeekends(v => !v)}
-                  activeOpacity={0.7}
-                  style={styles.weekendToggleRow}
-                >
-                  <View
-                    style={[
-                      styles.weekendCheckbox,
-                      { borderColor: skipWeekends ? colors.yellow : theme.border, backgroundColor: skipWeekends ? colors.yellow : 'transparent' },
-                    ]}
-                  >
-                    {skipWeekends && <Check color={colors.black} size={14} />}
-                  </View>
-                  <Text style={[styles.weekendToggleText, { color: theme.text }]}>Skip weekends (Sat & Sun)</Text>
-                </TouchableOpacity>
-
-                <Text style={[styles.rangeHint, { color: theme.subtext, marginTop: 0 }]}>
-                  This will fill {expandDateRange(dateFrom, dateTo, skipWeekends).length} day
-                  {expandDateRange(dateFrom, dateTo, skipWeekends).length === 1 ? '' : 's'} from {dateFrom} to {dateTo}
-                  {skipWeekends ? ' (weekends skipped)' : ''}.
-                </Text>
-              </>
+              <Text style={[styles.rangeHint, { color: theme.subtext }]}>
+                This will fill every day from {dateFrom} to {dateTo}.
+              </Text>
             )}
 
             <View style={styles.fieldGroup}>
@@ -2679,9 +2695,6 @@ const styles = StyleSheet.create({
   dropdownItemSub: { fontSize: 12, marginTop: 2 },
   dateRangeRow: { flexDirection: 'row', gap: 12 },
   rangeHint: { fontSize: 12, fontStyle: 'italic', marginTop: -8, marginBottom: 16 },
-  weekendToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-  weekendCheckbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  weekendToggleText: { fontSize: 14, fontWeight: '600' },
   saveBtn: {
     backgroundColor: colors.yellow, borderRadius: 14, height: 56,
     alignItems: 'center', justifyContent: 'center', margin: 16,
