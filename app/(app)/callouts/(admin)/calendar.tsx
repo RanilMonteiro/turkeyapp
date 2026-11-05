@@ -6,6 +6,7 @@ import {
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import { Clock, MapPin, User } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { formatTime } from '../../../../lib/formatTime';
 import { useFocusEffect } from '@react-navigation/native';
 
 LocaleConfig.locales['en'] = {
@@ -242,7 +243,7 @@ export default function AdminCalendar() {
                 {/* Details */}
                 <View style={styles.detailRow}>
                   <Clock size={13} color={theme.subtext} />
-                  <Text style={[styles.detailText, { color: theme.subtext }]}>{callout.time}</Text>
+                  <Text style={[styles.detailText, { color: theme.subtext }]}>{formatTime(callout.time)}</Text>
                 </View>
 
                 <View style={styles.detailRow}>

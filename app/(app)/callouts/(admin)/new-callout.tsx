@@ -1,13 +1,12 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, TextInput, useColorScheme,
   ActivityIndicator, Linking, Platform
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Navigation, MapPin } from 'lucide-react-native';
+import { ArrowLeft, Navigation, MapPin, CheckCircle, AlertCircle } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
-import { notify } from '../../../../lib/notify';
 import DatePickerField from '../../../../components/DatepickerField';
 import TimePickerField from '../../../../components/TimePickerField';
 
@@ -27,14 +26,18 @@ const colors = {
   }
 };
 
+// Local date (toISOString() is UTC, which gives "yesterday" in SA between 00:00 and 02:00)
 function todayDateString(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function nowTimeString(): string {
   const d = new Date();
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+
+type Status = { type: 'success' | 'error'; message: string } | null;
 
 export default function NewCallout() {
   const router = useRouter();
@@ -44,13 +47,18 @@ export default function NewCallout() {
   const [siteName, setSiteName] = useState('');
   const [description, setDescription] = useState('');
   const [address, setAddress] = useState('');
+  const [pinText, setPinText] = useState('');
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
   const [loading, setLoading] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [status, setStatus] = useState<Status>(null);
 
   const [dateStr, setDateStr] = useState(todayDateString());
   const [timeStr, setTimeStr] = useState(nowTimeString());
+
+  const redirectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (redirectTimer.current) clearTimeout(redirectTimer.current); }, []);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -69,17 +77,26 @@ export default function NewCallout() {
       })
     : '';
 
-  // dbDate/dbTime are exactly what's stored — dateStr and timeStr are
-  // already in the right format ('YYYY-MM-DD' and 'HH:MM'), so no
-  // conversion needed at submit time like the old Date-object version.
-  const dbDate = dateStr;
-  const dbTime = timeStr;
+  const inputStyle = [
+    styles.input,
+    { backgroundColor: theme.input, borderColor: theme.border, color: theme.text },
+  ];
 
-  function parseCoordinates(text: string) {
+  function Label({ text, required }: { text: string; required?: boolean }) {
+    return (
+      <Text style={[styles.label, { color: theme.label }]}>
+        {text}
+        {required ? ' *' : ''}
+      </Text>
+    );
+  }
+
+  function handlePinChange(text: string) {
+    setPinText(text);
     const patterns = [
       /[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/,
       /maps\/@(-?\d+\.?\d*),(-?\d+\.?\d*)/,
-      /^(-?\d+\.?\d*),\s*(-?\d+\.?\d*)$/,
+      /^\s*(-?\d+\.?\d*),\s*(-?\d+\.?\d*)\s*$/,
     ];
     for (const pattern of patterns) {
       const match = text.match(pattern);
@@ -89,6 +106,8 @@ export default function NewCallout() {
         return;
       }
     }
+    setLatitude('');
+    setLongitude('');
   }
 
   function openInMaps() {
@@ -96,68 +115,107 @@ export default function NewCallout() {
     const url = Platform.select({
       ios: `maps:${latitude},${longitude}?q=${address}`,
       android: `geo:${latitude},${longitude}?q=${address}`,
+      default: `https://www.google.com/maps?q=${latitude},${longitude}`,
     });
     if (url) Linking.openURL(url);
   }
 
-  async function sendPushNotifications(calloutTitle: string) {
-    const { data: technicians } = await supabase
-      .from('profiles')
-      .select('push_token')
-      .eq('role', 'technician')
-      .not('push_token', 'is', null);
+  // Returns true if the push request went through. Never throws:
+  // a failed push must not stop the callout from being created.
+  async function sendPushNotifications(calloutTitle: string): Promise<boolean> {
+    try {
+      const { data: technicians } = await supabase
+        .from('profiles')
+        .select('push_token')
+        .eq('role', 'technician')
+        .not('push_token', 'is', null);
 
-    if (!technicians || technicians.length === 0) return;
+      if (!technicians || technicians.length === 0) return true;
 
-    const messages = technicians
-      .filter(t => t.push_token)
-      .map(t => ({
-        to: t.push_token,
-        sound: 'default',
-        title: '🔧 New Callout Available',
-        body: calloutTitle,
-        data: { type: 'new_callout' },
-      }));
+      const messages = technicians
+        .filter(t => t.push_token)
+        .map(t => ({
+          to: t.push_token,
+          sound: 'default',
+          title: 'New Callout Available',
+          body: calloutTitle,
+          data: { type: 'new_callout' },
+        }));
 
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(messages),
-    });
+      const res = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(messages),
+      });
+      return res.ok;
+    } catch {
+      // On web, the browser blocks this request (CORS), so it lands here.
+      return false;
+    }
+  }
+
+  function resetForm() {
+    setTitle('');
+    setSiteName('');
+    setDescription('');
+    setAddress('');
+    setPinText('');
+    setLatitude('');
+    setLongitude('');
+    setInvoiceNumber('');
+    setDateStr(todayDateString());
+    setTimeStr(nowTimeString());
   }
 
   async function handleSubmit() {
-    if (!title || !siteName || !address) {
-      notify('Missing fields', 'Please fill in title, site name and address.');
+    if (loading) return;
+    setStatus(null);
+
+    if (!title.trim() || !siteName.trim() || !address.trim()) {
+      setStatus({ type: 'error', message: 'Please fill in title, site name and address.' });
       return;
     }
 
     setLoading(true);
-    const { data: userData } = await supabase.auth.getUser();
+    try {
+      const { data: userData } = await supabase.auth.getUser();
 
-    const { error } = await supabase.from('callouts').insert({
-  title,
-  site_name: siteName,
-  description,
-  address,
-  latitude: latitude ? parseFloat(latitude) : null,
-  longitude: longitude ? parseFloat(longitude) : null,
-  date: dbDate,
-  time: dbTime,
-  status: 'pending',
-  created_by: userData.user?.id,
-  invoice_number: invoiceNumber.trim() || null,
-});
+      const { error } = await supabase.from('callouts').insert({
+        title: title.trim(),
+        site_name: siteName.trim(),
+        description: description.trim() || null,
+        address: address.trim(),
+        latitude: latitude ? parseFloat(latitude) : null,
+        longitude: longitude ? parseFloat(longitude) : null,
+        date: dateStr,
+        time: timeStr,
+        status: 'pending',
+        created_by: userData.user?.id,
+        invoice_number: invoiceNumber.trim() || null,
+      });
 
-    if (error) {
-      notify('Error', error.message);
+      if (error) {
+        setStatus({ type: 'error', message: error.message });
+        return;
+      }
+
+      const pushed = await sendPushNotifications(title.trim());
+
+      setStatus({
+        type: 'success',
+        message: pushed
+          ? 'Callout created. Technicians have been notified.'
+          : 'Callout created, but the push notification could not be sent.',
+      });
+      resetForm();
+      redirectTimer.current = setTimeout(() => {
+        router.replace('/(app)/callouts/(admin)/dashboard' as any);
+      }, 1500);
+    } catch (e: any) {
+      setStatus({ type: 'error', message: e?.message ?? 'Something went wrong. Please try again.' });
+    } finally {
       setLoading(false);
-      return;
     }
-
-    await sendPushNotifications(title);
-    setLoading(false);
-    notify('Callout created', 'All technicians have been notified.', () => router.back());
   }
 
   return (
@@ -172,16 +230,15 @@ export default function NewCallout() {
           <ArrowLeft color={colors.yellow} size={24} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: theme.text }]}>New Callout</Text>
-        <View style={{ width: 40 }} />
+        <View style={{ width: 32 }} />
       </View>
 
       <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
 
-        {/* Title */}
         <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: theme.label }]}>TITLE *</Text>
+          <Label text="TITLE" required />
           <TextInput
-            style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+            style={inputStyle}
             placeholder="e.g. Emergency repair at Site A"
             placeholderTextColor={theme.subtext}
             value={title}
@@ -189,11 +246,10 @@ export default function NewCallout() {
           />
         </View>
 
-        {/* Site Name */}
         <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: theme.label }]}>SITE NAME *</Text>
+          <Label text="SITE NAME" required />
           <TextInput
-            style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+            style={inputStyle}
             placeholder="e.g. Shaft 3 - North Mine"
             placeholderTextColor={theme.subtext}
             value={siteName}
@@ -201,11 +257,21 @@ export default function NewCallout() {
           />
         </View>
 
-        {/* Description */}
         <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: theme.label }]}>DESCRIPTION</Text>
+          <Label text="ADDRESS" required />
           <TextInput
-            style={[styles.input, styles.textArea, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+            style={inputStyle}
+            placeholder="e.g. 123 Main Street, Johannesburg"
+            placeholderTextColor={theme.subtext}
+            value={address}
+            onChangeText={setAddress}
+          />
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Label text="DESCRIPTION" />
+          <TextInput
+            style={[...inputStyle, styles.textArea]}
             placeholder="Describe the job..."
             placeholderTextColor={theme.subtext}
             value={description}
@@ -216,43 +282,32 @@ export default function NewCallout() {
           />
         </View>
 
-        {/* Address */}
         <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: theme.label }]}>ADDRESS *</Text>
+          <Label text="INVOICE NUMBER" />
           <TextInput
-            style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
-            placeholder="e.g. 123 Main Street, Johannesburg"
+            style={inputStyle}
+            placeholder="e.g. INV-2026-0142"
             placeholderTextColor={theme.subtext}
-            value={address}
-            onChangeText={setAddress}
+            value={invoiceNumber}
+            onChangeText={setInvoiceNumber}
           />
         </View>
 
-        {/* Invoice Number */}
-<View style={styles.fieldGroup}>
-  <Text style={[styles.label, { color: theme.label }]}>INVOICE NUMBER (OPTIONAL)</Text>
-  <TextInput
-    style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
-    placeholder="e.g. INV-2026-0142"
-    placeholderTextColor={theme.subtext}
-    value={invoiceNumber}
-    onChangeText={setInvoiceNumber}
-  />
-</View>
-
-        {/* Location Pin */}
         <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: theme.label }]}>LOCATION PIN (OPTIONAL)</Text>
-          <Text style={[styles.hint, { color: theme.subtext }]}>
-            Paste Google Maps link or coordinates e.g. -26.2041, 28.0473
-          </Text>
+          <Label text="LOCATION PIN" />
           <TextInput
-            style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
-            placeholder="Paste link or coordinates from WhatsApp"
+            style={inputStyle}
+            placeholder="Paste Google Maps link or coordinates"
             placeholderTextColor={theme.subtext}
-            onChangeText={(text) => parseCoordinates(text)}
+            value={pinText}
+            onChangeText={handlePinChange}
+            autoCapitalize="none"
+            autoCorrect={false}
           />
-          {latitude && longitude && (
+          <Text style={[styles.hint, { color: theme.subtext }]}>
+            e.g. -26.2041, 28.0473
+          </Text>
+          {latitude && longitude ? (
             <View style={styles.coordsRow}>
               <MapPin color={colors.yellow} size={14} />
               <Text style={[styles.coordsText, { color: theme.subtext }]}>
@@ -263,33 +318,49 @@ export default function NewCallout() {
                 <Text style={styles.mapsButtonText}>Preview</Text>
               </TouchableOpacity>
             </View>
-          )}
+          ) : null}
         </View>
 
-        {/* Date */}
-        <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: theme.label }]}>DATE *</Text>
-          <DatePickerField
-            value={dateStr}
-            onChange={setDateStr}
-            placeholder={formattedDateDisplay}
-            isDark={isDark}
-            theme={theme}
-          />
+        {/* Date + Time side by side */}
+        <View style={styles.row}>
+          <View style={styles.rowItem}>
+            <Label text="DATE" required />
+            <DatePickerField
+              value={dateStr}
+              onChange={setDateStr}
+              placeholder={formattedDateDisplay}
+              isDark={isDark}
+              theme={theme}
+            />
+          </View>
+          <View style={styles.rowItem}>
+            <Label text="TIME" required />
+            <TimePickerField
+              value={timeStr}
+              onChange={setTimeStr}
+              isDark={isDark}
+              theme={theme}
+            />
+          </View>
         </View>
 
-        {/* Time */}
-        <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: theme.label }]}>TIME *</Text>
-          <TimePickerField
-            value={timeStr}
-            onChange={setTimeStr}
-            isDark={isDark}
-            theme={theme}
-          />
-        </View>
+        {/* Inline confirmation / error (Alert.alert does nothing on web) */}
+        {status && (
+          <View
+            style={[
+              styles.banner,
+              status.type === 'success'
+                ? { backgroundColor: isDark ? '#064e3b' : '#d1fae5', borderColor: '#10b981' }
+                : { backgroundColor: isDark ? '#7f1d1d' : '#fee2e2', borderColor: '#ef4444' },
+            ]}
+          >
+            {status.type === 'success'
+              ? <CheckCircle color="#10b981" size={18} />
+              : <AlertCircle color="#ef4444" size={18} />}
+            <Text style={[styles.bannerText, { color: theme.text }]}>{status.message}</Text>
+          </View>
+        )}
 
-        {/* Submit */}
         <TouchableOpacity
           style={[styles.submitButton, loading && { opacity: 0.6 }]}
           onPress={handleSubmit}
@@ -315,16 +386,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 60,
     paddingBottom: 20,
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
   },
-  backBtn: { padding: 4 },
+  backBtn: { padding: 4, width: 32 },
   headerTitle: { fontSize: 20, fontWeight: '700' },
   card: {
     margin: 16,
     borderRadius: 20,
     padding: 24,
     borderWidth: 1,
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
   },
   fieldGroup: { marginBottom: 20 },
+  row: { flexDirection: 'row', gap: 12, marginBottom: 20 },
+  rowItem: { flex: 1 },
   label: {
     fontSize: 12,
     fontWeight: '600',
@@ -333,7 +412,7 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: 12,
-    marginBottom: 8,
+    marginTop: 6,
     lineHeight: 16,
   },
   input: {
@@ -341,6 +420,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
+    minHeight: 48,
     fontSize: 15,
   },
   textArea: {
@@ -368,6 +448,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 12,
   },
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  bannerText: { flex: 1, fontSize: 14, lineHeight: 20 },
   submitButton: {
     backgroundColor: colors.yellow,
     borderRadius: 12,

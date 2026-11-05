@@ -4,8 +4,9 @@ import {
   StyleSheet, useColorScheme, ActivityIndicator,
   Modal, FlatList
 } from 'react-native';
-import { User, Mail, ChevronRight, X, CheckCircle, Clock, Calendar } from 'lucide-react-native';
+import { User, Mail, ChevronRight, X, CheckCircle, Clock, Calendar, MapPin } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { formatTime } from '../../../../lib/formatTime';
 import { useFocusEffect } from '@react-navigation/native';
 
 const colors = {
@@ -304,12 +305,18 @@ export default function Technicians() {
                         <Text style={[styles.calloutSite, { color: colors.yellow }]}>
                           {callout.site_name}
                         </Text>
-                        <Text style={[styles.calloutDetail, { color: theme.subtext }]}>
-                          📍 {callout.address}
-                        </Text>
-                        <Text style={[styles.calloutDetail, { color: theme.subtext }]}>
-                          📅 {callout.date} at {callout.time}
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <MapPin color={theme.subtext} size={14} />
+                          <Text style={[styles.calloutDetail, { color: theme.subtext, flexShrink: 1 }]}>
+                            {callout.address}
+                          </Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Calendar color={theme.subtext} size={14} />
+                          <Text style={[styles.calloutDetail, { color: theme.subtext }]}>
+                            {callout.date} at {formatTime(callout.time)}
+                          </Text>
+                        </View>
                       </View>
                     ))}
                   </View>

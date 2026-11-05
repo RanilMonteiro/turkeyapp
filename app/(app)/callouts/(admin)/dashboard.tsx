@@ -5,8 +5,9 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Plus, Clock, CheckCircle, User } from 'lucide-react-native';
+import { Plus, Clock, CheckCircle, User, MapPin, Calendar } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { formatTime } from '../../../../lib/formatTime';
 import { useFocusEffect } from '@react-navigation/native';
 
 const colors = {
@@ -193,18 +194,27 @@ export default function AdminCalloutsDashboard() {
                 {callout.site_name}
               </Text>
 
-              <Text style={[styles.calloutDetail, { color: theme.subtext }]}>
-                📍 {callout.address}
-              </Text>
+              <View style={styles.detailRow}>
+                <MapPin color={theme.subtext} size={14} />
+                <Text style={[styles.calloutDetail, { color: theme.subtext }]} numberOfLines={1}>
+                  {callout.address}
+                </Text>
+              </View>
 
-              <Text style={[styles.calloutDetail, { color: theme.subtext }]}>
-                📅 {callout.date} at {callout.time}
-              </Text>
+              <View style={styles.detailRow}>
+                <Calendar color={theme.subtext} size={14} />
+                <Text style={[styles.calloutDetail, { color: theme.subtext }]}>
+                  {callout.date} at {formatTime(callout.time)}
+                </Text>
+              </View>
 
               {callout.profiles && (
-                <Text style={[styles.calloutDetail, { color: theme.subtext }]}>
-                  👤 {callout.profiles.full_name}
-                </Text>
+                <View style={styles.detailRow}>
+                  <User color={theme.subtext} size={14} />
+                  <Text style={[styles.calloutDetail, { color: theme.subtext }]}>
+                    {callout.profiles.full_name}
+                  </Text>
+                </View>
               )}
             </TouchableOpacity>
           ))
@@ -276,7 +286,8 @@ const styles = StyleSheet.create({
   },
   calloutTitle: { fontSize: 16, fontWeight: '600', flex: 1, marginRight: 8 },
   calloutSite: { fontSize: 14, fontWeight: '600', marginBottom: 6 },
-  calloutDetail: { fontSize: 13, marginBottom: 3 },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  calloutDetail: { fontSize: 13, flexShrink: 1 },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   statusText: { fontSize: 12, fontWeight: '600' },
 });
