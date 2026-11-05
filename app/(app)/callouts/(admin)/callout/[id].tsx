@@ -5,10 +5,8 @@ import {
   Linking, Platform, Alert, Image, Modal, TextInput
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, MapPin, Navigation, Clock, User, Wrench, Edit3, X, Check } from 'lucide-react-native';
+import { ArrowLeft, MapPin, Navigation, Clock, User, Wrench, Edit3, X } from 'lucide-react-native';
 import { supabase } from '../../../../../lib/supabase';
-import { formatTime } from '../../../../../lib/formatTime';
-import { notify } from '../../../../../lib/notify';
 
 const colors = {
   yellow: '#fbbf24',
@@ -99,7 +97,7 @@ const [savingInvoice, setSavingInvoice] = useState(false);
     setEditSiteName(callout.site_name);
     setEditAddress(callout.address);
     setEditDate(callout.date);
-    setEditTime(formatTime(callout.time));
+    setEditTime(callout.time);
     setEditModal(true);
   }
 
@@ -119,7 +117,7 @@ async function handleSaveInvoice() {
   setSavingInvoice(false);
 
   if (error) {
-    notify('Error', error.message);
+    Alert.alert('Error', error.message);
     return;
   }
 
@@ -129,7 +127,7 @@ async function handleSaveInvoice() {
 
   async function handleSaveEdit() {
     if (!editTitle.trim() || !editSiteName.trim() || !editAddress.trim() || !editDate.trim() || !editTime.trim()) {
-      notify('Missing fields', 'Please fill in all required fields.');
+      Alert.alert('Missing fields', 'Please fill in all required fields.');
       return;
     }
 
@@ -150,7 +148,7 @@ async function handleSaveInvoice() {
     setSaving(false);
 
     if (error) {
-      notify('Error', error.message);
+      Alert.alert('Error', error.message);
       return;
     }
 
@@ -197,8 +195,27 @@ async function deleteCallout() {
   const message = 'Are you sure you want to delete this callout? This cannot be undone.';
 
   const performDelete = async () => {
-    await supabase.from('callouts').delete().eq('id', id);
-    router.back();
+    // .select() returns the rows that were actually deleted. Supabase reports
+    // success even when row level security blocks the delete (0 rows), which
+    // is why the callout used to stay.
+    const { data, error } = await supabase
+      .from('callouts')
+      .delete()
+      .eq('id', id)
+      .select('id');
+
+    if (error) {
+      notify('Could not delete', error.message);
+      return;
+    }
+    if (!data || data.length === 0) {
+      notify(
+        'Could not delete',
+        'Nothing was deleted. Your account is probably not allowed to delete callouts (check the delete policy in Supabase).'
+      );
+      return;
+    }
+    router.replace('/(app)/callouts/(admin)/dashboard' as any);
   };
 
   if (Platform.OS === 'web') {
@@ -320,7 +337,7 @@ async function deleteCallout() {
           <View style={styles.detailRow}>
             <Clock color={colors.yellow} size={16} />
             <Text style={[styles.detailText, { color: theme.subtext }]}>
-              {callout.date} at {formatTime(callout.time)}
+              {callout.date} at {callout.time}
             </Text>
           </View>
 
@@ -355,7 +372,7 @@ async function deleteCallout() {
               <View style={styles.detailRow}>
                 <Clock color={colors.yellow} size={16} />
                 <Text style={[styles.detailText, { color: theme.subtext }]}>
-                  Time in: {formatTime(callout.time_in)}
+                  Time in: {callout.time_in}
                 </Text>
               </View>
             )}
@@ -364,7 +381,7 @@ async function deleteCallout() {
               <View style={styles.detailRow}>
                 <Clock color={colors.yellow} size={16} />
                 <Text style={[styles.detailText, { color: theme.subtext }]}>
-                  Time out: {formatTime(callout.time_out)}
+                  Time out: {callout.time_out}
                 </Text>
               </View>
             )}
@@ -417,9 +434,8 @@ async function deleteCallout() {
   )}
 
   <View style={styles.detailRow}>
-    {callout.closed_on_tam ? <Check color="#10b981" size={16} /> : <X color="#ef4444" size={16} />}
     <Text style={[styles.detailText, { color: callout.closed_on_tam ? '#10b981' : '#ef4444' }]}>
-      {callout.closed_on_tam ? 'Closed on TAM' : 'Not closed on TAM'}
+      {callout.closed_on_tam ? '✓ Closed on TAM' : '✗ Not closed on TAM'}
     </Text>
   </View>
 

@@ -6,8 +6,9 @@ import {
   ActivityIndicator, Alert, Linking, Platform,
   Modal,TextInput, Image
 } from 'react-native';
-import { Navigation, CheckCircle, Clock, ChevronDown } from 'lucide-react-native';
+import { Navigation, CheckCircle, Clock, ChevronDown, MapPin, Calendar, Check } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { formatTime as trimSeconds } from '../../../../lib/formatTime';
 import { useFocusEffect } from '@react-navigation/native';
 import SignatureCanvas from 'react-native-signature-canvas';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -347,8 +348,14 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
                   </Text>
                 )}
 
-                <Text style={[styles.detail, { color: theme.subtext }]}>📍 {callout.address}</Text>
-                <Text style={[styles.detail, { color: theme.subtext }]}>📅 {callout.date} at {callout.time}</Text>
+                <View style={styles.detailRow}>
+                  <MapPin color={theme.subtext} size={14} />
+                  <Text style={[styles.detail, { color: theme.subtext }]}>{callout.address}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Calendar color={theme.subtext} size={14} />
+                  <Text style={[styles.detail, { color: theme.subtext }]}>{callout.date} at {trimSeconds(callout.time)}</Text>
+                </View>
 
                 <View style={styles.actions}>
                   {callout.latitude && callout.longitude && (
@@ -403,8 +410,14 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
                   </Text>
                 )}
 
-                <Text style={[styles.detail, { color: theme.subtext }]}>📍 {callout.address}</Text>
-                <Text style={[styles.detail, { color: theme.subtext }]}>📅 {callout.date} at {callout.time}</Text>
+                <View style={styles.detailRow}>
+                  <MapPin color={theme.subtext} size={14} />
+                  <Text style={[styles.detail, { color: theme.subtext }]}>{callout.address}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Calendar color={theme.subtext} size={14} />
+                  <Text style={[styles.detail, { color: theme.subtext }]}>{callout.date} at {trimSeconds(callout.time)}</Text>
+                </View>
 
                 <TouchableOpacity
                   style={styles.acceptBtn}
@@ -604,7 +617,10 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
             {signature ? (
               <View>
                 <View style={[styles.signaturePreview, { borderColor: '#10b981' }]}>
-                  <Text style={styles.signedText}>✓ Signature captured</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Check color="#10b981" size={18} />
+                    <Text style={styles.signedText}>Signature captured</Text>
+                  </View>
                 </View>
                 <TouchableOpacity
                   style={[styles.clearSignatureBtn, { borderColor: theme.border }]}
@@ -720,7 +736,8 @@ const styles = StyleSheet.create({
   calloutTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
   siteName: { fontSize: 14, fontWeight: '600', marginBottom: 8 },
   description: { fontSize: 14, marginBottom: 8, lineHeight: 20 },
-  detail: { fontSize: 13, marginBottom: 4 },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  detail: { fontSize: 13, flexShrink: 1 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 12 },
   mapsBtn: {
     flexDirection: 'row',

@@ -120,37 +120,17 @@ export default function NewCallout() {
     if (url) Linking.openURL(url);
   }
 
-  // Returns true if the push request went through. Never throws:
-  // a failed push must not stop the callout from being created.
-  async function sendPushNotifications(calloutTitle: string): Promise<boolean> {
+  // Push is sent by the 'notify-new-callout' Supabase Edge Function, so it works
+  // the same whether the callout was created on web, iOS or Android.
+  // Never throws: a failed push must not undo a created callout.
+  async function sendPushNotifications(calloutId: string): Promise<string | null> {
     try {
-      const { data: technicians } = await supabase
-        .from('profiles')
-        .select('push_token')
-        .eq('role', 'technician')
-        .not('push_token', 'is', null);
-
-      if (!technicians || technicians.length === 0) return true;
-
-      const messages = technicians
-        .filter(t => t.push_token)
-        .map(t => ({
-          to: t.push_token,
-          sound: 'default',
-          title: 'New Callout Available',
-          body: calloutTitle,
-          data: { type: 'new_callout' },
-        }));
-
-      const res = await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(messages),
+      const { error } = await supabase.functions.invoke('notify-new-callout', {
+        body: { callout_id: calloutId },
       });
-      return res.ok;
-    } catch {
-      // On web, the browser blocks this request (CORS), so it lands here.
-      return false;
+      return error ? error.message : null;
+    } catch (e: any) {
+      return e?.message ?? 'Unknown error';
     }
   }
 
@@ -180,7 +160,7 @@ export default function NewCallout() {
     try {
       const { data: userData } = await supabase.auth.getUser();
 
-      const { error } = await supabase.from('callouts').insert({
+      const { data: created, error } = await supabase.from('callouts').insert({
         title: title.trim(),
         site_name: siteName.trim(),
         description: description.trim() || null,
@@ -192,25 +172,27 @@ export default function NewCallout() {
         status: 'pending',
         created_by: userData.user?.id,
         invoice_number: invoiceNumber.trim() || null,
-      });
+      }).select('id').single();
 
-      if (error) {
-        setStatus({ type: 'error', message: error.message });
+      if (error || !created) {
+        setStatus({ type: 'error', message: error?.message ?? 'Callout could not be created.' });
         return;
       }
 
-      const pushed = await sendPushNotifications(title.trim());
+      const pushError = await sendPushNotifications(created.id);
 
-      setStatus({
-        type: 'success',
-        message: pushed
-          ? 'Callout created. Technicians have been notified.'
-          : 'Callout created, but the push notification could not be sent.',
-      });
+      setStatus(
+        pushError
+          ? { type: 'error', message: `Callout created, but technicians were not notified: ${pushError}` }
+          : { type: 'success', message: 'Callout created. Technicians have been notified.' }
+      );
       resetForm();
-      redirectTimer.current = setTimeout(() => {
-        router.replace('/(app)/callouts/(admin)/dashboard' as any);
-      }, 1500);
+      // Only auto-leave on full success so a push error stays readable.
+      if (!pushError) {
+        redirectTimer.current = setTimeout(() => {
+          router.replace('/(app)/callouts/(admin)/dashboard' as any);
+        }, 1500);
+      }
     } catch (e: any) {
       setStatus({ type: 'error', message: e?.message ?? 'Something went wrong. Please try again.' });
     } finally {
