@@ -84,6 +84,7 @@ export default function FormsList() {
       case 'vehicle': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
       case 'loan': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
       case 'card_signout': return { bg: isDark ? '#1a2e1a' : '#d1fae5', text: '#10b981' };
+      case 'refund': return { bg: isDark ? '#4a3b0f' : '#fef9c3', text: '#eab308' };
       case 'slip': return { bg: isDark ? '#3b1a1a' : '#fee2e2', text: '#ef4444' };
       default: return { bg: isDark ? colors.gray[800] : colors.gray[200], text: colors.gray[500] };
     }

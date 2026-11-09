@@ -5,12 +5,14 @@ import {
   TextInput, Modal, Platform, Image
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, ChevronDown, Paperclip, X, CheckCircle } from 'lucide-react-native';
+import { ArrowLeft, ChevronDown, Paperclip, X, CheckCircle, Camera } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
 import DatePickerField from '../../../../components/DatepickerField';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
+import { cleanAmountInput } from '../../../../lib/money';
 import * as FileSystem from 'expo-file-system/legacy';
 
 const colors = {
@@ -194,6 +196,43 @@ export default function SubmitForm() {
     }
   }
 
+  // Native only: open the camera and attach the photo (e.g. a petrol slip).
+  async function takePhotoForField(fieldId: string) {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        notify('Permission needed', 'Please allow camera access to take a photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+      if (result.canceled || !result.assets[0]) return;
+
+      const asset = result.assets[0];
+      setUploadingAttachmentField(fieldId);
+
+      const mime = asset.mimeType ?? 'image/jpeg';
+      const ext = mime.split('/')[1] ?? 'jpg';
+      const fileName = `form_attachment_${id}_${fieldId}_${Date.now()}.${ext}`;
+      const arrayBuffer = await fileToUint8Array(asset.uri);
+
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(fileName, arrayBuffer, { contentType: mime });
+
+      if (uploadError) {
+        notify('Upload error', uploadError.message);
+        return;
+      }
+
+      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(fileName);
+      setFieldValue(fieldId, { url: urlData.publicUrl, name: `Photo ${new Date().toLocaleDateString('en-ZA')}.${ext}` } as Attachment);
+    } catch (e: any) {
+      notify('Error', e.message ?? 'Something went wrong taking that photo.');
+    } finally {
+      setUploadingAttachmentField(null);
+    }
+  }
+
   function removeAttachment(fieldId: string) {
     setFieldValue(fieldId, null);
   }
@@ -222,6 +261,13 @@ export default function SubmitForm() {
     notify('Missing field', `"${field.label}" is required.`);
     return;
   }
+  if (field.field_type === 'amount' && formData[field.id]) {
+    const n = parseFloat(String(formData[field.id]));
+    if (!isFinite(n) || n <= 0) {
+      notify('Invalid amount', `"${field.label}" must be more than R 0.00.`);
+      return;
+    }
+  }
 }
 
     setSubmitting(true);
@@ -232,7 +278,12 @@ export default function SubmitForm() {
       .insert({
         template_id: id,
         employee_id: userData.user?.id,
-        form_data: formData,
+        form_data: Object.fromEntries(
+          Object.entries(formData).map(([k, v]) => {
+            const f = fields.find(x => x.id === k);
+            return [k, f?.field_type === 'amount' && v !== '' && v != null ? Number(v) : v];
+          })
+        ),
         status: template?.requires_approval ? 'pending' : 'approved',
       })
       .select()
@@ -362,6 +413,21 @@ export default function SubmitForm() {
                 />
               )}
 
+              {/* Amount (Rand) */}
+              {field.field_type === 'amount' && (
+                <View style={[styles.input, styles.amountRow, { backgroundColor: theme.input, borderColor: theme.border }]}>
+                  <Text style={[styles.amountPrefix, { color: theme.subtext }]}>R</Text>
+                  <TextInput
+                    style={[styles.amountInput, { color: theme.text }]}
+                    placeholder={field.placeholder ?? '0.00'}
+                    placeholderTextColor={theme.muted}
+                    keyboardType="decimal-pad"
+                    value={String(formData[field.id] ?? '')}
+                    onChangeText={v => setFieldValue(field.id, cleanAmountInput(v))}
+                  />
+                </View>
+              )}
+
               {/* Date */}
               {field.field_type === 'date' && (
                 <DatePickerField
@@ -440,6 +506,18 @@ export default function SubmitForm() {
                       </TouchableOpacity>
                     </View>
                   ) : (
+                    <>
+                    {Platform.OS !== 'web' && uploadingAttachmentField !== field.id && (
+                      <TouchableOpacity
+                        style={[styles.attachBox, { borderColor: isFieldRequired(field) ? colors.yellow : theme.border, marginBottom: 10 }]}
+                        onPress={() => takePhotoForField(field.id)}
+                      >
+                        <Camera color={isFieldRequired(field) ? colors.yellow : theme.muted} size={20} />
+                        <Text style={[styles.attachBoxText, { color: isFieldRequired(field) ? colors.yellow : theme.muted }]}>
+                          Take a photo
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                     <TouchableOpacity
                       style={[
                         styles.attachBox,
@@ -459,6 +537,7 @@ export default function SubmitForm() {
                         </>
                       )}
                     </TouchableOpacity>
+                    </>
                   )}
                 </>
               )}
@@ -646,4 +725,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sigSaveBtnText: { color: colors.black, fontSize: 16, fontWeight: '700' },
+  amountRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 0 },
+  amountPrefix: { fontSize: 16, fontWeight: '700' },
+  amountInput: { flex: 1, fontSize: 15, paddingVertical: 12 },
 });

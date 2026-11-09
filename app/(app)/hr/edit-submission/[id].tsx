@@ -7,6 +7,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, ChevronDown, Paperclip, X, CheckCircle } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { cleanAmountInput } from '../../../../lib/money';
 import { notify } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
 import DatePickerField from '../../../../components/DatepickerField';
@@ -203,6 +204,17 @@ export default function EditSubmission() {
                   value={formData[field.id] ?? ''}
                   onChangeText={v => setFieldValue(field.id, v)}
                   multiline numberOfLines={4} textAlignVertical="top"
+                />
+              )}
+
+              {field.field_type === 'amount' && (
+                <TextInput
+                  style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                  placeholder="0.00"
+                  placeholderTextColor={theme.muted}
+                  keyboardType="decimal-pad"
+                  value={String(formData[field.id] ?? '')}
+                  onChangeText={v => setFieldValue(field.id, cleanAmountInput(v))}
                 />
               )}
 

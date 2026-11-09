@@ -30,6 +30,7 @@ const CATEGORIES = [
   { value: 'loan', label: 'Loan' },
   { value: 'card_signout', label: 'Card Sign Out' },
   { value: 'slip', label: 'Slip Upload' },
+  { value: 'refund', label: 'Refund Request' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -40,7 +41,9 @@ const FIELD_TYPES = [
   { value: 'dropdown', label: 'Dropdown' },
   { value: 'checkbox', label: 'Checkbox' },
   { value: 'signature', label: 'Signature' },
-  { value: 'file', label: 'File Upload' },
+  { value: 'attachment', label: 'Photo / Attachment' },
+  { value: 'amount', label: 'Amount (Rand)' },
+  { value: 'file', label: 'File Upload (old)' },
 ];
 
 type Field = {

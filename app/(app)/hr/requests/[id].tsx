@@ -7,6 +7,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, CheckCircle, XCircle, Clock, User, Paperclip, ShieldAlert, Download } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { formatRand } from '../../../../lib/money';
 import { notify, confirm } from '../../../../lib/notify';
 import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
 import * as Print from 'expo-print';
@@ -377,9 +378,31 @@ function cancelSubmission() {
     // not a plain string like every other field type — rendering that
     // object directly as <Text>{value}</Text> is what was crashing this
     // screen to a blank/black render. Handle it explicitly instead.
+    if (field.field_type === 'amount') {
+      return (
+        <Text style={[styles.responseValue, { color: value ? theme.text : theme.muted, fontWeight: '700' }]}>
+          {value ? formatRand(value) : 'Not answered'}
+        </Text>
+      );
+    }
+
     if (field.field_type === 'attachment') {
       if (!value || !value.url) {
         return <Text style={[styles.responseValue, { color: theme.muted }]}>No attachment provided</Text>;
+      }
+      const isImage = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(value.url);
+      if (isImage) {
+        // Receipts/slips are usually photos: show a preview, tap to open full size.
+        return (
+          <TouchableOpacity onPress={() => Linking.openURL(value.url)} activeOpacity={0.85}>
+            <Image
+              source={{ uri: value.url }}
+              style={{ width: '100%', height: 220, borderRadius: 10, borderWidth: 1, borderColor: theme.border, backgroundColor: '#ffffff' }}
+              resizeMode="contain"
+            />
+            <Text style={{ color: theme.muted, fontSize: 12, marginTop: 6, textAlign: 'center' }}>Tap to open full size</Text>
+          </TouchableOpacity>
+        );
       }
       return (
         <TouchableOpacity
@@ -443,6 +466,8 @@ function cancelSubmission() {
 
       if (field.field_type === 'signature' && value) {
         cell = `<img src="${escapeHtml(value)}" style="max-width:220px;max-height:90px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;" />`;
+      } else if (field.field_type === 'amount') {
+        cell = value ? `<b>${escapeHtml(formatRand(value))}</b>` : '<span style="color:#94a3b8;">Not answered</span>';
       } else if (field.field_type === 'attachment') {
         cell = value?.url
           ? `<a href="${escapeHtml(value.url)}">📎 ${escapeHtml(value.name ?? 'Attachment')}</a>`
