@@ -66,7 +66,11 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
 
   const load = useCallback(async (userId: string) => {
     const seq = ++loadSeq.current;
+    const isNewUser = currentUserId.current !== userId;
     currentUserId.current = userId;
+    // A different user just signed in: report "loading" until their profile
+    // arrives, so screens don't mistake that gap for "not logged in".
+    if (isNewUser) setLoading(true);
 
     const [profileRes, permsRes, grantsRes] = await Promise.all([
       supabase.from('profiles').select('role, full_name').eq('id', userId).single(),

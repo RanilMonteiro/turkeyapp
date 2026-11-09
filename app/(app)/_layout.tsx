@@ -1,6 +1,31 @@
-import { Stack } from 'expo-router';
+import { useEffect } from 'react';
+import { ActivityIndicator, Platform, View, useColorScheme } from 'react-native';
+import { Redirect, Stack, usePathname } from 'expo-router';
+import { useAccess } from '../../context/AccessContext';
 
 export default function AppLayout() {
+  const isDark = useColorScheme() === 'dark';
+  const { loading, userId } = useAccess();
+  const pathname = usePathname();
+
+  // Remember the last page (web) so reopening the app can put you back there.
+  useEffect(() => {
+    if (Platform.OS === 'web' && userId && pathname && pathname !== '/') {
+      try { localStorage.setItem(`tki:lastPath:${userId}`, pathname); } catch {}
+    }
+  }, [userId, pathname]);
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#000000' : '#f8fafc' }}>
+        <ActivityIndicator color="#fbbf24" size="large" />
+      </View>
+    );
+  }
+
+  // Not signed in (e.g. session expired): go to login instead of a "no access" page.
+  if (!userId) return <Redirect href={'/(auth)/login' as any} />;
+
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="superuser" />
