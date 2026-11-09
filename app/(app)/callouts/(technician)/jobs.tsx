@@ -11,8 +11,8 @@ import { supabase } from '../../../../lib/supabase';
 import { showMessage } from '../../../../lib/dialog';
 import { formatTime as trimSeconds } from '../../../../lib/formatTime';
 import { useFocusEffect } from '@react-navigation/native';
-import SignatureCanvas from 'react-native-signature-canvas';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
+import TimePickerField from '../../../../components/TimePickerField';
 import * as ImagePicker from 'expo-image-picker';
 
 const colors = {
@@ -44,6 +44,12 @@ type Callout = {
   assigned_to: string | null;
 };
 
+// 'HH:MM' for right now (the shared TimePickerField works with these strings)
+function nowTime(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 function TechnicianJobs() {
   const isDark = useColorScheme() === 'dark';
   const [callouts, setCallouts] = useState<Callout[]>([]);
@@ -58,10 +64,8 @@ function TechnicianJobs() {
 
   const [completionModal, setCompletionModal] = useState(false);
   const [selectedCallout, setSelectedCallout] = useState<Callout | null>(null);
-  const [timeIn, setTimeIn] = useState(new Date());
-  const [timeOut, setTimeOut] = useState(new Date());
-  const [showTimeIn, setShowTimeIn] = useState(false);
-  const [showTimeOut, setShowTimeOut] = useState(false);
+  const [timeIn, setTimeIn] = useState(nowTime());
+  const [timeOut, setTimeOut] = useState(nowTime());
   const [machineCount, setMachineCount] = useState<number | null>(null);
   const [showMachineDropdown, setShowMachineDropdown] = useState(false);
   const [signature, setSignature] = useState<string | null>(null);
@@ -73,7 +77,7 @@ const [slipImage, setSlipImage] = useState<{ uri: string; mimeType?: string } | 
 
 
 
-  const signatureRef = useRef<any>(null);
+  const signatureRef = useRef<SignaturePadHandle>(null);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -156,8 +160,8 @@ const [slipImage, setSlipImage] = useState<{ uri: string; mimeType?: string } | 
 
  function openCompletionModal(callout: Callout) {
   setSelectedCallout(callout);
-  setTimeIn(new Date());
-  setTimeOut(new Date());
+  setTimeIn(nowTime());
+  setTimeOut(nowTime());
   setMachineCount(null);
   setSignature(null);
   setClosedOnTam(false);
@@ -166,9 +170,6 @@ const [slipImage, setSlipImage] = useState<{ uri: string; mimeType?: string } | 
   setCompletionModal(true);
 }
 
-  function formatTime(t: Date) {
-    return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
-  }
 async function fileToUint8Array(uri: string): Promise<Uint8Array> {
   if (Platform.OS === 'web') {
     const response = await fetch(uri);
@@ -237,6 +238,10 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
 }
 
   async function handleComplete() {
+  if (!timeIn || !timeOut) {
+    showMessage('Missing times', 'Please set both the time in and the time out.');
+    return;
+  }
   if (!machineCount) {
     showMessage('Missing info', 'Please select the number of machines tested.');
     return;
@@ -258,16 +263,27 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
   setSubmitting(true);
 
   const signatureUrl = await uploadSignature(signature, selectedCallout.id);
+  if (!signatureUrl) {
+    setSubmitting(false);
+    showMessage('Signature not saved', 'The signature could not be uploaded. Please check your connection and try again.');
+    return;
+  }
+
   const slipUrl = slipImage
     ? await uploadSlip(slipImage.uri, selectedCallout.id, slipImage.mimeType)
     : null;
+  if (slipImage && !slipUrl) {
+    setSubmitting(false);
+    showMessage('Slip photo not saved', 'The slip photo could not be uploaded. Please try again, or remove the photo.');
+    return;
+  }
 
   const { error } = await supabase
     .from('callouts')
     .update({
       status: 'completed',
-      time_in: formatTime(timeIn),
-      time_out: formatTime(timeOut),
+      time_in: timeIn,
+      time_out: timeOut,
       machines_tested: machineCount,
       signature_url: signatureUrl,
       closed_on_tam: closedOnTam,
@@ -293,26 +309,6 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
     });
     if (url) Linking.openURL(url);
   }
-
-  const signatureWebStyle = `
-    .m-signature-pad {
-      box-shadow: none;
-      border: none;
-      width: 100%;
-      height: 100%;
-    }
-    .m-signature-pad--body {
-      border: none;
-      width: 100%;
-    }
-    .m-signature-pad--footer {
-      display: none;
-    }
-    body {
-      background-color: ${isDark ? '#1e293b' : '#ffffff'};
-      margin: 0;
-    }
-  `;
 
   if (loading) {
     return (
@@ -526,50 +522,20 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
             <Text style={[styles.formSectionTitle, { color: theme.text }]}>Job Times</Text>
 
             <Text style={[styles.fieldLabel, { color: theme.subtext }]}>TIME IN</Text>
-            <TouchableOpacity
-              style={[styles.pickerBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
-              onPress={() => setShowTimeIn(true)}
-            >
-              <Clock color={colors.yellow} size={16} />
-              <Text style={[styles.pickerBtnText, { color: theme.text }]}>{formatTime(timeIn)}</Text>
-            </TouchableOpacity>
-
-            {showTimeIn && (
-              <DateTimePicker
-                value={timeIn}
-                mode="time"
-                is24Hour={true}
-                display={Platform.OS === 'ios' ? 'spinner' : 'clock'}
-                onChange={(_, selected) => {
-                  setShowTimeIn(false);
-                  if (selected) setTimeIn(selected);
-                }}
-                themeVariant={isDark ? 'dark' : 'light'}
-              />
-            )}
+            <TimePickerField
+              value={timeIn}
+              onChange={setTimeIn}
+              isDark={isDark}
+              theme={{ ...theme, muted: theme.subtext }}
+            />
 
             <Text style={[styles.fieldLabel, { color: theme.subtext, marginTop: 16 }]}>TIME OUT</Text>
-            <TouchableOpacity
-              style={[styles.pickerBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
-              onPress={() => setShowTimeOut(true)}
-            >
-              <Clock color={colors.yellow} size={16} />
-              <Text style={[styles.pickerBtnText, { color: theme.text }]}>{formatTime(timeOut)}</Text>
-            </TouchableOpacity>
-
-            {showTimeOut && (
-              <DateTimePicker
-                value={timeOut}
-                mode="time"
-                is24Hour={true}
-                display={Platform.OS === 'ios' ? 'spinner' : 'clock'}
-                onChange={(_, selected) => {
-                  setShowTimeOut(false);
-                  if (selected) setTimeOut(selected);
-                }}
-                themeVariant={isDark ? 'dark' : 'light'}
-              />
-            )}
+            <TimePickerField
+              value={timeOut}
+              onChange={setTimeOut}
+              isDark={isDark}
+              theme={{ ...theme, muted: theme.subtext }}
+            />
           </View>
 
           {/* Machines Tested */}
@@ -749,17 +715,13 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
               Draw your signature then tap Save
             </Text>
 
-            <SignatureCanvas
+            <SignaturePad
               ref={signatureRef}
               onOK={(sig) => {
                 setSignature(sig);
                 setShowSignature(false);
               }}
               onEmpty={() => showMessage('Empty', 'Please draw your signature first.')}
-              descriptionText=""
-              clearText="Clear"
-              confirmText="Save"
-              webStyle={signatureWebStyle}
               style={{
                 flex: 1,
                 borderWidth: 1,

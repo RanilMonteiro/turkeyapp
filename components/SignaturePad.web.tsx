@@ -43,9 +43,27 @@ const SignaturePad = forwardRef<SignaturePadHandle, Props>(({ onOK, onEmpty, sty
       }
     }
 
+    function resizeIfChanged() {
+      const parent = canvas!.parentElement;
+      if (!parent) return;
+      if (parent.clientWidth === canvas!.width && parent.clientHeight === canvas!.height) return;
+      if (parent.clientWidth === 0 || parent.clientHeight === 0) return;
+      resize();
+    }
+
     resize();
     window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
+    // Inside a Modal the container can still be 0x0 on the first pass, which
+    // leaves a canvas you can't draw on. Re-fit whenever the container resizes.
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
+      observer = new ResizeObserver(resizeIfChanged);
+      observer.observe(canvas.parentElement);
+    }
+    return () => {
+      window.removeEventListener('resize', resize);
+      observer?.disconnect();
+    };
   }, []);
 
   function getPos(e: any) {
