@@ -5,8 +5,10 @@ import {
   Linking, Platform, Alert, Image, Modal, TextInput
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, MapPin, Navigation, Clock, User, Wrench, Edit3, X } from 'lucide-react-native';
+import { ArrowLeft, MapPin, Navigation, Clock, User, Wrench, Edit3, X, Check } from 'lucide-react-native';
 import { supabase } from '../../../../../lib/supabase';
+import { formatTime } from '../../../../../lib/formatTime';
+import { notify } from '../../../../../lib/notify';
 
 const colors = {
   yellow: '#fbbf24',
@@ -97,7 +99,7 @@ const [savingInvoice, setSavingInvoice] = useState(false);
     setEditSiteName(callout.site_name);
     setEditAddress(callout.address);
     setEditDate(callout.date);
-    setEditTime(callout.time);
+    setEditTime(formatTime(callout.time));
     setEditModal(true);
   }
 
@@ -117,7 +119,7 @@ async function handleSaveInvoice() {
   setSavingInvoice(false);
 
   if (error) {
-    Alert.alert('Error', error.message);
+    notify('Error', error.message);
     return;
   }
 
@@ -127,7 +129,7 @@ async function handleSaveInvoice() {
 
   async function handleSaveEdit() {
     if (!editTitle.trim() || !editSiteName.trim() || !editAddress.trim() || !editDate.trim() || !editTime.trim()) {
-      Alert.alert('Missing fields', 'Please fill in all required fields.');
+      notify('Missing fields', 'Please fill in all required fields.');
       return;
     }
 
@@ -148,7 +150,7 @@ async function handleSaveInvoice() {
     setSaving(false);
 
     if (error) {
-      Alert.alert('Error', error.message);
+      notify('Error', error.message);
       return;
     }
 
@@ -169,7 +171,7 @@ async function handleSaveInvoice() {
       if (Platform.OS === 'web') {
         window.alert(`Error: ${error.message}`);
       } else {
-        Alert.alert('Error', error.message);
+        notify('Error', error.message);
       }
     } else {
       fetchCallout();
@@ -337,7 +339,7 @@ async function deleteCallout() {
           <View style={styles.detailRow}>
             <Clock color={colors.yellow} size={16} />
             <Text style={[styles.detailText, { color: theme.subtext }]}>
-              {callout.date} at {callout.time}
+              {callout.date} at {formatTime(callout.time)}
             </Text>
           </View>
 
@@ -372,7 +374,7 @@ async function deleteCallout() {
               <View style={styles.detailRow}>
                 <Clock color={colors.yellow} size={16} />
                 <Text style={[styles.detailText, { color: theme.subtext }]}>
-                  Time in: {callout.time_in}
+                  Time in: {formatTime(callout.time_in)}
                 </Text>
               </View>
             )}
@@ -381,7 +383,7 @@ async function deleteCallout() {
               <View style={styles.detailRow}>
                 <Clock color={colors.yellow} size={16} />
                 <Text style={[styles.detailText, { color: theme.subtext }]}>
-                  Time out: {callout.time_out}
+                  Time out: {formatTime(callout.time_out)}
                 </Text>
               </View>
             )}
@@ -434,8 +436,9 @@ async function deleteCallout() {
   )}
 
   <View style={styles.detailRow}>
+    {callout.closed_on_tam ? <Check color="#10b981" size={16} /> : <X color="#ef4444" size={16} />}
     <Text style={[styles.detailText, { color: callout.closed_on_tam ? '#10b981' : '#ef4444' }]}>
-      {callout.closed_on_tam ? '✓ Closed on TAM' : '✗ Not closed on TAM'}
+      {callout.closed_on_tam ? 'Closed on TAM' : 'Not closed on TAM'}
     </Text>
   </View>
 

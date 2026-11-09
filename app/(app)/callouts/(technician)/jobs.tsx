@@ -1023,3 +1023,12 @@ submitBlurText: {
     justifyContent: 'center',
   },
 });
+
+// Guarded entry point: the screen only opens while the "Callouts" switch is on for this user.
+export default function TechnicianJobsScreen() {
+  return (
+    <RequirePermission permission="view_callouts_tech" name="Callouts">
+      <TechnicianJobs />
+    </RequirePermission>
+  );
+}
