@@ -5,7 +5,7 @@ import {
   Linking, Platform, Alert, Image, Modal, TextInput
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, MapPin, Navigation, Clock, User, Wrench, Edit3, X, Check } from 'lucide-react-native';
+import { ArrowLeft, MapPin, Navigation, Clock, User, Wrench, Edit3, X, Check, ExternalLink } from 'lucide-react-native';
 import { supabase } from '../../../../../lib/supabase';
 import { formatTime } from '../../../../../lib/formatTime';
 import { notify } from '../../../../../lib/notify';
@@ -64,6 +64,7 @@ export default function CalloutDetail() {
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
   const [invoiceModal, setInvoiceModal] = useState(false);
+  const [viewImage, setViewImage] = useState<{ url: string; label: string } | null>(null);
 const [editInvoiceNumber, setEditInvoiceNumber] = useState('');
 const [savingInvoice, setSavingInvoice] = useState(false);
 
@@ -402,11 +403,17 @@ async function deleteCallout() {
                 <Text style={[styles.signatureLabel, { color: theme.subtext }]}>
                   Technician Signature
                 </Text>
-                <Image
-                  source={{ uri: callout.signature_url }}
-                  style={[styles.signatureImage, { borderColor: theme.border }]}
-                  resizeMode="contain"
-                />
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setViewImage({ url: callout.signature_url!, label: 'Technician Signature' })}
+                >
+                  <Image
+                    source={{ uri: callout.signature_url }}
+                    style={[styles.signatureImage, { borderColor: theme.border }]}
+                    resizeMode="contain"
+                  />
+                  <Text style={[styles.tapHint, { color: theme.subtext }]}>Tap to open</Text>
+                </TouchableOpacity>
               </View>
             )}
           </View>
@@ -445,11 +452,17 @@ async function deleteCallout() {
   {callout.slip_url && (
     <View style={styles.signatureSection}>
       <Text style={[styles.signatureLabel, { color: theme.subtext }]}>Slip Photo</Text>
-      <Image
-        source={{ uri: callout.slip_url }}
-        style={[styles.signatureImage, { borderColor: theme.border }]}
-        resizeMode="contain"
-      />
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => setViewImage({ url: callout.slip_url!, label: 'Slip Photo' })}
+      >
+        <Image
+          source={{ uri: callout.slip_url }}
+          style={[styles.signatureImage, { borderColor: theme.border }]}
+          resizeMode="contain"
+        />
+        <Text style={[styles.tapHint, { color: theme.subtext }]}>Tap to open</Text>
+      </TouchableOpacity>
     </View>
   )}
 </View>
@@ -477,6 +490,35 @@ async function deleteCallout() {
         )}
 
       </View>
+{/* Full-screen photo viewer */}
+<Modal
+  visible={!!viewImage}
+  animationType="fade"
+  transparent
+  onRequestClose={() => setViewImage(null)}
+>
+  <View style={styles.viewerBackdrop}>
+    <View style={styles.viewerBar}>
+      <Text style={styles.viewerTitle}>{viewImage?.label}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+        <TouchableOpacity
+          onPress={() => viewImage && Linking.openURL(viewImage.url)}
+          style={styles.viewerBtn}
+        >
+          <ExternalLink color={colors.white} size={20} />
+          <Text style={styles.viewerBtnText}>Open full size</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setViewImage(null)} style={styles.viewerBtn}>
+          <X color={colors.white} size={26} />
+        </TouchableOpacity>
+      </View>
+    </View>
+    {viewImage && (
+      <Image source={{ uri: viewImage.url }} style={styles.viewerImage} resizeMode="contain" />
+    )}
+  </View>
+</Modal>
+
 <Modal visible={invoiceModal} animationType="slide" transparent={false} onRequestClose={() => setInvoiceModal(false)}>
   <ScrollView
     style={[styles.modalContainer, { backgroundColor: theme.background }]}
@@ -680,6 +722,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     backgroundColor: colors.white,
   },
+  tapHint: { fontSize: 12, marginTop: 6, textAlign: 'center' },
+  viewerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' },
+  viewerBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 50,
+    paddingBottom: 12,
+  },
+  viewerTitle: { color: colors.white, fontSize: 16, fontWeight: '700' },
+  viewerBtn: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  viewerBtnText: { color: colors.white, fontSize: 14, fontWeight: '600' },
+  viewerImage: { flex: 1, width: '100%' },
   cancelButton: {
     backgroundColor: '#f59e0b',
     borderRadius: 14,
