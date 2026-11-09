@@ -120,20 +120,6 @@ export default function NewCallout() {
     if (url) Linking.openURL(url);
   }
 
-  // Push is sent by the 'notify-new-callout' Supabase Edge Function, so it works
-  // the same whether the callout was created on web, iOS or Android.
-  // Never throws: a failed push must not undo a created callout.
-  async function sendPushNotifications(calloutId: string): Promise<string | null> {
-    try {
-      const { error } = await supabase.functions.invoke('notify-new-callout', {
-        body: { callout_id: calloutId },
-      });
-      return error ? error.message : null;
-    } catch (e: any) {
-      return e?.message ?? 'Unknown error';
-    }
-  }
-
   function resetForm() {
     setTitle('');
     setSiteName('');
@@ -160,7 +146,7 @@ export default function NewCallout() {
     try {
       const { data: userData } = await supabase.auth.getUser();
 
-      const { data: created, error } = await supabase.from('callouts').insert({
+      const { error } = await supabase.from('callouts').insert({
         title: title.trim(),
         site_name: siteName.trim(),
         description: description.trim() || null,
@@ -172,27 +158,19 @@ export default function NewCallout() {
         status: 'pending',
         created_by: userData.user?.id,
         invoice_number: invoiceNumber.trim() || null,
-      }).select('id').single();
+      });
 
-      if (error || !created) {
-        setStatus({ type: 'error', message: error?.message ?? 'Callout could not be created.' });
+      if (error) {
+        setStatus({ type: 'error', message: error.message });
         return;
       }
 
-      const pushError = await sendPushNotifications(created.id);
-
-      setStatus(
-        pushError
-          ? { type: 'error', message: `Callout created, but technicians were not notified: ${pushError}` }
-          : { type: 'success', message: 'Callout created. Technicians have been notified.' }
-      );
+      // Technicians are notified by the database webhook / edge function on insert.
+      setStatus({ type: 'success', message: 'Callout created. Technicians will be notified.' });
       resetForm();
-      // Only auto-leave on full success so a push error stays readable.
-      if (!pushError) {
-        redirectTimer.current = setTimeout(() => {
-          router.replace('/(app)/callouts/(admin)/dashboard' as any);
-        }, 1500);
-      }
+      redirectTimer.current = setTimeout(() => {
+        router.replace('/(app)/callouts/(admin)/dashboard' as any);
+      }, 1500);
     } catch (e: any) {
       setStatus({ type: 'error', message: e?.message ?? 'Something went wrong. Please try again.' });
     } finally {

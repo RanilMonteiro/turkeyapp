@@ -3,11 +3,12 @@ import RequirePermission from '../../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, RefreshControl,
-  ActivityIndicator, Alert, Linking, Platform,
+  ActivityIndicator, Linking, Platform,
   Modal,TextInput, Image
 } from 'react-native';
 import { Navigation, CheckCircle, Clock, ChevronDown, MapPin, Calendar, Check } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
+import { showMessage } from '../../../../lib/dialog';
 import { formatTime as trimSeconds } from '../../../../lib/formatTime';
 import { useFocusEffect } from '@react-navigation/native';
 import SignatureCanvas from 'react-native-signature-canvas';
@@ -50,6 +51,10 @@ function TechnicianJobs() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  const [acceptTarget, setAcceptTarget] = useState<string | null>(null);
+  const [accepting, setAccepting] = useState(false);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [completionModal, setCompletionModal] = useState(false);
   const [selectedCallout, setSelectedCallout] = useState<Callout | null>(null);
@@ -110,32 +115,43 @@ const [slipImage, setSlipImage] = useState<{ uri: string; mimeType?: string } | 
     }, [])
   );
 
-  async function acceptCallout(calloutId: string) {
-    Alert.alert(
-      'Accept Callout',
-      'Are you sure you want to accept this callout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Accept',
-          onPress: async () => {
-            const { error } = await supabase
-              .from('callouts')
-              .update({ assigned_to: userId, status: 'accepted' })
-              .eq('id', calloutId)
-              .eq('status', 'pending')
-              .is('assigned_to', null);
+  function showToast(type: 'success' | 'error', message: string) {
+    setToast({ type, message });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 5000);
+  }
 
-            if (error) {
-              Alert.alert('Error', 'Could not accept callout. It may have already been taken.');
-            } else {
-              Alert.alert('Accepted!', 'The callout has been assigned to you.');
-              fetchData();
-            }
-          }
-        }
-      ]
-    );
+  // In-app confirm (no browser dialogs, which can be blocked on web)
+  function acceptCallout(calloutId: string) {
+    setAcceptTarget(calloutId);
+  }
+
+  async function confirmAccept() {
+    if (!acceptTarget || accepting) return;
+    setAccepting(true);
+    try {
+      const { data, error } = await supabase
+        .from('callouts')
+        .update({ assigned_to: userId, status: 'accepted' })
+        .eq('id', acceptTarget)
+        .eq('status', 'pending')
+        .is('assigned_to', null)
+        .select('id');
+
+      if (error) {
+        showToast('error', `Could not accept callout: ${error.message}`);
+      } else if (!data || data.length === 0) {
+        showToast('error', 'Could not accept callout. It may have already been taken, or your account is not allowed to update it.');
+      } else {
+        showToast('success', 'Callout accepted. It has been assigned to you.');
+      }
+    } catch (e: any) {
+      showToast('error', `Could not accept callout: ${e?.message ?? 'unknown error'}`);
+    } finally {
+      setAccepting(false);
+      setAcceptTarget(null);
+      fetchData();
+    }
   }
 
  function openCompletionModal(callout: Callout) {
@@ -187,7 +203,7 @@ async function fileToUint8Array(uri: string): Promise<Uint8Array> {
   async function pickSlipImage() {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {
-    Alert.alert('Permission needed', 'Please allow photo access to attach a slip.');
+    showMessage('Permission needed', 'Please allow photo access to attach a slip.');
     return;
   }
 
@@ -222,19 +238,19 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
 
   async function handleComplete() {
   if (!machineCount) {
-    Alert.alert('Missing info', 'Please select the number of machines tested.');
+    showMessage('Missing info', 'Please select the number of machines tested.');
     return;
   }
   if (!signature) {
-    Alert.alert('Missing signature', 'Please provide a signature before completing.');
+    showMessage('Missing signature', 'Please provide a signature before completing.');
     return;
   }
   if (!tamJobNumber.trim()) {
-    Alert.alert('Missing TAM job number', 'Please enter the TAM job number.');
+    showMessage('Missing TAM job number', 'Please enter the TAM job number.');
     return;
   }
   if (!closedOnTam) {
-    Alert.alert('Confirm TAM closure', 'Please confirm the job was closed on TAM before continuing.');
+    showMessage('Confirm TAM closure', 'Please confirm the job was closed on TAM before continuing.');
     return;
   }
   if (!selectedCallout) return;
@@ -263,10 +279,10 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
   setSubmitting(false);
 
   if (error) {
-    Alert.alert('Error', error.message);
+    showMessage('Error', error.message);
   } else {
     setCompletionModal(false);
-    Alert.alert('Done!', 'Callout marked as completed.');
+    showMessage('Done!', 'Callout marked as completed.');
     fetchData();
   }
 }
@@ -308,6 +324,53 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
 
   return (
     <>
+      {toast && (
+        <View
+          style={[
+            styles.toast,
+            toast.type === 'success'
+              ? { backgroundColor: isDark ? '#064e3b' : '#d1fae5', borderColor: '#10b981' }
+              : { backgroundColor: isDark ? '#7f1d1d' : '#fee2e2', borderColor: '#ef4444' },
+          ]}
+        >
+          <Text style={{ color: theme.text, fontSize: 14, lineHeight: 20 }}>{toast.message}</Text>
+        </View>
+      )}
+
+      <Modal
+        visible={!!acceptTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAcceptTarget(null)}
+      >
+        <View style={styles.confirmBackdrop}>
+          <View style={[styles.confirmCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.confirmTitle, { color: theme.text }]}>Accept Callout</Text>
+            <Text style={[styles.confirmBody, { color: theme.subtext }]}>
+              Are you sure you want to accept this callout?
+            </Text>
+            <View style={styles.confirmRow}>
+              <TouchableOpacity
+                style={[styles.confirmBtn, { borderWidth: 1, borderColor: theme.border }]}
+                onPress={() => setAcceptTarget(null)}
+                disabled={accepting}
+              >
+                <Text style={{ color: theme.text, fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmBtn, { backgroundColor: colors.yellow }, accepting && { opacity: 0.6 }]}
+                onPress={confirmAccept}
+                disabled={accepting}
+              >
+                {accepting
+                  ? <ActivityIndicator color={colors.black} />
+                  : <Text style={{ color: colors.black, fontWeight: '700' }}>Accept</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <ScrollView
         style={[styles.container, { backgroundColor: theme.background }]}
         refreshControl={
@@ -692,7 +755,7 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
                 setSignature(sig);
                 setShowSignature(false);
               }}
-              onEmpty={() => Alert.alert('Empty', 'Please draw your signature first.')}
+              onEmpty={() => showMessage('Empty', 'Please draw your signature first.')}
               descriptionText=""
               clearText="Clear"
               confirmText="Save"
@@ -923,13 +986,40 @@ submitBlurText: {
   paddingVertical: 4,
   borderRadius: 8,
 },
+  toast: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    zIndex: 100,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    maxWidth: 560,
+    alignSelf: 'center',
+  },
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  confirmCard: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 24,
+  },
+  confirmTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  confirmBody: { fontSize: 15, lineHeight: 22, marginBottom: 20 },
+  confirmRow: { flexDirection: 'row', gap: 12 },
+  confirmBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });
-
-// Guarded entry point: the screen only opens while the "Callouts" switch is on for this user.
-export default function TechnicianJobsScreen() {
-  return (
-    <RequirePermission permission="view_callouts_tech" name="Callouts">
-      <TechnicianJobs />
-    </RequirePermission>
-  );
-}
