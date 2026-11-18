@@ -112,7 +112,7 @@ type DragInfo =
   | { type: 'paint'; color: PaintColor; dates: string[] };
 
 // What stays highlighted after the finger lifts (until copied, deleted or cleared).
-// ---- Site search (across every technician) ----
+// ---- Site / quote / invoice search (across every technician) ----
 type SearchRow = {
   id: string;
   technician_id: string;
@@ -120,16 +120,22 @@ type SearchRow = {
   mine_name: string | null;
   testing_type: string | null;
   tam_status: string | null;
+  financial_document_type: string | null;
+  financial_document_number: string | null;
+  sales_order_number: string | null;
   technician?: { full_name: string | null } | null;
 };
 type SearchRange = {
   techId: string; techName: string; start: string; end: string; days: number;
   testing: string | null; tam: string | null;
+  docType: string | null; docNumber: string | null; salesOrder: string | null;
 };
 type SearchGroup = { key: string; site: string; ranges: SearchRange[]; techCount: number; dayCount: number };
 
 // Turns raw rows into: one group per site -> tidy date ranges per technician
 // (back-to-back days, and Fri -> Mon, are merged into one line "12 – 16 Oct").
+// Days only merge when they carry the same financial document, because a
+// different quote / invoice is a different job.
 function buildSearchGroups(rows: SearchRow[]): SearchGroup[] {
   const sorted = [...rows].sort((a, b) =>
     (a.mine_name ?? '').trim().toLowerCase().localeCompare((b.mine_name ?? '').trim().toLowerCase()) ||
@@ -148,7 +154,15 @@ function buildSearchGroups(rows: SearchRow[]): SearchGroup[] {
     const prev = last.get(lk);
     const gap = prev ? diffDays(prev.end, r.entry_date) : 0;
     const prevIsFriday = prev ? new Date(prev.end + 'T00:00:00').getDay() === 5 : false;
-    if (prev && prev.testing === r.testing_type && prev.tam === r.tam_status && (gap === 1 || (gap === 3 && prevIsFriday))) {
+    if (
+      prev &&
+      prev.testing === r.testing_type &&
+      prev.tam === r.tam_status &&
+      prev.docType === r.financial_document_type &&
+      prev.docNumber === r.financial_document_number &&
+      prev.salesOrder === r.sales_order_number &&
+      (gap === 1 || (gap === 3 && prevIsFriday))
+    ) {
       prev.end = r.entry_date;
       prev.days++;
     } else {
@@ -157,6 +171,9 @@ function buildSearchGroups(rows: SearchRow[]): SearchGroup[] {
         techName: r.technician?.full_name ?? 'Unknown technician',
         start: r.entry_date, end: r.entry_date, days: 1,
         testing: r.testing_type, tam: r.tam_status,
+        docType: r.financial_document_type,
+        docNumber: r.financial_document_number,
+        salesOrder: r.sales_order_number,
       };
       g.ranges.push(range);
       last.set(lk, range);
@@ -480,7 +497,8 @@ function OperationalCalendar() {
     return () => doc.removeEventListener('keydown', onKey);
   }, [role]);
 
-  // Search every technician's calendar for a site name (debounced)
+  // Search every technician's calendar for a site name, quote, sales order
+  // or invoice number (debounced)
   useEffect(() => {
     if (!showSearch) return;
     const q = searchQuery.trim();
@@ -488,11 +506,18 @@ function OperationalCalendar() {
     let cancelled = false;
     setSearchLoading(true);
     const t = setTimeout(async () => {
-      const safe = q.replace(/[\\%_,()]/g, ' ');
+      const safe = q.replace(/[\\%_,()]/g, ' ').trim();
+      // "INV 50521" / "SO 16617" / "QT 123" -> search on just the number part
+      const numTerm = safe.replace(/^(quotes?|qt|sales\s*orders?|so|invoices?|inv)[\s\-:]*/i, '').trim() || safe;
+
       let query = supabase
         .from('operational_calendar_entries')
-        .select('id, technician_id, entry_date, mine_name, testing_type, tam_status, technician:technician_id(full_name)')
-        .ilike('mine_name', `%${safe}%`)
+        .select('id, technician_id, entry_date, mine_name, testing_type, tam_status, financial_document_type, financial_document_number, sales_order_number, technician:technician_id(full_name)')
+        .or(
+          `mine_name.ilike.%${safe}%,` +
+          `financial_document_number.ilike.%${numTerm}%,` +
+          `sales_order_number.ilike.%${numTerm}%`
+        )
         .order('entry_date', { ascending: true })
         .limit(600);
       if (searchScope === 'upcoming') {
@@ -1858,7 +1883,7 @@ function OperationalCalendar() {
         </ScrollView>
       </View>
 
-      {/* Site search - every technician at once */}
+      {/* Search - site, quote, sales order or invoice, across every technician */}
       <Modal visible={showSearch} transparent animationType="fade" onRequestClose={() => setShowSearch(false)}>
         <View style={styles.pickerOverlay}>
           <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border, maxWidth: 680, height: '85%' }]}>
@@ -1869,7 +1894,7 @@ function OperationalCalendar() {
                   autoFocus
                   value={searchQuery}
                   onChangeText={setSearchQuery}
-                  placeholder="Search a site (e.g. Redpath)…"
+                  placeholder="Search a site, quote or invoice (e.g. Redpath, INV 50521)…"
                   placeholderTextColor={theme.muted}
                   style={{ flex: 1, color: theme.text, paddingVertical: 10, fontSize: 15 }}
                 />
@@ -1904,7 +1929,7 @@ function OperationalCalendar() {
 
             <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
               {searchQuery.trim().length < 2 ? (
-                <Text style={{ color: theme.subtext, padding: 12 }}>Type at least 2 letters of a site name to see every technician booked there.</Text>
+                <Text style={{ color: theme.subtext, padding: 12 }}>Type at least 2 characters of a site name, quote, sales order or invoice number to see every technician booked on it.</Text>
               ) : searchLoading ? (
                 <ActivityIndicator color={colors.yellow} style={{ marginTop: 24 }} />
               ) : searchRows.length === 0 ? (
@@ -1951,6 +1976,15 @@ function OperationalCalendar() {
                                 <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>{r.tam}</Text>
                               </View>
                             )}
+                            {(() => {
+                              const docs = financialDocParts(r.docType, r.docNumber, r.salesOrder);
+                              if (docs.length === 0) return null;
+                              return (
+                                <Text style={{ color: INVOICE_COLOR, fontSize: 12.5, fontWeight: '800' }}>
+                                  {docs.map(p => `${p.abbr} ${p.value}`.trim()).join('   ')}
+                                </Text>
+                              );
+                            })()}
                           </View>
                         </TouchableOpacity>
                       );
