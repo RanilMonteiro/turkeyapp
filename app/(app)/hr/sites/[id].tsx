@@ -1,19 +1,18 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import RequirePermission from '../../../../components/RequirePermission';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
   TextInput, Modal, Platform, Linking, Image
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
   ArrowLeft, MapPin, Phone, Mail, User, Plus, Trash2, Edit,
-  FileText, Upload, MessageSquare, History, X, Image as ImageIcon, Video
+  FileText, Upload, MessageSquare, History, X, Image as ImageIcon, Video, Receipt
 } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { mapsUrlFor, isUrl } from '../../../../lib/maps';
 import { notify, confirm } from '../../../../lib/notify';
-import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -32,6 +31,7 @@ const TABS = [
   { key: 'info', label: 'Info', icon: MapPin },
   { key: 'contacts', label: 'Contacts', icon: User },
   { key: 'documents', label: 'Documents', icon: FileText },
+  { key: 'financials', label: 'Financials', icon: Receipt },
   { key: 'notes', label: 'Notes', icon: MessageSquare },
   { key: 'history', label: 'History', icon: History }, // only shown to canManage
 ] as const;
@@ -43,6 +43,72 @@ type Contact = { id: string; name: string; role_title: string | null; phone: str
 type SiteDoc = { id: string; name: string; file_url: string; file_type: string | null; uploaded_by: string | null; created_at: string; uploader?: { full_name: string } | null };
 type SiteNote = { id: string; note_text: string | null; media_url: string | null; media_type: string | null; created_by: string | null; created_at: string; author?: { full_name: string } | null };
 type ActivityRow = { id: string; action: string; description: string | null; created_at: string; actor?: { full_name: string } | null };
+
+type FinRow = {
+  id: string;
+  technician_id: string;
+  entry_date: string;
+  financial_document_type: string | null;
+  financial_document_number: string | null;
+  sales_order_number: string | null;
+  technician?: { full_name: string | null } | null;
+};
+type FinDoc = { key: string; type: string; number: string; linked: string[]; dates: string[]; techs: string[] };
+
+// Colours match the calendar (invoices are red there)
+const FIN_META: Record<string, { label: string; plural: string; abbr: string; color: string }> = {
+  'Quote':          { label: 'Quote',          plural: 'Quotes',          abbr: 'QT',  color: '#2563eb' },
+  'Sales Order':    { label: 'Sales Order',    plural: 'Sales Orders',    abbr: 'SO',  color: '#d97706' },
+  'Invoice':        { label: 'Invoice',        plural: 'Invoices',        abbr: 'INV', color: '#dc2626' },
+  'Purchase Order': { label: 'Purchase Order', plural: 'Purchase Orders', abbr: 'PO',  color: '#7c3aed' },
+};
+const FIN_ORDER = ['Quote', 'Sales Order', 'Invoice', 'Purchase Order'];
+const finMeta = (t: string) => FIN_META[t] ?? { label: t, plural: t, abbr: '', color: '#64748b' };
+
+const FIN_SELECT =
+  'id, technician_id, entry_date, financial_document_type, financial_document_number, sales_order_number, technician:technician_id(full_name)';
+
+function finDate(d: string) {
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// One card per document number. Days that share a document are merged, and an
+// Invoice that carries a Sales Order number also lists that Sales Order, linked both ways.
+function buildFinancialDocs(rows: FinRow[]): FinDoc[] {
+  const map = new Map<string, FinDoc>();
+  const get = (type: string, number: string) => {
+    const key = `${type}|${number.trim().toLowerCase()}`;
+    let d = map.get(key);
+    if (!d) { d = { key, type, number: number.trim(), linked: [], dates: [], techs: [] }; map.set(key, d); }
+    return d;
+  };
+  const link = (d: FinDoc, label: string) => { if (!d.linked.includes(label)) d.linked.push(label); };
+
+  for (const r of rows) {
+    const type = r.financial_document_type;
+    const num = r.financial_document_number?.trim();
+    const so = r.sales_order_number?.trim();
+    const tech = r.technician?.full_name ?? null;
+    const touch = (d: FinDoc) => {
+      if (!d.dates.includes(r.entry_date)) d.dates.push(r.entry_date);
+      if (tech && !d.techs.includes(tech)) d.techs.push(tech);
+    };
+    if (type && num) {
+      const d = get(type, num);
+      touch(d);
+      if (type === 'Invoice' && so) link(d, `From SO ${so}`);
+    }
+    if (so) {
+      const d = get('Sales Order', so);
+      touch(d);
+      if (type === 'Invoice' && num) link(d, `Invoiced as INV ${num}`);
+    }
+  }
+  const out = Array.from(map.values());
+  out.forEach(d => d.dates.sort());
+  // newest first
+  return out.sort((a, b) => b.dates[b.dates.length - 1].localeCompare(a.dates[a.dates.length - 1]));
+}
 
 async function fileToUint8Array(uri: string): Promise<Uint8Array> {
   if (Platform.OS === 'web') {
@@ -73,6 +139,10 @@ function SiteDetail() {
   const [notes, setNotes] = useState<SiteNote[]>([]);
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [historyFilter, setHistoryFilter] = useState('');
+
+  // Financials (from the Operational Calendar)
+  const [finRows, setFinRows] = useState<FinRow[]>([]);
+  const [finFilter, setFinFilter] = useState<string>('all');
 
   // Info edit modal
   const [infoModalVisible, setInfoModalVisible] = useState(false);
@@ -140,7 +210,7 @@ function SiteDetail() {
     setCanManage(manage);
 
     await Promise.all([
-      fetchSite(),
+      (async () => { const s = await fetchSite(); await fetchFinancials(s?.name ?? null); })(),
       fetchDetails(),
       fetchContacts(),
       fetchDocuments(),
@@ -153,6 +223,29 @@ function SiteDetail() {
   async function fetchSite() {
     const { data } = await supabase.from('sites').select('*').eq('id', siteId).single();
     if (data) setSite(data);
+    return data ?? null;
+  }
+
+  // Calendar entries for this site. Newer entries are linked by site_id; older
+  // ones only have the site name, so they are matched by name too.
+  async function fetchFinancials(siteName: string | null) {
+    const byId = supabase
+      .from('operational_calendar_entries')
+      .select(FIN_SELECT)
+      .eq('site_id', siteId)
+      .limit(2000);
+    const byName = siteName
+      ? supabase
+          .from('operational_calendar_entries')
+          .select(FIN_SELECT)
+          .is('site_id', null)
+          .ilike('mine_name', siteName.trim().replace(/[\\%_]/g, m => '\\' + m))
+          .limit(2000)
+      : null;
+
+    const [a, b] = await Promise.all([byId, byName ?? Promise.resolve({ data: [] as any[] })]);
+    const rows = [...((a.data as any[]) ?? []), ...((b.data as any[]) ?? [])] as FinRow[];
+    setFinRows(rows.filter(r => r.financial_document_number || r.sales_order_number));
   }
 
   async function fetchDetails() {
@@ -467,6 +560,16 @@ function SiteDetail() {
       || (a.actor?.full_name ?? '').toLowerCase().includes(q);
   });
 
+  // Financials derived data
+  const finDocs = useMemo(() => buildFinancialDocs(finRows), [finRows]);
+  const finCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    finDocs.forEach(d => { c[d.type] = (c[d.type] ?? 0) + 1; });
+    return c;
+  }, [finDocs]);
+  const finTypesPresent = FIN_ORDER.filter(t => t !== 'Purchase Order' || finCounts[t]);
+  const visibleFinDocs = finFilter === 'all' ? finDocs : finDocs.filter(d => d.type === finFilter);
+
   const visibleTabs = TABS.filter(t => t.key !== 'history' || canManage);
 
   if (loading) {
@@ -623,6 +726,77 @@ function SiteDetail() {
                   )}
                 </View>
               ))
+            )}
+          </View>
+        )}
+
+        {/* FINANCIALS TAB — pulled from the Operational Calendar */}
+        {activeTab === 'financials' && (
+          <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 4 }]}>Financial Documents</Text>
+            <Text style={[styles.emptyText, { color: theme.muted, marginBottom: 12 }]}>
+              Taken from the Operational Calendar entries booked on this site.
+            </Text>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              {['all', ...finTypesPresent].map(f => {
+                const active = finFilter === f;
+                const label = f === 'all' ? 'All' : finMeta(f).plural;
+                const count = f === 'all' ? finDocs.length : (finCounts[f] ?? 0);
+                return (
+                  <TouchableOpacity
+                    key={f}
+                    onPress={() => setFinFilter(f)}
+                    style={[
+                      styles.tabChip,
+                      { borderColor: theme.border, marginRight: 0 },
+                      active && { backgroundColor: colors.yellow, borderColor: colors.yellow },
+                    ]}
+                  >
+                    <Text style={[styles.tabChipText, { color: active ? colors.black : theme.subtext }]}>
+                      {label} ({count})
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {visibleFinDocs.length === 0 ? (
+              <Text style={[styles.emptyText, { color: theme.muted }]}>
+                {finDocs.length === 0
+                  ? 'No quotes, sales orders or invoices have been added to this site on the calendar yet.'
+                  : `No ${finMeta(finFilter).plural.toLowerCase()} for this site.`}
+              </Text>
+            ) : (
+              visibleFinDocs.map(d => {
+                const m = finMeta(d.type);
+                const first = d.dates[0];
+                const last = d.dates[d.dates.length - 1];
+                return (
+                  <View key={d.key} style={[styles.docRow, { borderColor: theme.border, alignItems: 'flex-start' }]}>
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <View style={{ backgroundColor: m.color, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
+                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{m.label}</Text>
+                        </View>
+                        <Text style={[styles.docName, { color: theme.text }]}>
+                          {m.abbr ? `${m.abbr} ${d.number}` : d.number}
+                        </Text>
+                      </View>
+                      {d.linked.map(l => (
+                        <Text key={l} style={{ color: theme.subtext, fontSize: 12, fontWeight: '600' }}>{l}</Text>
+                      ))}
+                      <Text style={[styles.docMeta, { color: theme.muted }]}>
+                        {first === last ? finDate(first) : `${finDate(first)} – ${finDate(last)}`}
+                        {' · '}{d.dates.length} day{d.dates.length === 1 ? '' : 's'}
+                      </Text>
+                      {d.techs.length > 0 && (
+                        <Text style={[styles.docMeta, { color: theme.subtext }]}>{d.techs.join(', ')}</Text>
+                      )}
+                    </View>
+                  </View>
+                );
+              })
             )}
           </View>
         )}
