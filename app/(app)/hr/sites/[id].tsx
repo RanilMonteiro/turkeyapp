@@ -31,7 +31,7 @@ const TABS = [
   { key: 'info', label: 'Info', icon: MapPin },
   { key: 'contacts', label: 'Contacts', icon: User },
   { key: 'documents', label: 'Documents', icon: FileText },
-  { key: 'financials', label: 'Financials', icon: Receipt },
+  { key: 'accounts', label: 'Accounts', icon: Receipt },
   { key: 'notes', label: 'Notes', icon: MessageSquare },
   { key: 'history', label: 'History', icon: History }, // only shown to canManage
 ] as const;
@@ -52,6 +52,11 @@ type FinRow = {
   financial_document_number: string | null;
   sales_order_number: string | null;
   technician?: { full_name: string | null } | null;
+};
+type FinNote = {
+  id: string; doc_key: string; note_text: string;
+  created_by: string | null; created_at: string;
+  author?: { full_name: string | null } | null;
 };
 type FinDoc = { key: string; type: string; number: string; linked: string[]; dates: string[]; techs: string[] };
 
@@ -130,6 +135,7 @@ function SiteDetail() {
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [canManage, setCanManage] = useState(false);
+  const [isTechnician, setIsTechnician] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>('info');
 
   const [site, setSite] = useState<Site | null>(null);
@@ -140,9 +146,14 @@ function SiteDetail() {
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [historyFilter, setHistoryFilter] = useState('');
 
-  // Financials (from the Operational Calendar)
+  // Accounts (financial documents from the Operational Calendar)
   const [finRows, setFinRows] = useState<FinRow[]>([]);
   const [finFilter, setFinFilter] = useState<string>('all');
+  // Notes left on individual quotes / sales orders / invoices
+  const [finNotes, setFinNotes] = useState<FinNote[]>([]);
+  const [finNoteDoc, setFinNoteDoc] = useState<FinDoc | null>(null);
+  const [finNoteText, setFinNoteText] = useState('');
+  const [savingFinNote, setSavingFinNote] = useState(false);
 
   // Info edit modal
   const [infoModalVisible, setInfoModalVisible] = useState(false);
@@ -194,6 +205,8 @@ function SiteDetail() {
 
     const { data: profile } = await supabase.from('profiles').select('role').eq('id', uid).single();
     const role = profile?.role;
+    const techOnly = role === 'technician';
+    setIsTechnician(techOnly);
 
     let manage = false;
     if (role === 'superuser') {
@@ -210,7 +223,8 @@ function SiteDetail() {
     setCanManage(manage);
 
     await Promise.all([
-      (async () => { const s = await fetchSite(); await fetchFinancials(s?.name ?? null); })(),
+      (async () => { const s = await fetchSite(); await fetchFinancials(s?.name ?? null, techOnly ? uid : null); })(),
+      fetchFinNotes(),
       fetchDetails(),
       fetchContacts(),
       fetchDocuments(),
@@ -228,24 +242,41 @@ function SiteDetail() {
 
   // Calendar entries for this site. Newer entries are linked by site_id; older
   // ones only have the site name, so they are matched by name too.
-  async function fetchFinancials(siteName: string | null) {
-    const byId = supabase
+  // Technicians only ever get their own entries (techId), so they never see
+  // another technician's quotes, sales orders or invoices.
+  async function fetchFinancials(siteName: string | null, techId: string | null = null) {
+    let byId = supabase
       .from('operational_calendar_entries')
       .select(FIN_SELECT)
       .eq('site_id', siteId)
       .limit(2000);
-    const byName = siteName
-      ? supabase
-          .from('operational_calendar_entries')
-          .select(FIN_SELECT)
-          .is('site_id', null)
-          .ilike('mine_name', siteName.trim().replace(/[\\%_]/g, m => '\\' + m))
-          .limit(2000)
-      : null;
+    if (techId) byId = byId.eq('technician_id', techId);
+    let byName: any = null;
+    if (siteName) {
+      byName = supabase
+        .from('operational_calendar_entries')
+        .select(FIN_SELECT)
+        .is('site_id', null)
+        .ilike('mine_name', siteName.trim().replace(/[\\%_]/g, m => '\\' + m))
+        .limit(2000);
+      if (techId) byName = byName.eq('technician_id', techId);
+    }
 
     const [a, b] = await Promise.all([byId, byName ?? Promise.resolve({ data: [] as any[] })]);
     const rows = [...((a.data as any[]) ?? []), ...((b.data as any[]) ?? [])] as FinRow[];
-    setFinRows(rows.filter(r => r.financial_document_number || r.sales_order_number));
+    setFinRows(rows.filter(r =>
+      (r.financial_document_number || r.sales_order_number) &&
+      (!techId || r.technician_id === techId)
+    ));
+  }
+
+  async function fetchFinNotes() {
+    const { data } = await supabase
+      .from('site_financial_notes')
+      .select('id, doc_key, note_text, created_by, created_at, author:created_by(full_name)')
+      .eq('site_id', siteId)
+      .order('created_at', { ascending: false });
+    if (data) setFinNotes(data as any);
   }
 
   async function fetchDetails() {
@@ -469,6 +500,47 @@ function SiteDetail() {
     });
   }
 
+  // ---------- Account notes (per quote / sales order / invoice) ----------
+
+  function openFinNoteModal(doc: FinDoc) {
+    setFinNoteDoc(doc);
+    setFinNoteText('');
+  }
+
+  async function handleSaveFinNote() {
+    if (!finNoteDoc) return;
+    if (!finNoteText.trim()) {
+      notify('Empty note', 'Type a note first.');
+      return;
+    }
+    setSavingFinNote(true);
+    const { error } = await supabase.from('site_financial_notes').insert({
+      site_id: siteId,
+      doc_key: finNoteDoc.key,
+      doc_type: finNoteDoc.type,
+      doc_number: finNoteDoc.number,
+      note_text: finNoteText.trim(),
+      created_by: userId,
+    });
+    setSavingFinNote(false);
+    if (error) {
+      notify('Error', error.message);
+      return;
+    }
+    const label = `${finMeta(finNoteDoc.type).abbr} ${finNoteDoc.number}`.trim();
+    setFinNoteDoc(null);
+    fetchFinNotes();
+    logActivity('added_account_note', `${label}: ${finNoteText.trim()}`);
+  }
+
+  function handleDeleteFinNote(n: FinNote) {
+    confirm('Delete Note', 'Delete this note? This cannot be undone.', async () => {
+      const { error } = await supabase.from('site_financial_notes').delete().eq('id', n.id);
+      if (error) notify('Error', error.message);
+      else fetchFinNotes();
+    });
+  }
+
   // ---------- Notes ----------
 
   function openNoteModal() {
@@ -568,6 +640,11 @@ function SiteDetail() {
     return c;
   }, [finDocs]);
   const finTypesPresent = FIN_ORDER.filter(t => t !== 'Purchase Order' || finCounts[t]);
+  const finNotesByDoc = useMemo(() => {
+    const m: Record<string, FinNote[]> = {};
+    finNotes.forEach(n => { (m[n.doc_key] ??= []).push(n); });
+    return m;
+  }, [finNotes]);
   const visibleFinDocs = finFilter === 'all' ? finDocs : finDocs.filter(d => d.type === finFilter);
 
   const visibleTabs = TABS.filter(t => t.key !== 'history' || canManage);
@@ -730,12 +807,14 @@ function SiteDetail() {
           </View>
         )}
 
-        {/* FINANCIALS TAB — pulled from the Operational Calendar */}
-        {activeTab === 'financials' && (
+        {/* ACCOUNTS TAB — quotes, sales orders & invoices pulled from the Operational Calendar */}
+        {activeTab === 'accounts' && (
           <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 4 }]}>Financial Documents</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 4 }]}>Accounts</Text>
             <Text style={[styles.emptyText, { color: theme.muted, marginBottom: 12 }]}>
-              Taken from the Operational Calendar entries booked on this site.
+              {isTechnician
+                ? 'Your quotes, sales orders and invoices on this site, taken from your Operational Calendar.'
+                : 'Taken from the Operational Calendar entries booked on this site.'}
             </Text>
 
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
@@ -764,7 +843,7 @@ function SiteDetail() {
             {visibleFinDocs.length === 0 ? (
               <Text style={[styles.emptyText, { color: theme.muted }]}>
                 {finDocs.length === 0
-                  ? 'No quotes, sales orders or invoices have been added to this site on the calendar yet.'
+                  ? (isTechnician ? 'None of your calendar entries on this site have a quote, sales order or invoice yet.' : 'No quotes, sales orders or invoices have been added to this site on the calendar yet.')
                   : `No ${finMeta(finFilter).plural.toLowerCase()} for this site.`}
               </Text>
             ) : (
@@ -793,6 +872,26 @@ function SiteDetail() {
                       {d.techs.length > 0 && (
                         <Text style={[styles.docMeta, { color: theme.subtext }]}>{d.techs.join(', ')}</Text>
                       )}
+
+                      {(finNotesByDoc[d.key] ?? []).map(n => (
+                        <View key={n.id} style={{ marginTop: 6, padding: 8, borderRadius: 8, backgroundColor: theme.input, borderWidth: 1, borderColor: theme.border }}>
+                          <Text style={{ color: theme.text, fontSize: 13, lineHeight: 18 }}>{n.note_text}</Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                            <Text style={{ color: theme.muted, fontSize: 11, flex: 1 }}>
+                              {n.author?.full_name ?? 'Unknown'} · {new Date(n.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                            </Text>
+                            {(canManage || n.created_by === userId) && (
+                              <TouchableOpacity onPress={() => handleDeleteFinNote(n)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                <Trash2 color="#ef4444" size={14} />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        </View>
+                      ))}
+                      <TouchableOpacity onPress={() => openFinNoteModal(d)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, alignSelf: 'flex-start' }}>
+                        <MessageSquare color={colors.yellow} size={13} />
+                        <Text style={{ color: colors.yellow, fontSize: 12.5, fontWeight: '700' }}>Add note</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 );
@@ -871,6 +970,36 @@ function SiteDetail() {
           </View>
         )}
       </ScrollView>
+
+      {/* Account note modal (note on one quote / sales order / invoice) */}
+      <Modal visible={!!finNoteDoc} animationType="slide" transparent={false} onRequestClose={() => setFinNoteDoc(null)}>
+        <ScrollView style={[styles.modalContainer, { backgroundColor: theme.background }]} contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled">
+          <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+            <TouchableOpacity onPress={() => setFinNoteDoc(null)}><X color={theme.muted} size={24} /></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>
+              {finNoteDoc ? `Note · ${finMeta(finNoteDoc.type).abbr} ${finNoteDoc.number}`.trim() : 'Note'}
+            </Text>
+            <View style={{ width: 24 }} />
+          </View>
+          <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>NOTE</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, height: 110, textAlignVertical: 'top' }]}
+                placeholder="e.g. Client approved on 12 Oct, waiting for PO..."
+                placeholderTextColor={theme.muted}
+                value={finNoteText}
+                onChangeText={setFinNoteText}
+                multiline
+                autoFocus
+              />
+            </View>
+          </View>
+          <TouchableOpacity style={[styles.saveBtn, savingFinNote && { opacity: 0.6 }]} onPress={handleSaveFinNote} disabled={savingFinNote}>
+            {savingFinNote ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Note</Text>}
+          </TouchableOpacity>
+        </ScrollView>
+      </Modal>
 
       {/* Info edit modal */}
       <Modal visible={infoModalVisible} animationType="slide" transparent={false} onRequestClose={() => setInfoModalVisible(false)}>
