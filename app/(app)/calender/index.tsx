@@ -81,8 +81,10 @@ const COLOUR_LABEL = Object.fromEntries(HIGHLIGHT_COLOURS.map(c => [c.key, c.lab
 type PaintColor = HighlightKey | 'erase';
 
 type Technician = { id: string; full_name: string; branch_id?: string | null };
-type BranchOption = { id: string; name: string };
-const UNASSIGNED_BRANCH = '__unassigned__';
+// Calendar-only folders for the person picker (Field Service, Training, Rustenburg...).
+// Separate from Branches: changing these changes nothing outside this calendar.
+type Folder = { id: string; name: string; sort_order: number; default_branch_id: string | null };
+const NO_FOLDER = '__no_folder__';
 
 // Sites (from the Sites screen) that can be picked for a calendar entry, plus
 // each site's contacts, which fill the contact person / number fields.
@@ -356,9 +358,19 @@ function OperationalCalendar() {
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [selectedTechnicianId, setSelectedTechnicianId] = useState<string | null>(null);
   const [showTechDropdown, setShowTechDropdown] = useState(false);
-  // Technician picker is two steps: pick a branch (Field Service / Head Office), then a technician
-  const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
-  const [pickerBranchId, setPickerBranchId] = useState<string | null>(null);
+  // Technician picker is two steps: pick a folder (Field Service, Training, Sibanye...), then a person
+  const [folders, setFolders] = useState<Folder[]>([]);
+  // person id -> folder id (null = deliberately in no folder). Missing = follows their branch.
+  const [folderMembers, setFolderMembers] = useState<Record<string, string | null>>({});
+  // True when the folder tables aren't set up yet (falls back to the old branch grouping)
+  const [foldersLegacy, setFoldersLegacy] = useState(false);
+  const [pickerFolderId, setPickerFolderId] = useState<string | null>(null);
+  const [showFolderManager, setShowFolderManager] = useState(false);
+  const [managerFolderId, setManagerFolderId] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
+  const [folderBusy, setFolderBusy] = useState(false);
 
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
   const [sites, setSites] = useState<SiteOption[]>([]);
@@ -631,13 +643,9 @@ function OperationalCalendar() {
       const { data: me } = await supabase.from('profiles').select('id, full_name').eq('id', uid).single();
       if (me) setTechnicians([me]);
     } else {
-      // Only the two branches the calendar is organised by
-      const { data: allBranches } = await supabase.from('branches').select('id, name').order('name');
-      const wanted = (allBranches ?? []).filter((b: any) => {
-        const n = String(b.name).trim().toLowerCase();
-        return n.startsWith('field service') || n.startsWith('head office');
-      });
-      setBranchOptions(wanted);
+      // Calendar folders (falls back to the old Field Service / Head Office branches
+      // if the folder tables haven't been created yet)
+      await loadFolders();
 
       // Technicians + any admin/HR switched on for "Has their own Operational Calendar".
       // Done in the database (security definer) because an admin can't read other admins' profiles directly.
@@ -659,6 +667,102 @@ function OperationalCalendar() {
     }
 
     setLoading(false);
+  }
+
+  async function loadFolders() {
+    const [fRes, mRes] = await Promise.all([
+      supabase.from('operational_calendar_folders').select('id, name, sort_order, default_branch_id').order('sort_order').order('name'),
+      supabase.from('operational_calendar_folder_members').select('person_id, folder_id'),
+    ]);
+    if (fRes.error || mRes.error) {
+      const { data: allBranches } = await supabase.from('branches').select('id, name').order('name');
+      const wanted = (allBranches ?? []).filter((b: any) => {
+        const n = String(b.name).trim().toLowerCase();
+        return n.startsWith('field service') || n.startsWith('head office');
+      });
+      setFolders(wanted.map((b: any, i: number) => ({ id: b.id, name: b.name, sort_order: i, default_branch_id: b.id })));
+      setFolderMembers({});
+      setFoldersLegacy(true);
+      return;
+    }
+    setFoldersLegacy(false);
+    setFolders((fRes.data ?? []) as Folder[]);
+    const map: Record<string, string | null> = {};
+    (mRes.data ?? []).forEach((m: any) => { map[m.person_id] = m.folder_id; });
+    setFolderMembers(map);
+  }
+
+  // Which folder is this person in right now?
+  function folderIdFor(t: Technician): string | null {
+    if (t.id in folderMembers) {
+      const fid = folderMembers[t.id];
+      return fid && folders.some(f => f.id === fid) ? fid : null;
+    }
+    if (t.branch_id) {
+      return folders.find(f => f.default_branch_id && f.default_branch_id === t.branch_id)?.id ?? null;
+    }
+    return null;
+  }
+
+  async function addFolder() {
+    const name = newFolderName.trim();
+    if (!name || folderBusy) return;
+    if (folders.some(f => f.name.trim().toLowerCase() === name.toLowerCase())) {
+      notify('Already exists', `There is already a folder called "${name}".`);
+      return;
+    }
+    setFolderBusy(true);
+    const { error } = await supabase.from('operational_calendar_folders').insert({
+      name,
+      sort_order: (folders.reduce((m, f) => Math.max(m, f.sort_order), 0)) + 1,
+      created_by: userId,
+    });
+    setFolderBusy(false);
+    if (error) { notify('Error', error.message); return; }
+    setNewFolderName('');
+    loadFolders();
+  }
+
+  async function renameFolder(id: string) {
+    const name = renameText.trim();
+    if (!name) return;
+    if (folders.some(f => f.id !== id && f.name.trim().toLowerCase() === name.toLowerCase())) {
+      notify('Already exists', `There is already a folder called "${name}".`);
+      return;
+    }
+    setFolderBusy(true);
+    const { error } = await supabase.from('operational_calendar_folders').update({ name }).eq('id', id);
+    setFolderBusy(false);
+    if (error) { notify('Error', error.message); return; }
+    setRenamingFolderId(null);
+    loadFolders();
+  }
+
+  function deleteFolder(f: Folder) {
+    confirm(
+      'Delete folder',
+      `Delete "${f.name}"? The people in it stay on the calendar and move to "No folder". Nothing else is affected.`,
+      async () => {
+        setFolderBusy(true);
+        const { error } = await supabase.from('operational_calendar_folders').delete().eq('id', f.id);
+        setFolderBusy(false);
+        if (error) { notify('Error', error.message); return; }
+        if (managerFolderId === f.id) setManagerFolderId(null);
+        loadFolders();
+      },
+    );
+  }
+
+  // folderId = null means "no folder"
+  async function movePerson(personId: string, folderId: string | null) {
+    if (folderBusy) return;
+    setFolderBusy(true);
+    const { error } = await supabase
+      .from('operational_calendar_folder_members')
+      .upsert({ person_id: personId, folder_id: folderId, updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: 'person_id' });
+    setFolderBusy(false);
+    if (error) { notify('Error', error.message); return; }
+    setFolderMembers(prev => ({ ...prev, [personId]: folderId }));
   }
 
   // Sites + their contacts come straight from the Sites screen's data, so the
@@ -1513,7 +1617,7 @@ function OperationalCalendar() {
         {role !== 'technician' && (
           <TouchableOpacity
             style={[styles.techPicker, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => { setPickerBranchId(null); setShowTechDropdown(true); }}
+            onPress={() => { setPickerFolderId(null); setShowTechDropdown(true); }}
           >
             <User color={colors.yellow} size={16} />
             <Text style={[styles.techPickerText, { color: theme.text }]}>
@@ -2048,60 +2152,65 @@ function OperationalCalendar() {
         <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowTechDropdown(false)}>
           <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
             {(() => {
-              // No Field Service / Head Office branches set up yet -> plain technician list
-              const useBranches = branchOptions.length > 0;
-              const inBranch = (t: Technician) =>
-                pickerBranchId === UNASSIGNED_BRANCH
-                  ? !t.branch_id || !branchOptions.some(bo => bo.id === t.branch_id)
-                  : t.branch_id === pickerBranchId;
-              const unassignedCount = technicians.filter(t => !t.branch_id || !branchOptions.some(bo => bo.id === t.branch_id)).length;
-              const showingTechs = !useBranches || pickerBranchId !== null;
-              const list = !useBranches ? technicians : technicians.filter(inBranch);
-              const branchTitle = pickerBranchId === UNASSIGNED_BRANCH
-                ? 'No branch'
-                : branchOptions.find(bo => bo.id === pickerBranchId)?.name;
+              // No folders at all yet -> plain technician list
+              const useFolders = folders.length > 0;
+              const inFolder = (t: Technician) =>
+                pickerFolderId === NO_FOLDER ? folderIdFor(t) === null : folderIdFor(t) === pickerFolderId;
+              const unassignedCount = technicians.filter(t => folderIdFor(t) === null).length;
+              const showingTechs = !useFolders || pickerFolderId !== null;
+              const list = !useFolders ? technicians : technicians.filter(inFolder);
+              const folderTitle = pickerFolderId === NO_FOLDER
+                ? 'No folder'
+                : folders.find(f => f.id === pickerFolderId)?.name;
 
               return (
                 <>
                   {showingTechs ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                      {useBranches && (
-                        <TouchableOpacity onPress={() => setPickerBranchId(null)} style={{ paddingRight: 10 }}>
-                          <Text style={{ color: colors.yellow, fontSize: 14, fontWeight: '700' }}>‹ Branches</Text>
+                      {useFolders && (
+                        <TouchableOpacity onPress={() => setPickerFolderId(null)} style={{ paddingRight: 10 }}>
+                          <Text style={{ color: colors.yellow, fontSize: 14, fontWeight: '700' }}>‹ Folders</Text>
                         </TouchableOpacity>
                       )}
                       <Text style={[styles.pickerTitle, { color: theme.text, marginBottom: 0 }]}>
-                        {useBranches ? branchTitle : 'Select Technician'}
+                        {useFolders ? folderTitle : 'Select Technician'}
                       </Text>
                     </View>
                   ) : (
-                    <Text style={[styles.pickerTitle, { color: theme.text }]}>Select Branch</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <Text style={[styles.pickerTitle, { color: theme.text, marginBottom: 0 }]}>Select Folder</Text>
+                      {canEdit && !foldersLegacy && (
+                        <TouchableOpacity onPress={() => { setShowTechDropdown(false); setManagerFolderId(null); setShowFolderManager(true); }}>
+                          <Text style={{ color: colors.yellow, fontSize: 14, fontWeight: '700' }}>Manage</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   )}
                   <ScrollView style={{ maxHeight: 360 }}>
                     {!showingTechs ? (
                       <>
-                        {branchOptions.map(bo => (
+                        {folders.map(f => (
                           <TouchableOpacity
-                            key={bo.id}
+                            key={f.id}
                             style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
-                            onPress={() => setPickerBranchId(bo.id)}
+                            onPress={() => setPickerFolderId(f.id)}
                           >
                             <Text style={[styles.dropdownItemText, { color: theme.text }]}>
-                              {bo.name}  ({technicians.filter(t => t.branch_id === bo.id).length})
+                              {f.name}  ({technicians.filter(t => folderIdFor(t) === f.id).length})
                             </Text>
                           </TouchableOpacity>
                         ))}
                         {unassignedCount > 0 && (
                           <TouchableOpacity
                             style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
-                            onPress={() => setPickerBranchId(UNASSIGNED_BRANCH)}
+                            onPress={() => setPickerFolderId(NO_FOLDER)}
                           >
-                            <Text style={[styles.dropdownItemText, { color: theme.subtext }]}>No branch  ({unassignedCount})</Text>
+                            <Text style={[styles.dropdownItemText, { color: theme.subtext }]}>No folder  ({unassignedCount})</Text>
                           </TouchableOpacity>
                         )}
                       </>
                     ) : list.length === 0 ? (
-                      <Text style={{ color: theme.subtext, padding: 14 }}>No technicians in this branch.</Text>
+                      <Text style={{ color: theme.subtext, padding: 14 }}>No one in this folder.</Text>
                     ) : (
                       list.map(t => (
                         <TouchableOpacity
@@ -2119,6 +2228,124 @@ function OperationalCalendar() {
             })()}
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* Manage folders modal (calendar-only; doesn't touch branches) */}
+      <Modal visible={showFolderManager} transparent animationType="fade" onRequestClose={() => setShowFolderManager(false)}>
+        <View style={styles.pickerOverlay}>
+          <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            {managerFolderId === null ? (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={[styles.pickerTitle, { color: theme.text, marginBottom: 0 }]}>Manage Folders</Text>
+                  <TouchableOpacity onPress={() => { setShowFolderManager(false); setRenamingFolderId(null); }}>
+                    <X color={theme.muted} size={20} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ color: theme.subtext, fontSize: 12, marginBottom: 10 }}>
+                  These folders only organise this calendar. Branches and everything else stay as they are.
+                </Text>
+                <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled">
+                  {folders.map(f => (
+                    <View key={f.id} style={[styles.dropdownItem, { borderBottomColor: theme.border, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                      {renamingFolderId === f.id ? (
+                        <>
+                          <TextInput
+                            style={[styles.input, { flex: 1, paddingVertical: 8, backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                            value={renameText}
+                            onChangeText={setRenameText}
+                            autoFocus
+                            onSubmitEditing={() => renameFolder(f.id)}
+                          />
+                          <TouchableOpacity onPress={() => renameFolder(f.id)} disabled={folderBusy}>
+                            <Text style={{ color: colors.yellow, fontWeight: '700' }}>Save</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => setRenamingFolderId(null)}>
+                            <Text style={{ color: theme.subtext }}>Cancel</Text>
+                          </TouchableOpacity>
+                        </>
+                      ) : (
+                        <>
+                          <TouchableOpacity style={{ flex: 1 }} onPress={() => setManagerFolderId(f.id)}>
+                            <Text style={[styles.dropdownItemText, { color: theme.text }]}>
+                              {f.name}  ({technicians.filter(t => folderIdFor(t) === f.id).length})
+                            </Text>
+                            <Text style={{ color: theme.subtext, fontSize: 12 }}>Tap to choose who is in it</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => { setRenamingFolderId(f.id); setRenameText(f.name); }}>
+                            <Text style={{ color: colors.yellow, fontWeight: '600' }}>Rename</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => deleteFolder(f)}>
+                            <Trash2 color="#ef4444" size={18} />
+                          </TouchableOpacity>
+                        </>
+                      )}
+                    </View>
+                  ))}
+                  {folders.length === 0 && (
+                    <Text style={{ color: theme.subtext, padding: 14 }}>No folders yet. Add one below.</Text>
+                  )}
+                </ScrollView>
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1, backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                    placeholder="New folder, e.g. Training"
+                    placeholderTextColor={theme.subtext}
+                    value={newFolderName}
+                    onChangeText={setNewFolderName}
+                    onSubmitEditing={addFolder}
+                  />
+                  <TouchableOpacity
+                    style={{ backgroundColor: colors.yellow, borderRadius: 12, paddingHorizontal: 16, justifyContent: 'center', opacity: newFolderName.trim() && !folderBusy ? 1 : 0.5 }}
+                    onPress={addFolder}
+                    disabled={!newFolderName.trim() || folderBusy}
+                  >
+                    <Text style={{ color: colors.black, fontWeight: '700' }}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <TouchableOpacity onPress={() => setManagerFolderId(null)} style={{ paddingRight: 10 }}>
+                    <Text style={{ color: colors.yellow, fontSize: 14, fontWeight: '700' }}>‹ Folders</Text>
+                  </TouchableOpacity>
+                  <Text style={[styles.pickerTitle, { color: theme.text, marginBottom: 0, flex: 1 }]} numberOfLines={1}>
+                    {folders.find(f => f.id === managerFolderId)?.name}
+                  </Text>
+                  <TouchableOpacity onPress={() => { setShowFolderManager(false); setManagerFolderId(null); }}>
+                    <X color={theme.muted} size={20} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ color: theme.subtext, fontSize: 12, marginBottom: 10 }}>
+                  Tap a person to put them in this folder, or tap again to take them out. A person is only ever in one folder.
+                </Text>
+                <ScrollView style={{ maxHeight: 360 }}>
+                  {technicians.map(t => {
+                    const current = folderIdFor(t);
+                    const inThis = current === managerFolderId;
+                    const elsewhere = current && !inThis ? folders.find(f => f.id === current)?.name : null;
+                    return (
+                      <TouchableOpacity
+                        key={t.id}
+                        style={[styles.dropdownItem, { borderBottomColor: theme.border, flexDirection: 'row', alignItems: 'center', gap: 10 }, inThis && { backgroundColor: `${colors.yellow}20` }]}
+                        onPress={() => movePerson(t.id, inThis ? null : managerFolderId)}
+                        disabled={folderBusy}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.dropdownItemText, { color: inThis ? colors.yellow : theme.text }]}>{t.full_name}</Text>
+                          {!!elsewhere && <Text style={{ color: theme.subtext, fontSize: 12 }}>Currently in {elsewhere}</Text>}
+                          {!current && <Text style={{ color: theme.subtext, fontSize: 12 }}>No folder</Text>}
+                        </View>
+                        {inThis && <Check color={colors.yellow} size={18} />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </>
+            )}
+          </View>
+        </View>
       </Modal>
 
       {/* Export PDF modal */}
