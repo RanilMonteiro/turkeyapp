@@ -48,9 +48,9 @@ type FinRow = {
   id: string;
   technician_id: string;
   entry_date: string;
-  financial_document_type: string | null;
-  financial_document_number: string | null;
+  quote_number: string | null;
   sales_order_number: string | null;
+  invoice_number: string | null;
   technician?: { full_name: string | null } | null;
 };
 type FinNote = {
@@ -71,7 +71,7 @@ const FIN_ORDER = ['Quote', 'Sales Order', 'Invoice', 'Purchase Order'];
 const finMeta = (t: string) => FIN_META[t] ?? { label: t, plural: t, abbr: '', color: '#64748b' };
 
 const FIN_SELECT =
-  'id, technician_id, entry_date, financial_document_type, financial_document_number, sales_order_number, technician:technician_id(full_name)';
+  'id, technician_id, entry_date, quote_number, sales_order_number, invoice_number, technician:technician_id(full_name)';
 
 function finDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -90,24 +90,24 @@ function buildFinancialDocs(rows: FinRow[]): FinDoc[] {
   const link = (d: FinDoc, label: string) => { if (!d.linked.includes(label)) d.linked.push(label); };
 
   for (const r of rows) {
-    const type = r.financial_document_type;
-    const num = r.financial_document_number?.trim();
+    const qt = r.quote_number?.trim();
     const so = r.sales_order_number?.trim();
+    const inv = r.invoice_number?.trim();
     const tech = r.technician?.full_name ?? null;
     const touch = (d: FinDoc) => {
       if (!d.dates.includes(r.entry_date)) d.dates.push(r.entry_date);
       if (tech && !d.techs.includes(tech)) d.techs.push(tech);
     };
-    if (type && num) {
-      const d = get(type, num);
-      touch(d);
-      if (type === 'Invoice' && so) link(d, `From SO ${so}`);
-    }
-    if (so) {
-      const d = get('Sales Order', so);
-      touch(d);
-      if (type === 'Invoice' && num) link(d, `Invoiced as INV ${num}`);
-    }
+    // Every document on the day gets its own card, linked to the others on that day.
+    const q = qt ? get('Quote', qt) : null;
+    const o = so ? get('Sales Order', so) : null;
+    const i = inv ? get('Invoice', inv) : null;
+    if (q) touch(q);
+    if (o) touch(o);
+    if (i) touch(i);
+    if (q && o) { link(q, `Sales Order ${so}`); link(o, `From QT ${qt}`); }
+    if (o && i) { link(o, `Invoiced as INV ${inv}`); link(i, `From SO ${so}`); }
+    if (q && i && !o) { link(q, `Invoiced as INV ${inv}`); link(i, `From QT ${qt}`); }
   }
   const out = Array.from(map.values());
   out.forEach(d => d.dates.sort());
@@ -265,7 +265,7 @@ function SiteDetail() {
     const [a, b] = await Promise.all([byId, byName ?? Promise.resolve({ data: [] as any[] })]);
     const rows = [...((a.data as any[]) ?? []), ...((b.data as any[]) ?? [])] as FinRow[];
     setFinRows(rows.filter(r =>
-      (r.financial_document_number || r.sales_order_number) &&
+      (r.quote_number || r.sales_order_number || r.invoice_number) &&
       (!techId || r.technician_id === techId)
     ));
   }

@@ -54,14 +54,6 @@ const TESTING_TYPE_OPTIONS = ['Brake Testing', 'Lux Testing', 'Brake and Lux Tes
 const TAM_STATUS_OPTIONS = ['On TAM', 'Not On TAM'];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// Quote -> Sales Order -> Invoice. A Quote/Sales Order stands alone; once it
-// becomes an Invoice the Sales Order number is kept alongside it.
-const FINANCIAL_DOCUMENT_OPTIONS = ['Quote', 'Sales Order', 'Invoice'];
-function financialDocPlaceholder(type: string | null): string {
-  if (type === 'Quote') return 'e.g. QT 12345';
-  if (type === 'Sales Order') return 'e.g. SO 16617';
-  return 'e.g. INV 50521';
-}
 
 // Row height for the grid — needed so drag gestures can work out which
 // day is under the finger using simple math instead of measuring every
@@ -102,9 +94,9 @@ type CalendarEntry = {
   comments: string | null;
   testing_type: string | null;
   tam_status: string | null;
-  financial_document_type: string | null;
-  financial_document_number: string | null;
+  quote_number: string | null;
   sales_order_number: string | null;
+  invoice_number: string | null;
   site_id: string | null;
 };
 
@@ -122,15 +114,15 @@ type SearchRow = {
   mine_name: string | null;
   testing_type: string | null;
   tam_status: string | null;
-  financial_document_type: string | null;
-  financial_document_number: string | null;
+  quote_number: string | null;
   sales_order_number: string | null;
+  invoice_number: string | null;
   technician?: { full_name: string | null } | null;
 };
 type SearchRange = {
   techId: string; techName: string; start: string; end: string; days: number;
   testing: string | null; tam: string | null;
-  docType: string | null; docNumber: string | null; salesOrder: string | null;
+  quote: string | null; salesOrder: string | null; invoice: string | null;
 };
 type SearchGroup = { key: string; site: string; ranges: SearchRange[]; techCount: number; dayCount: number };
 
@@ -160,9 +152,9 @@ function buildSearchGroups(rows: SearchRow[]): SearchGroup[] {
       prev &&
       prev.testing === r.testing_type &&
       prev.tam === r.tam_status &&
-      prev.docType === r.financial_document_type &&
-      prev.docNumber === r.financial_document_number &&
+      prev.quote === r.quote_number &&
       prev.salesOrder === r.sales_order_number &&
+      prev.invoice === r.invoice_number &&
       (gap === 1 || (gap === 3 && prevIsFriday))
     ) {
       prev.end = r.entry_date;
@@ -173,9 +165,9 @@ function buildSearchGroups(rows: SearchRow[]): SearchGroup[] {
         techName: r.technician?.full_name ?? 'Unknown technician',
         start: r.entry_date, end: r.entry_date, days: 1,
         testing: r.testing_type, tam: r.tam_status,
-        docType: r.financial_document_type,
-        docNumber: r.financial_document_number,
+        quote: r.quote_number,
         salesOrder: r.sales_order_number,
+        invoice: r.invoice_number,
       };
       g.ranges.push(range);
       last.set(lk, range);
@@ -402,12 +394,11 @@ function OperationalCalendar() {
   const [comments, setComments] = useState('');
   const [testingType, setTestingType] = useState<string | null>(null);
   const [tamStatus, setTamStatus] = useState<string | null>(null);
-  const [financialDocType, setFinancialDocType] = useState<string | null>(null);
-  const [financialDocNumber, setFinancialDocNumber] = useState('');
+  const [quoteNumber, setQuoteNumber] = useState('');
   const [salesOrderNumber, setSalesOrderNumber] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
   const [showTestingTypeDropdown, setShowTestingTypeDropdown] = useState(false);
   const [showTamStatusDropdown, setShowTamStatusDropdown] = useState(false);
-  const [showFinancialDocDropdown, setShowFinancialDocDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // PDF export
@@ -524,11 +515,12 @@ function OperationalCalendar() {
 
       let query = supabase
         .from('operational_calendar_entries')
-        .select('id, technician_id, entry_date, mine_name, testing_type, tam_status, financial_document_type, financial_document_number, sales_order_number, technician:technician_id(full_name)')
+        .select('id, technician_id, entry_date, mine_name, testing_type, tam_status, quote_number, sales_order_number, invoice_number, technician:technician_id(full_name)')
         .or(
           `mine_name.ilike.%${safe}%,` +
-          `financial_document_number.ilike.%${numTerm}%,` +
-          `sales_order_number.ilike.%${numTerm}%`
+          `quote_number.ilike.%${numTerm}%,` +
+          `sales_order_number.ilike.%${numTerm}%,` +
+          `invoice_number.ilike.%${numTerm}%`
         )
         .order('entry_date', { ascending: true })
         .limit(600);
@@ -945,9 +937,9 @@ function OperationalCalendar() {
       comments: src.comments,
       testing_type: src.testing_type,
       tam_status: src.tam_status,
-      financial_document_type: COPY_FINANCIAL_DOC_ON_FILL ? src.financial_document_type : null,
-      financial_document_number: COPY_FINANCIAL_DOC_ON_FILL ? src.financial_document_number : null,
+      quote_number: COPY_FINANCIAL_DOC_ON_FILL ? src.quote_number : null,
       sales_order_number: COPY_FINANCIAL_DOC_ON_FILL ? src.sales_order_number : null,
+      invoice_number: COPY_FINANCIAL_DOC_ON_FILL ? src.invoice_number : null,
       updated_by: uid,
       created_by: uid,
     };
@@ -1331,9 +1323,9 @@ function OperationalCalendar() {
     setComments('');
     setTestingType(null);
     setTamStatus(null);
-    setFinancialDocType(null);
-    setFinancialDocNumber('');
+    setQuoteNumber('');
     setSalesOrderNumber('');
+    setInvoiceNumber('');
     setSelectedSiteId(null);
     setShowSiteDropdown(false);
     setSiteSearch('');
@@ -1350,9 +1342,9 @@ function OperationalCalendar() {
     setComments(entry.comments ?? '');
     setTestingType(entry.testing_type);
     setTamStatus(entry.tam_status);
-    setFinancialDocType(entry.financial_document_type);
-    setFinancialDocNumber(entry.financial_document_number ?? '');
+    setQuoteNumber(entry.quote_number ?? '');
     setSalesOrderNumber(entry.sales_order_number ?? '');
+    setInvoiceNumber(entry.invoice_number ?? '');
     setSelectedSiteId(entry.site_id ?? null);
     setShowSiteDropdown(false);
     setSiteSearch('');
@@ -1484,17 +1476,17 @@ function OperationalCalendar() {
   // alone.
   async function updateRelatedFinancialDocs(
     dates: string[],
-    type: string | null,
-    number: string | null,
-    salesOrder: string | null
+    quote: string | null,
+    salesOrder: string | null,
+    invoice: string | null
   ) {
     if (!selectedTechnicianId || dates.length === 0) return;
     const { error } = await supabase
       .from('operational_calendar_entries')
       .update({
-        financial_document_type: type,
-        financial_document_number: number,
+        quote_number: quote,
         sales_order_number: salesOrder,
+        invoice_number: invoice,
       })
       .eq('technician_id', selectedTechnicianId)
       .in('entry_date', dates);
@@ -1519,35 +1511,34 @@ function OperationalCalendar() {
       comments: comments.trim() || null,
       testing_type: testingType,
       tam_status: tamStatus,
-      financial_document_type: financialDocType,
-      financial_document_number: financialDocNumber.trim() || null,
-      // The sales order number is only kept alongside an Invoice.
-      sales_order_number: financialDocType === 'Invoice' ? (salesOrderNumber.trim() || null) : null,
+      quote_number: quoteNumber.trim() || null,
+      sales_order_number: salesOrderNumber.trim() || null,
+      invoice_number: invoiceNumber.trim() || null,
       updated_by: uid,
     };
 
     let error;
     let relatedDates: string[] = [];
-    const newDocType = basePayload.financial_document_type;
-    const newDocNumber = basePayload.financial_document_number;
+    const newQuote = basePayload.quote_number;
     const newSO = basePayload.sales_order_number;
+    const newInvoice = basePayload.invoice_number;
 
     if (editingEntry) {
-      const oldDocType = editingEntry.financial_document_type;
-      const oldDocNumber = editingEntry.financial_document_number;
+      const oldQuote = editingEntry.quote_number ?? null;
       const oldSO = editingEntry.sales_order_number ?? null;
-      const docChanged = oldDocType !== newDocType || oldDocNumber !== newDocNumber || oldSO !== newSO;
+      const oldInvoice = editingEntry.invoice_number ?? null;
+      const docChanged = oldQuote !== newQuote || oldSO !== newSO || oldInvoice !== newInvoice;
 
       // Only entries that had a real document before (not blank) can be
       // "related" to this one.
-      if (docChanged && (oldDocNumber || oldSO)) {
+      if (docChanged && (oldQuote || oldSO || oldInvoice)) {
         relatedDates = entries
           .filter(e =>
             e.id !== editingEntry.id &&
             e.technician_id === editingEntry.technician_id &&
-            e.financial_document_type === oldDocType &&
-            e.financial_document_number === oldDocNumber &&
-            (e.sales_order_number ?? null) === oldSO
+            (e.quote_number ?? null) === oldQuote &&
+            (e.sales_order_number ?? null) === oldSO &&
+            (e.invoice_number ?? null) === oldInvoice
           )
           .map(e => e.entry_date);
       }
@@ -1579,7 +1570,7 @@ function OperationalCalendar() {
         `${relatedDates.length} other day${relatedDates.length === 1 ? '' : 's'} ` +
           `${relatedDates.length === 1 ? 'shares' : 'share'} this same financial document. ` +
           `Update ${relatedDates.length === 1 ? 'it' : 'them'} to the new one too?`,
-        () => updateRelatedFinancialDocs(relatedDates, newDocType, newDocNumber, newSO)
+        () => updateRelatedFinancialDocs(relatedDates, newQuote, newSO, newInvoice)
       );
     }
   }
@@ -1958,16 +1949,12 @@ function OperationalCalendar() {
                             </View>
                           )}
                           {(() => {
-                            const docs = financialDocParts(
-                              entry.financial_document_type,
-                              entry.financial_document_number,
-                              entry.sales_order_number
-                            );
+                            const docs = financialDocParts(entry.quote_number, entry.sales_order_number, entry.invoice_number);
                             if (docs.length === 0) return null;
-                            // Sales Order + Invoice on one centred line: "SO 234   INV 344"
+                            // All documents on one centred line: "QT 12   SO 234   INV 344"
                             return (
                               <Text
-                                style={[cs.cellInvoiceText, docs.length > 1 && cs.cellInvoiceTextSide]}
+                                style={[cs.cellInvoiceText, docs.length > 1 && cs.cellInvoiceTextSide, docs.length > 2 && { fontSize: 9.5 }]}
                                 numberOfLines={1}
                                 adjustsFontSizeToFit
                                 minimumFontScale={0.6}
@@ -1998,7 +1985,7 @@ function OperationalCalendar() {
                   autoFocus
                   value={searchQuery}
                   onChangeText={setSearchQuery}
-                  placeholder="Search a site, quote or invoice (e.g. Redpath, INV 50521)…"
+                  placeholder="Search a site, quote, sales order or invoice (e.g. Redpath, INV 50521)…"
                   placeholderTextColor={theme.muted}
                   style={{ flex: 1, color: theme.text, paddingVertical: 10, fontSize: 15 }}
                 />
@@ -2081,7 +2068,7 @@ function OperationalCalendar() {
                               </View>
                             )}
                             {(() => {
-                              const docs = financialDocParts(r.docType, r.docNumber, r.salesOrder);
+                              const docs = financialDocParts(r.quote, r.salesOrder, r.invoice);
                               if (docs.length === 0) return null;
                               return (
                                 <Text style={{ color: INVOICE_COLOR, fontSize: 12.5, fontWeight: '800' }}>
@@ -2486,11 +2473,7 @@ function OperationalCalendar() {
                   )}
                 </View>
 
-                {financialDocParts(
-                  detailEntry.financial_document_type,
-                  detailEntry.financial_document_number,
-                  detailEntry.sales_order_number
-                ).map(p => (
+                {financialDocParts(detailEntry.quote_number, detailEntry.sales_order_number, detailEntry.invoice_number).map(p => (
                   <Text key={p.abbr + p.value} style={styles.invoiceText}>
                     {p.label}: {p.value}
                   </Text>
@@ -2760,73 +2743,41 @@ function OperationalCalendar() {
 
             <View style={styles.fieldGroup}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>FINANCIAL DOCUMENT</Text>
-                {(financialDocType || financialDocNumber || salesOrderNumber) ? (
-                  <TouchableOpacity onPress={() => { setFinancialDocType(null); setFinancialDocNumber(''); setSalesOrderNumber(''); setShowFinancialDocDropdown(false); }} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>FINANCIAL DOCUMENTS</Text>
+                {(quoteNumber || salesOrderNumber || invoiceNumber) ? (
+                  <TouchableOpacity onPress={() => { setQuoteNumber(''); setSalesOrderNumber(''); setInvoiceNumber(''); }} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
                     <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700' }}>Clear</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
-              <TouchableOpacity
-                style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
-                onPress={() => setShowFinancialDocDropdown(!showFinancialDocDropdown)}
-              >
-                <Text style={[styles.dropdownBtnText, { color: financialDocType ? theme.text : theme.subtext }]}>
-                  {financialDocType ?? 'Select document type'}
-                </Text>
-                <ChevronDown color={theme.muted} size={16} />
-              </TouchableOpacity>
-              {showFinancialDocDropdown && (
-                <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                  {FINANCIAL_DOCUMENT_OPTIONS.map(opt => (
-                    <TouchableOpacity
-                      key={opt}
-                      style={[styles.dropdownItem, { borderBottomColor: theme.border }, financialDocType === opt && { backgroundColor: `${colors.yellow}20` }]}
-                      onPress={() => {
-                        // Sales Order becoming an Invoice: keep the SO number alongside
-                        // and leave the number field free for the new invoice number.
-                        if (
-                          opt === 'Invoice' &&
-                          financialDocType === 'Sales Order' &&
-                          financialDocNumber.trim() &&
-                          !salesOrderNumber.trim()
-                        ) {
-                          setSalesOrderNumber(financialDocNumber.trim());
-                          setFinancialDocNumber('');
-                        }
-                        setFinancialDocType(opt);
-                        setShowFinancialDocDropdown(false);
-                      }}
-                    >
-                      <Text style={[styles.dropdownItemText, { color: financialDocType === opt ? colors.yellow : theme.text }]}>{opt}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-              {financialDocType === 'Invoice' && (
-                <TextInput
-                  style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, marginTop: 8 }]}
-                  placeholder="Sales order it came from, e.g. SO 16617"
-                  placeholderTextColor={theme.muted}
-                  value={salesOrderNumber}
-                  onChangeText={setSalesOrderNumber}
-                />
-              )}
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                placeholder="Quote, e.g. QT 12345"
+                placeholderTextColor={theme.muted}
+                value={quoteNumber}
+                onChangeText={setQuoteNumber}
+              />
               <TextInput
                 style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, marginTop: 8 }]}
-                placeholder={financialDocPlaceholder(financialDocType)}
+                placeholder="Sales Order, e.g. SO 16617"
                 placeholderTextColor={theme.muted}
-                value={financialDocNumber}
-                onChangeText={setFinancialDocNumber}
+                value={salesOrderNumber}
+                onChangeText={setSalesOrderNumber}
+              />
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text, marginTop: 8 }]}
+                placeholder="Invoice, e.g. INV 50521"
+                placeholderTextColor={theme.muted}
+                value={invoiceNumber}
+                onChangeText={setInvoiceNumber}
               />
               {editingEntry &&
-                editingEntry.financial_document_type &&
-                editingEntry.financial_document_number &&
-                (financialDocType !== editingEntry.financial_document_type ||
-                  financialDocNumber.trim() !== (editingEntry.financial_document_number ?? '') ||
-                  salesOrderNumber.trim() !== (editingEntry.sales_order_number ?? '')) && (
+                (editingEntry.quote_number || editingEntry.sales_order_number || editingEntry.invoice_number) &&
+                (quoteNumber.trim() !== (editingEntry.quote_number ?? '') ||
+                  salesOrderNumber.trim() !== (editingEntry.sales_order_number ?? '') ||
+                  invoiceNumber.trim() !== (editingEntry.invoice_number ?? '')) && (
                 <Text style={[styles.rangeHint, { color: theme.subtext, marginTop: 8, marginBottom: 0 }]}>
-                  Any other days sharing the current document will be offered the same change when you save.
+                  Any other days sharing the current documents will be offered the same change when you save.
                 </Text>
               )}
             </View>

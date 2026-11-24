@@ -53,9 +53,9 @@ type PdfEntry = {
   comments: string | null;
   testing_type: string | null;
   tam_status: string | null;
-  financial_document_type: string | null;
-  financial_document_number: string | null;
+  quote_number: string | null;
   sales_order_number: string | null;
+  invoice_number: string | null;
 };
 
 const MONTH_NAMES = [
@@ -64,36 +64,18 @@ const MONTH_NAMES = [
 ];
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const FINANCIAL_DOC_ABBR: Record<string, string> = {
-  Quote: 'QT',
-  'Sales Order': 'SO',
-  Invoice: 'INV',
-  // legacy values, still displayed correctly
-  'Invoice Number': 'INV',
-  'Order Number': 'PO',
-};
-
 export type DocPart = { abbr: string; label: string; value: string };
 
-// Quote alone / Sales Order alone show one line.
-// An Invoice also shows its Sales Order line (when one is stored) plus the invoice line.
+// Every document on the day is shown: Quote, Sales Order, Invoice (in that order).
 export function financialDocParts(
-  type: string | null,
-  number: string | null,
-  salesOrder: string | null
+  quote: string | null,
+  salesOrder: string | null,
+  invoice: string | null
 ): DocPart[] {
-  const isInvoice = type === 'Invoice' || type === 'Invoice Number';
   const parts: DocPart[] = [];
-  if (isInvoice && salesOrder?.trim()) {
-    parts.push({ abbr: 'SO', label: 'Sales Order', value: salesOrder.trim() });
-  }
-  if (number?.trim()) {
-    parts.push({
-      abbr: FINANCIAL_DOC_ABBR[type ?? ''] ?? '',
-      label: isInvoice ? 'Invoice' : type || 'Financial Document',
-      value: number.trim(),
-    });
-  }
+  if (quote?.trim()) parts.push({ abbr: 'QT', label: 'Quote', value: quote.trim() });
+  if (salesOrder?.trim()) parts.push({ abbr: 'SO', label: 'Sales Order', value: salesOrder.trim() });
+  if (invoice?.trim()) parts.push({ abbr: 'INV', label: 'Invoice', value: invoice.trim() });
   return parts;
 }
 
@@ -324,6 +306,7 @@ const CSS = `
   .inv { display: flex; flex-direction: row; justify-content: center; align-items: baseline; gap: calc(5pt * var(--s)); }
   .inv div { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
   .inv.two { font-size: calc(6.5pt * var(--s)); }
+  .inv.three { font-size: calc(5.5pt * var(--s)); gap: calc(3pt * var(--s)); }
 
   /* Greyed-out days outside the month */
   .cell.pad { background: #e2e8f0; }
@@ -369,11 +352,7 @@ function cellHtml(
     return `<div class="cell${emptyWeekend ? ' weekend' : ''}"${styleAttr}><div class="day">${day}</div>${holHtml}${leaveHtml}</div>`;
   }
 
-  const docParts = financialDocParts(
-    entry.financial_document_type,
-    entry.financial_document_number,
-    entry.sales_order_number
-  );
+  const docParts = financialDocParts(entry.quote_number, entry.sales_order_number, entry.invoice_number);
   // Sales Order + Invoice share one centred line: "SO 234   INV 344"
   const doc = docParts.length
     ? `<div>${docParts.map(p => esc(`${p.abbr} ${p.value}`.trim())).join('&nbsp;&nbsp;&nbsp;')}</div>`
@@ -396,7 +375,7 @@ function cellHtml(
       ${entry.testing_type ? `<div class="pill" style="background:${optionColour(entry.testing_type)};color:#fff;">${esc(entry.testing_type)}</div>` : ''}
       ${entry.tam_status ? `<div class="pill" style="background:${optionColour(entry.tam_status)};color:#fff;">${esc(entry.tam_status)}</div>` : ''}
       </div>
-      ${doc ? `<div class="inv${docParts.length > 1 ? ' two' : ''}">${doc}</div>` : ''}
+      ${doc ? `<div class="inv${docParts.length > 2 ? ' three' : docParts.length > 1 ? ' two' : ''}">${doc}</div>` : ''}
     </div>`;
 }
 
@@ -422,7 +401,7 @@ function estimateEntryHeight(e: PdfEntry): number {
   if (e.testing_type) h += 13.1;
   if (e.tam_status) h += 13.1;
   // Sales Order + Invoice share one row, so the document area is a single line.
-  if (financialDocParts(e.financial_document_type, e.financial_document_number, e.sales_order_number).length > 0) h += 10.6;
+  if (financialDocParts(e.quote_number, e.sales_order_number, e.invoice_number).length > 0) h += 10.6;
   return h;
 }
 
@@ -570,7 +549,7 @@ async function fetchEntriesForRange(technicianId: string, from: string, to: stri
   const { data, error } = await supabase
     .from('operational_calendar_entries')
     .select(
-      'entry_date, mine_name, contact_person, contact_number, comments, testing_type, tam_status, financial_document_type, financial_document_number, sales_order_number'
+      'entry_date, mine_name, contact_person, contact_number, comments, testing_type, tam_status, quote_number, sales_order_number, invoice_number'
     )
     .eq('technician_id', technicianId)
     .gte('entry_date', from)
