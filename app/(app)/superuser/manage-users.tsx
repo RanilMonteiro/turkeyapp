@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { User, Plus, Edit, Trash2, Shield, Wrench } from 'lucide-react-native';
+import Avatar from '../../../components/Avatar';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import { Platform } from 'react-native';
@@ -28,6 +29,7 @@ const colors = {
 type Profile = {
   id: string;
   full_name: string;
+  avatar_url?: string | null;
   role: 'superuser' | 'admin' | 'technician' | 'hr';
   site_id: string | null;
 };
@@ -247,9 +249,7 @@ function UserCard({ user, theme, isDark, getRoleIcon, getRoleBadgeColor, getRole
   return (
     <View style={[styles.userCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <View style={styles.userHeader}>
-        <View style={[styles.avatar, { backgroundColor: theme.avatarBg }]}>
-          <User size={22} color={colors.yellow} />
-        </View>
+        <Avatar url={user.avatar_url} name={user.full_name} size={46} backgroundColor={theme.avatarBg} />
         <View style={styles.userInfo}>
           <Text style={[styles.userName, { color: theme.text }]}>{user.full_name}</Text>
           <View style={[styles.roleBadge, { backgroundColor: getRoleBadgeColor(user.role) }]}>

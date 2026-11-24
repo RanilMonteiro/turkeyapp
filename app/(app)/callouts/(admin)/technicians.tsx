@@ -5,6 +5,7 @@ import {
   Modal, FlatList
 } from 'react-native';
 import { User, Mail, ChevronRight, X, CheckCircle, Clock, Calendar, MapPin } from 'lucide-react-native';
+import Avatar from '../../../../components/Avatar';
 import { supabase } from '../../../../lib/supabase';
 import { formatTime } from '../../../../lib/formatTime';
 import { useFocusEffect } from '@react-navigation/native';
@@ -30,6 +31,7 @@ const colors = {
 type Technician = {
   id: string;
   full_name: string;
+  avatar_url?: string | null;
   role: string;
   site_id: string | null;
 };
@@ -179,9 +181,7 @@ export default function Technicians() {
             activeOpacity={0.8}
           >
             <View style={styles.techHeader}>
-              <View style={[styles.avatar, { backgroundColor: theme.avatarBg }]}>
-                <User size={24} color={colors.yellow} />
-              </View>
+              <Avatar url={tech.avatar_url} name={tech.full_name} size={50} backgroundColor={theme.avatarBg} />
               <View style={styles.techInfo}>
                 <Text style={[styles.techName, { color: theme.text }]}>{tech.full_name}</Text>
                 <View style={styles.roleRow}>
@@ -209,9 +209,7 @@ export default function Technicians() {
             {/* Modal Header */}
             <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
               <View style={styles.modalHeaderLeft}>
-                <View style={[styles.modalAvatar, { backgroundColor: theme.avatarBg }]}>
-                  <User size={20} color={colors.yellow} />
-                </View>
+                <Avatar url={selectedTech?.avatar_url} name={selectedTech?.full_name} size={44} backgroundColor={theme.avatarBg} />
                 <View>
                   <Text style={[styles.modalName, { color: theme.text }]}>
                     {selectedTech?.full_name}

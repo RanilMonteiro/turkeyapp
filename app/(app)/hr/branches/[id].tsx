@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { ArrowLeft, Building2, User, Search, ChevronRight } from 'lucide-react-native';
+import Avatar from '../../../../components/Avatar';
 import { supabase } from '../../../../lib/supabase';
 import { notify } from '../../../../lib/notify';
 
@@ -18,6 +19,7 @@ const colors = {
 type Member = {
   id: string;
   full_name: string;
+  avatar_url: string | null;
   role: string;
   job_title: string | null;
   employee_number: string | null;
@@ -55,7 +57,7 @@ export default function BranchDetailScreen() {
       supabase.from('branches').select('name').eq('id', id).single(),
       supabase
         .from('profiles')
-        .select('id, full_name, role, job_title, employee_number')
+        .select('id, full_name, role, job_title, employee_number, avatar_url')
         .eq('branch_id', id)
         .order('full_name', { ascending: true }),
     ]);
@@ -144,9 +146,7 @@ export default function BranchDetailScreen() {
                   style={[styles.memberRow, i > 0 && { borderTopWidth: 1, borderTopColor: theme.border }]}
                   onPress={() => router.push(`/(app)/hr/employees/${m.id}` as any)}
                 >
-                  <View style={[styles.avatar, { backgroundColor: theme.avatarBg }]}>
-                    <User color={colors.yellow} size={18} />
-                  </View>
+                  <Avatar url={m.avatar_url} name={m.full_name} size={40} backgroundColor={theme.avatarBg} />
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.memberName, { color: theme.text }]} numberOfLines={1}>
                       {m.full_name}

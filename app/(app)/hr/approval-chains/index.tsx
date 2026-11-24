@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, GitBranch, Plus, Trash2, ChevronDown, X, User } from 'lucide-react-native';
+import Avatar from '../../../../components/Avatar';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
 import { useFocusEffect } from '@react-navigation/native';
@@ -28,6 +29,7 @@ const colors = {
 type Profile = {
   id: string;
   full_name: string;
+  avatar_url?: string | null;
   role: string;
   sites: { name: string } | null;
 };
@@ -43,7 +45,7 @@ type ApprovalChain = {
   approver_id: string;
   site_id: string | null;
   approval_order: number;
-  employee: { full_name: string; role: string } | null;
+  employee: { full_name: string; role: string; avatar_url?: string | null } | null;
   approver: { full_name: string; role: string } | null;
   site: { name: string } | null;
 };
@@ -102,7 +104,7 @@ export default function ApprovalChains() {
         .from('approval_chains')
         .select(`
           *,
-          employee:employee_id(full_name, role),
+          employee:employee_id(full_name, role, avatar_url),
           approver:approver_id(full_name, role),
           site:site_id(name)
         `)
@@ -280,9 +282,7 @@ export default function ApprovalChains() {
             >
               {/* Employee */}
               <View style={styles.chainHeader}>
-                <View style={[styles.avatar, { backgroundColor: theme.avatarBg }]}>
-                  <User color={colors.yellow} size={18} />
-                </View>
+                <Avatar url={chain.employee.avatar_url} name={chain.employee.full_name} size={40} backgroundColor={theme.avatarBg} />
                 <View style={styles.chainHeaderInfo}>
                   <Text style={[styles.employeeName, { color: theme.text }]}>
                     {chain.employee.full_name}

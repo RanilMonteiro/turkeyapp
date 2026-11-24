@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, User, Search, MapPin, ChevronRight } from 'lucide-react-native';
+import Avatar from '../../../../components/Avatar';
 import { supabase } from '../../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -27,6 +28,7 @@ const colors = {
 type Employee = {
   id: string;
   full_name: string;
+  avatar_url: string | null;
   role: string;
   employee_number: string | null;
   job_title: string | null;
@@ -147,9 +149,7 @@ function getRoleBadgeColor(role: string) {
                 activeOpacity={0.8}
               >
                 <View style={styles.cardLeft}>
-                  <View style={[styles.avatar, { backgroundColor: theme.avatarBg }]}>
-                    <User color={colors.yellow} size={22} />
-                  </View>
+                  <Avatar url={employee.avatar_url} name={employee.full_name} size={46} backgroundColor={theme.avatarBg} style={{ marginRight: 12 }} />
                   <View style={styles.info}>
                     <Text style={[styles.name, { color: theme.text }]}>{employee.full_name}</Text>
                     {employee.job_title && (

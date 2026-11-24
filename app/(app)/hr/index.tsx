@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { LogOut } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { useAccess } from '../../../context/AccessContext';
+import Avatar from '../../../components/Avatar';
 
 const colors = {
   yellow: '#fbbf24',
@@ -22,7 +23,7 @@ const colors = {
 export default function HRDashboard() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
-  const { fullName, dashboardFeatures: features } = useAccess();
+  const { fullName, avatarUrl, dashboardFeatures: features } = useAccess();
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -44,12 +45,19 @@ export default function HRDashboard() {
     >
       {/* Header */}
       <View style={[styles.header, { backgroundColor: theme.card }]}>
-        <View>
-          <Text style={[styles.greeting, { color: theme.subtext }]}>Welcome back,</Text>
-          <Text style={[styles.title, { color: isDark ? colors.yellow : '#1e293b' }]}>
-            {fullName || 'HR'}
-          </Text>
-        </View>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}
+          onPress={() => router.push('/(app)/my-profile' as any)}
+          activeOpacity={0.8}
+        >
+          <Avatar url={avatarUrl} name={fullName} size={52} />
+          <View style={{ flexShrink: 1 }}>
+            <Text style={[styles.greeting, { color: theme.subtext }]}>Welcome back,</Text>
+            <Text style={[styles.title, { color: isDark ? colors.yellow : '#1e293b' }]}>
+              {fullName || 'HR'}
+            </Text>
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
           <LogOut color={colors.yellow} size={24} />
         </TouchableOpacity>

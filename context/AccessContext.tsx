@@ -24,6 +24,7 @@ type Snapshot = {
   userId: string | null;
   role: Role | null;
   fullName: string;
+  avatarUrl: string | null;
   granted: string[];
   hasDocGrants: boolean;
 };
@@ -32,6 +33,7 @@ const EMPTY: Snapshot = {
   userId: null,
   role: null,
   fullName: '',
+  avatarUrl: null,
   granted: [],
   hasDocGrants: false,
 };
@@ -42,6 +44,8 @@ type AccessValue = {
   userId: string | null;
   role: Role | null;
   fullName: string;
+  /** Public URL of the person's profile picture (null = show their letter). */
+  avatarUrl: string | null;
   /** Raw granted keys from user_permissions. Prefer can(). */
   permissions: string[];
   /** The real answer: includes superuser / always-on rules. */
@@ -73,7 +77,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     if (isNewUser) setLoading(true);
 
     const [profileRes, permsRes, grantsRes] = await Promise.all([
-      supabase.from('profiles').select('role, full_name').eq('id', userId).single(),
+      supabase.from('profiles').select('role, full_name, avatar_url').eq('id', userId).single(),
       supabase
         .from('user_permissions')
         .select('permission')
@@ -98,6 +102,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       userId,
       role: profileRes.data.role as Role,
       fullName: profileRes.data.full_name ?? '',
+      avatarUrl: profileRes.data.avatar_url ?? null,
       granted: (permsRes.data ?? []).map((p: { permission: string }) => p.permission),
       hasDocGrants: (grantsRes.data?.length ?? 0) > 0,
     });
@@ -148,6 +153,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       userId: snap.userId,
       role,
       fullName: snap.fullName,
+      avatarUrl: snap.avatarUrl,
       permissions: granted,
       can: (key: PermissionKey) => hasPermission(role, granted, key),
       features,

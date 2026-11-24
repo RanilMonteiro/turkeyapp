@@ -8,6 +8,7 @@ import { useRouter, usePathname } from 'expo-router';
 import { LogOut, Menu, X } from 'lucide-react-native';
 import { supabase } from '../lib/supabase';
 import { useAccess } from '../context/AccessContext';
+import Avatar from './Avatar';
 import {
   FEATURE_GROUP_LABELS, FEATURE_GROUP_ORDER, HOME_ICON, findActiveId,
 } from '../constants/features';
@@ -43,7 +44,7 @@ export default function WebLayout({ children }: Props) {
   const { width } = useWindowDimensions();
   const isDark = useColorScheme() === 'dark';
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { role, fullName, sidebarFeatures, homeRoute } = useAccess();
+  const { role, fullName, avatarUrl, sidebarFeatures, homeRoute } = useAccess();
   const isWeb = Platform.OS === 'web';
   const isDesktop = width >= 768;
 
@@ -84,7 +85,6 @@ export default function WebLayout({ children }: Props) {
     .filter(section => section.items.length > 0);
 
   const displayName = fullName || '';
-  const initial = displayName.charAt(0).toUpperCase();
   const roleLabel = role === 'hr' ? 'HR' : role.charAt(0).toUpperCase() + role.slice(1);
 
   async function handleLogout() {
@@ -141,11 +141,9 @@ export default function WebLayout({ children }: Props) {
 
           {/* User info */}
           <View style={[styles.userRow, { borderBottomColor: theme.border }]}>
-            <View style={[styles.avatar, { backgroundColor: `${colors.yellow}25` }]}>
-              <Text style={[styles.avatarText, { color: colors.yellow }]}>
-                {initial}
-              </Text>
-            </View>
+            <TouchableOpacity onPress={() => router.push('/(app)/my-profile' as any)} activeOpacity={0.7}>
+              <Avatar url={avatarUrl} name={displayName} size={40} />
+            </TouchableOpacity>
             <View style={styles.userInfo}>
               <Text style={[styles.userName, { color: theme.text }]} numberOfLines={1}>
                 {displayName}
@@ -200,11 +198,9 @@ export default function WebLayout({ children }: Props) {
           </Text>
 
           <View style={styles.topBarRight}>
-            <View style={[styles.topBarAvatar, { backgroundColor: `${colors.yellow}20` }]}>
-              <Text style={[styles.topBarAvatarText, { color: colors.yellow }]}>
-                {initial}
-              </Text>
-            </View>
+            <TouchableOpacity onPress={() => router.push('/(app)/my-profile' as any)} activeOpacity={0.7}>
+              <Avatar url={avatarUrl} name={displayName} size={34} />
+            </TouchableOpacity>
           </View>
         </View>
 

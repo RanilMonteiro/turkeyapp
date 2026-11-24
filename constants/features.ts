@@ -2,7 +2,7 @@ import type { ComponentType } from 'react';
 import {
   LayoutDashboard, Users, UserCog, FileText, ClipboardList, MapPin,
   CheckCircle, Calendar, CalendarDays, CalendarCheck, Wrench, HardHat,
-  FolderOpen, Eye, ShieldCheck, Building2,
+  FolderOpen, Eye, ShieldCheck, Building2, CircleUser,
 } from 'lucide-react-native';
 import { PermissionKey, Role, hasPermission } from './permissions';
 
@@ -222,6 +222,16 @@ export const FEATURES: Feature[] = [
   },
 
   // ── MY WORK ─────────────────────────────────────────────────────────
+  {
+    // Everyone (including superusers) can set their own profile picture.
+    id: 'my-profile',
+    title: 'My Profile',
+    description: 'Add or change your profile picture',
+    icon: CircleUser,
+    route: '/(app)/my-profile',
+    group: 'me',
+    roles: ['superuser', 'hr', 'admin', 'technician'],
+  },
   {
     id: 'forms',
     title: 'Forms',

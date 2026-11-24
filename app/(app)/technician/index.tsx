@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { LogOut } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { useAccess } from '../../../context/AccessContext';
+import Avatar from '../../../components/Avatar';
 
 const colors = {
   yellow: '#fbbf24',
@@ -22,7 +23,7 @@ const colors = {
 export default function TechnicianDashboard() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
-  const { fullName, dashboardFeatures: features } = useAccess();
+  const { fullName, avatarUrl, dashboardFeatures: features } = useAccess();
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -36,14 +37,21 @@ export default function TechnicianDashboard() {
     >
       {/* Header */}
       <View style={[styles.header, { backgroundColor: isDark ? colors.gray[900] : colors.white }]}>
-        <View>
-          <Text style={[styles.greeting, { color: isDark ? colors.gray[400] : colors.gray[500] }]}>
-            Welcome back,
-          </Text>
-          <Text style={[styles.title, { color: isDark ? colors.yellow : colors.gray[800] }]}>
-            {fullName || 'Technician'}
-          </Text>
-        </View>
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}
+          onPress={() => router.push('/(app)/my-profile' as any)}
+          activeOpacity={0.8}
+        >
+          <Avatar url={avatarUrl} name={fullName} size={52} />
+          <View style={{ flexShrink: 1 }}>
+            <Text style={[styles.greeting, { color: isDark ? colors.gray[400] : colors.gray[500] }]}>
+              Welcome back,
+            </Text>
+            <Text style={[styles.title, { color: isDark ? colors.yellow : colors.gray[800] }]}>
+              {fullName || 'Technician'}
+            </Text>
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
           <LogOut color={colors.yellow} size={24} />
         </TouchableOpacity>

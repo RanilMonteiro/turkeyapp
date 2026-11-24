@@ -10,6 +10,7 @@ import {
   Plus, Trash2, GitBranch, FileText, Clock, CheckCircle, XCircle,
   FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye, Building2
 } from 'lucide-react-native';
+import Avatar from '../../../../components/Avatar';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
 import * as DocumentPicker from 'expo-document-picker';
@@ -57,6 +58,7 @@ async function fileToUint8Array(uri: string): Promise<Uint8Array> {
 type Employee = {
   id: string;
   full_name: string;
+  avatar_url: string | null;
   role: string;
   employee_number: string | null;
   job_title: string | null;
@@ -1025,9 +1027,7 @@ export default function EmployeeProfile() {
       <ScrollView contentContainerStyle={styles.content}>
         {/* Avatar + Name */}
         <View style={[styles.profileCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <View style={[styles.avatar, { backgroundColor: theme.avatarBg }]}>
-            <User color={colors.yellow} size={36} />
-          </View>
+          <Avatar url={employee.avatar_url} name={employee.full_name} size={80} backgroundColor={theme.avatarBg} style={{ marginBottom: 8 }} />
           <Text style={[styles.name, { color: theme.text }]}>{employee.full_name}</Text>
           <View style={[styles.roleBadge, { backgroundColor: badge.bg }]}>
             <Text style={[styles.roleText, { color: badge.text }]}>

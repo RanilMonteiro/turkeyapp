@@ -50,6 +50,7 @@ export default function AppLayout() {
 <Stack.Screen name="shared/my-documents" />
       <Stack.Screen name="dashboard" />
       <Stack.Screen name="profile" />
+      <Stack.Screen name="my-profile" />
       <Stack.Screen name="callouts" />
       <Stack.Screen name="calender" />
     </Stack>
