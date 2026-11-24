@@ -66,6 +66,13 @@ type Employee = {
   phone: string | null;
   id_number: string | null;
   date_joined: string | null;
+  address_unit: string | null;
+  address_complex: string | null;
+  address_street: string | null;
+  address_suburb: string | null;
+  address_city: string | null;
+  address_province: string | null;
+  address_postal_code: string | null;
   site_id: string | null;
   sites: { name: string } | null;
   branch_id: string | null;
@@ -121,6 +128,13 @@ export default function EmployeeProfile() {
   const [phone, setPhone] = useState('');
   const [idNumber, setIdNumber] = useState('');
   const [dateJoined, setDateJoined] = useState('');
+  const [addressUnit, setAddressUnit] = useState('');
+  const [addressComplex, setAddressComplex] = useState('');
+  const [addressStreet, setAddressStreet] = useState('');
+  const [addressSuburb, setAddressSuburb] = useState('');
+  const [addressCity, setAddressCity] = useState('');
+  const [addressProvince, setAddressProvince] = useState('');
+  const [addressPostalCode, setAddressPostalCode] = useState('');
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
 
@@ -237,6 +251,13 @@ export default function EmployeeProfile() {
       setPhone(emp.phone ?? '');
       setIdNumber(emp.id_number ?? '');
       setDateJoined(emp.date_joined ?? '');
+      setAddressUnit(emp.address_unit ?? '');
+      setAddressComplex(emp.address_complex ?? '');
+      setAddressStreet(emp.address_street ?? '');
+      setAddressSuburb(emp.address_suburb ?? '');
+      setAddressCity(emp.address_city ?? '');
+      setAddressProvince(emp.address_province ?? '');
+      setAddressPostalCode(emp.address_postal_code ?? '');
       setSelectedSiteId(emp.site_id ?? null);
       setSelectedBranchId(emp.branch_id ?? null);
     }
@@ -398,6 +419,13 @@ export default function EmployeeProfile() {
         phone: phone || null,
         id_number: idNumber || null,
         date_joined: dateJoined || null,
+        address_unit: addressUnit.trim() || null,
+        address_complex: addressComplex.trim() || null,
+        address_street: addressStreet.trim() || null,
+        address_suburb: addressSuburb.trim() || null,
+        address_city: addressCity.trim() || null,
+        address_province: addressProvince.trim() || null,
+        address_postal_code: addressPostalCode.trim() || null,
         site_id: selectedSiteId,
         branch_id: selectedBranchId,
       })
@@ -1069,6 +1097,18 @@ export default function EmployeeProfile() {
           ))}
         </View>
 
+        {/* Home Address */}
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Home Address</Text>
+          <DetailRow icon={<MapPin color={colors.yellow} size={16} />} label="Unit / Flat Number" value={employee.address_unit} theme={theme} />
+          <DetailRow icon={<Building2 color={colors.yellow} size={16} />} label="Block / Complex" value={employee.address_complex} theme={theme} />
+          <DetailRow icon={<MapPin color={colors.yellow} size={16} />} label="Street Address" value={employee.address_street} theme={theme} />
+          <DetailRow icon={<MapPin color={colors.yellow} size={16} />} label="Suburb" value={employee.address_suburb} theme={theme} />
+          <DetailRow icon={<MapPin color={colors.yellow} size={16} />} label="City / Town" value={employee.address_city} theme={theme} />
+          <DetailRow icon={<MapPin color={colors.yellow} size={16} />} label="Province" value={employee.address_province} theme={theme} />
+          <DetailRow icon={<Hash color={colors.yellow} size={16} />} label="Postal Code" value={employee.address_postal_code} theme={theme} isLast />
+        </View>
+
         {/* Approval Chains (per form template) */}
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <View style={styles.cardHeaderLeft}>
@@ -1390,6 +1430,16 @@ export default function EmployeeProfile() {
                 theme={theme}
               />
             </View>
+
+            {/* Home address */}
+            <Text style={[styles.fieldLabel, { color: colors.yellow, marginTop: 8, marginBottom: 10, fontSize: 12 }]}>HOME ADDRESS</Text>
+            <Field label="Unit / Flat Number" value={addressUnit} onChange={setAddressUnit} theme={theme} placeholder="e.g. Unit 12" />
+            <Field label="Block / Complex" value={addressComplex} onChange={setAddressComplex} theme={theme} placeholder="e.g. Block B, Oakwood Estate" />
+            <Field label="Street Address" value={addressStreet} onChange={setAddressStreet} theme={theme} placeholder="e.g. 45 Main Road" />
+            <Field label="Suburb" value={addressSuburb} onChange={setAddressSuburb} theme={theme} placeholder="e.g. Bryanston" />
+            <Field label="City / Town" value={addressCity} onChange={setAddressCity} theme={theme} placeholder="e.g. Johannesburg" />
+            <Field label="Province" value={addressProvince} onChange={setAddressProvince} theme={theme} placeholder="e.g. Gauteng" />
+            <Field label="Postal Code" value={addressPostalCode} onChange={setAddressPostalCode} theme={theme} placeholder="e.g. 2191" keyboardType="numeric" />
 
             {/* Branch */}
             <View style={styles.fieldGroup}>
