@@ -8,7 +8,7 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
   ArrowLeft, User, MapPin, Phone, Briefcase, Hash, ChevronDown, X,
   Plus, Trash2, GitBranch, FileText, Clock, CheckCircle, XCircle,
-  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye, Building2
+  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye, Building2, Users
 } from 'lucide-react-native';
 import Avatar from '../../../../components/Avatar';
 import { supabase } from '../../../../lib/supabase';
@@ -66,6 +66,9 @@ type Employee = {
   phone: string | null;
   id_number: string | null;
   date_joined: string | null;
+  next_of_kin_name: string | null;
+  next_of_kin_relationship: string | null;
+  next_of_kin_phone: string | null;
   address_unit: string | null;
   address_complex: string | null;
   address_street: string | null;
@@ -128,6 +131,9 @@ export default function EmployeeProfile() {
   const [phone, setPhone] = useState('');
   const [idNumber, setIdNumber] = useState('');
   const [dateJoined, setDateJoined] = useState('');
+  const [kinName, setKinName] = useState('');
+  const [kinRelationship, setKinRelationship] = useState('');
+  const [kinPhone, setKinPhone] = useState('');
   const [addressUnit, setAddressUnit] = useState('');
   const [addressComplex, setAddressComplex] = useState('');
   const [addressStreet, setAddressStreet] = useState('');
@@ -251,6 +257,9 @@ export default function EmployeeProfile() {
       setPhone(emp.phone ?? '');
       setIdNumber(emp.id_number ?? '');
       setDateJoined(emp.date_joined ?? '');
+      setKinName(emp.next_of_kin_name ?? '');
+      setKinRelationship(emp.next_of_kin_relationship ?? '');
+      setKinPhone(emp.next_of_kin_phone ?? '');
       setAddressUnit(emp.address_unit ?? '');
       setAddressComplex(emp.address_complex ?? '');
       setAddressStreet(emp.address_street ?? '');
@@ -419,6 +428,9 @@ export default function EmployeeProfile() {
         phone: phone || null,
         id_number: idNumber || null,
         date_joined: dateJoined || null,
+        next_of_kin_name: kinName.trim() || null,
+        next_of_kin_relationship: kinRelationship.trim() || null,
+        next_of_kin_phone: kinPhone.trim() || null,
         address_unit: addressUnit.trim() || null,
         address_complex: addressComplex.trim() || null,
         address_street: addressStreet.trim() || null,
@@ -1084,7 +1096,14 @@ export default function EmployeeProfile() {
           <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Department" value={employee.department} theme={theme} />
           <DetailRow icon={<Phone color={colors.yellow} size={16} />} label="Phone" value={employee.phone} theme={theme} />
           <DetailRow icon={<Hash color={colors.yellow} size={16} />} label="ID Number" value={employee.id_number} theme={theme} />
-          <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Date Joined" value={employee.date_joined} theme={theme} isLast={customFields.length === 0} />
+          <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Date Joined" value={employee.date_joined} theme={theme} />
+          <NextOfKinRow
+            name={employee.next_of_kin_name}
+            relationship={employee.next_of_kin_relationship}
+            phone={employee.next_of_kin_phone}
+            theme={theme}
+            isLast={customFields.length === 0}
+          />
           {customFields.map((f, i) => (
             <DetailRow
               key={f.id}
@@ -1430,6 +1449,12 @@ export default function EmployeeProfile() {
                 theme={theme}
               />
             </View>
+
+            {/* Next of kin */}
+            <Text style={[styles.fieldLabel, { color: colors.yellow, marginTop: 8, marginBottom: 10, fontSize: 12 }]}>NEXT OF KIN</Text>
+            <Field label="Name" value={kinName} onChange={setKinName} theme={theme} placeholder="e.g. Jane Smith" />
+            <Field label="Relationship" value={kinRelationship} onChange={setKinRelationship} theme={theme} placeholder="e.g. Wife, Mother, Brother" />
+            <Field label="Contact Number" value={kinPhone} onChange={setKinPhone} theme={theme} placeholder="e.g. 071 234 5678" keyboardType="phone-pad" />
 
             {/* Home address */}
             <Text style={[styles.fieldLabel, { color: colors.yellow, marginTop: 8, marginBottom: 10, fontSize: 12 }]}>HOME ADDRESS</Text>
@@ -2027,6 +2052,27 @@ function DetailRow({ icon, label, value, theme, isLast }: any) {
       <View style={styles.detailInfo}>
         <Text style={[styles.detailLabel, { color: theme.subtext }]}>{label}</Text>
         <Text style={[styles.detailValue, { color: value ? theme.text : theme.muted }]}>{value ?? 'Not set'}</Text>
+      </View>
+    </View>
+  );
+}
+
+function NextOfKinRow({ name, relationship, phone, theme, isLast }: any) {
+  const hasAny = !!(name || relationship || phone);
+  return (
+    <View style={[styles.detailRow, !isLast && { borderBottomWidth: 1, borderBottomColor: theme.border }]}>
+      <View style={styles.detailIcon}><Users color={colors.yellow} size={16} /></View>
+      <View style={styles.detailInfo}>
+        <Text style={[styles.detailLabel, { color: theme.subtext }]}>Next of Kin</Text>
+        {hasAny ? (
+          <View style={{ gap: 2 }}>
+            <Text style={[styles.detailValue, { color: theme.text, fontWeight: '700' }]}>{name || 'No name'}</Text>
+            <Text style={[styles.detailValue, { color: theme.subtext }]}>{relationship || 'Relationship not set'}</Text>
+            <Text style={[styles.detailValue, { color: phone ? theme.text : theme.muted }]}>{phone || 'No number'}</Text>
+          </View>
+        ) : (
+          <Text style={[styles.detailValue, { color: theme.muted }]}>Not set</Text>
+        )}
       </View>
     </View>
   );
