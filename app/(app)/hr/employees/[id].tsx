@@ -81,6 +81,9 @@ type Employee = {
   address_city: string | null;
   address_province: string | null;
   address_postal_code: string | null;
+  medical_aid_name: string | null;
+  medical_aid_plan: string | null;
+  medical_aid_policy_number: string | null;
   site_id: string | null;
   sites: { name: string } | null;
   branch_id: string | null;
@@ -151,6 +154,9 @@ export default function EmployeeProfile() {
   const [addressCity, setAddressCity] = useState('');
   const [addressProvince, setAddressProvince] = useState('');
   const [addressPostalCode, setAddressPostalCode] = useState('');
+  const [medicalAidName, setMedicalAidName] = useState('');
+  const [medicalAidPlan, setMedicalAidPlan] = useState('');
+  const [medicalAidPolicy, setMedicalAidPolicy] = useState('');
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
 
@@ -282,6 +288,9 @@ export default function EmployeeProfile() {
       setAddressCity(emp.address_city ?? '');
       setAddressProvince(emp.address_province ?? '');
       setAddressPostalCode(emp.address_postal_code ?? '');
+      setMedicalAidName(emp.medical_aid_name ?? '');
+      setMedicalAidPlan(emp.medical_aid_plan ?? '');
+      setMedicalAidPolicy(emp.medical_aid_policy_number ?? '');
       setSelectedSiteId(emp.site_id ?? null);
       setSelectedBranchId(emp.branch_id ?? null);
     }
@@ -458,6 +467,9 @@ export default function EmployeeProfile() {
         address_city: addressCity.trim() || null,
         address_province: addressProvince.trim() || null,
         address_postal_code: addressPostalCode.trim() || null,
+        medical_aid_name: medicalAidName.trim() || null,
+        medical_aid_plan: medicalAidPlan.trim() || null,
+        medical_aid_policy_number: medicalAidPolicy.trim() || null,
         site_id: selectedSiteId,
         branch_id: selectedBranchId,
       })
@@ -1159,6 +1171,14 @@ export default function EmployeeProfile() {
           <DetailRow icon={<Hash color={colors.yellow} size={16} />} label="Postal Code" value={employee.address_postal_code} theme={theme} isLast />
         </View>
 
+        {/* Medical Aid */}
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>Medical Aid</Text>
+          <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Medical Aid Name" value={employee.medical_aid_name} theme={theme} />
+          <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Plan" value={employee.medical_aid_plan} theme={theme} />
+          <DetailRow icon={<Hash color={colors.yellow} size={16} />} label="Policy Number" value={employee.medical_aid_policy_number} theme={theme} isLast />
+        </View>
+
         {/* Approval Chains (per form template) */}
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <View style={styles.cardHeaderLeft}>
@@ -1504,6 +1524,12 @@ export default function EmployeeProfile() {
             <Field label="City / Town" value={addressCity} onChange={setAddressCity} theme={theme} placeholder="e.g. Johannesburg" />
             <Field label="Province" value={addressProvince} onChange={setAddressProvince} theme={theme} placeholder="e.g. Gauteng" />
             <Field label="Postal Code" value={addressPostalCode} onChange={setAddressPostalCode} theme={theme} placeholder="e.g. 2191" keyboardType="numeric" />
+
+            {/* Medical aid */}
+            <Text style={[styles.fieldLabel, { color: colors.yellow, marginTop: 8, marginBottom: 10, fontSize: 12 }]}>MEDICAL AID</Text>
+            <Field label="Medical Aid Name" value={medicalAidName} onChange={setMedicalAidName} theme={theme} placeholder="e.g. Discovery Health" />
+            <Field label="Plan" value={medicalAidPlan} onChange={setMedicalAidPlan} theme={theme} placeholder="e.g. Classic Smart" />
+            <Field label="Policy Number" value={medicalAidPolicy} onChange={setMedicalAidPolicy} theme={theme} placeholder="e.g. 123456789" />
 
             {/* Branch */}
             <View style={styles.fieldGroup}>
