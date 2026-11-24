@@ -1027,7 +1027,7 @@ export default function EmployeeProfile() {
       <ScrollView contentContainerStyle={styles.content}>
         {/* Avatar + Name */}
         <View style={[styles.profileCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Avatar url={employee.avatar_url} name={employee.full_name} size={80} backgroundColor={theme.avatarBg} style={{ marginBottom: 8 }} />
+          <Avatar fallback="icon" url={employee.avatar_url} name={employee.full_name} size={80} backgroundColor={theme.avatarBg} style={{ marginBottom: 8 }} />
           <Text style={[styles.name, { color: theme.text }]}>{employee.full_name}</Text>
           <View style={[styles.roleBadge, { backgroundColor: badge.bg }]}>
             <Text style={[styles.roleText, { color: badge.text }]}>

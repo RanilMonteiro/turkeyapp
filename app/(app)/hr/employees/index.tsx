@@ -149,7 +149,7 @@ function getRoleBadgeColor(role: string) {
                 activeOpacity={0.8}
               >
                 <View style={styles.cardLeft}>
-                  <Avatar url={employee.avatar_url} name={employee.full_name} size={46} backgroundColor={theme.avatarBg} style={{ marginRight: 12 }} />
+                  <Avatar fallback="icon" url={employee.avatar_url} name={employee.full_name} size={46} backgroundColor={theme.avatarBg} style={{ marginRight: 12 }} />
                   <View style={styles.info}>
                     <Text style={[styles.name, { color: theme.text }]}>{employee.full_name}</Text>
                     {employee.job_title && (

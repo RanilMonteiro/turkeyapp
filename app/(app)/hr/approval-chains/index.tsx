@@ -282,7 +282,7 @@ export default function ApprovalChains() {
             >
               {/* Employee */}
               <View style={styles.chainHeader}>
-                <Avatar url={chain.employee.avatar_url} name={chain.employee.full_name} size={40} backgroundColor={theme.avatarBg} />
+                <Avatar fallback="icon" url={chain.employee.avatar_url} name={chain.employee.full_name} size={40} backgroundColor={theme.avatarBg} />
                 <View style={styles.chainHeaderInfo}>
                   <Text style={[styles.employeeName, { color: theme.text }]}>
                     {chain.employee.full_name}

@@ -146,7 +146,7 @@ export default function BranchDetailScreen() {
                   style={[styles.memberRow, i > 0 && { borderTopWidth: 1, borderTopColor: theme.border }]}
                   onPress={() => router.push(`/(app)/hr/employees/${m.id}` as any)}
                 >
-                  <Avatar url={m.avatar_url} name={m.full_name} size={40} backgroundColor={theme.avatarBg} />
+                  <Avatar fallback="icon" url={m.avatar_url} name={m.full_name} size={40} backgroundColor={theme.avatarBg} />
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.memberName, { color: theme.text }]} numberOfLines={1}>
                       {m.full_name}

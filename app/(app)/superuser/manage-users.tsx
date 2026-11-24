@@ -249,7 +249,7 @@ function UserCard({ user, theme, isDark, getRoleIcon, getRoleBadgeColor, getRole
   return (
     <View style={[styles.userCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <View style={styles.userHeader}>
-        <Avatar url={user.avatar_url} name={user.full_name} size={46} backgroundColor={theme.avatarBg} />
+        <Avatar fallback="icon" url={user.avatar_url} name={user.full_name} size={46} backgroundColor={theme.avatarBg} />
         <View style={styles.userInfo}>
           <Text style={[styles.userName, { color: theme.text }]}>{user.full_name}</Text>
           <View style={[styles.roleBadge, { backgroundColor: getRoleBadgeColor(user.role) }]}>

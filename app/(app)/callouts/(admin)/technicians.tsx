@@ -181,7 +181,7 @@ export default function Technicians() {
             activeOpacity={0.8}
           >
             <View style={styles.techHeader}>
-              <Avatar url={tech.avatar_url} name={tech.full_name} size={50} backgroundColor={theme.avatarBg} />
+              <Avatar fallback="icon" url={tech.avatar_url} name={tech.full_name} size={50} backgroundColor={theme.avatarBg} />
               <View style={styles.techInfo}>
                 <Text style={[styles.techName, { color: theme.text }]}>{tech.full_name}</Text>
                 <View style={styles.roleRow}>
@@ -209,7 +209,7 @@ export default function Technicians() {
             {/* Modal Header */}
             <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
               <View style={styles.modalHeaderLeft}>
-                <Avatar url={selectedTech?.avatar_url} name={selectedTech?.full_name} size={44} backgroundColor={theme.avatarBg} />
+                <Avatar fallback="icon" url={selectedTech?.avatar_url} name={selectedTech?.full_name} size={44} backgroundColor={theme.avatarBg} />
                 <View>
                   <Text style={[styles.modalName, { color: theme.text }]}>
                     {selectedTech?.full_name}
