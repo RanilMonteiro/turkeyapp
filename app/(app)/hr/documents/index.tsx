@@ -5,9 +5,10 @@ import {
   Modal, TextInput, Platform
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Plus, FolderOpen, FileText, Trash2, Eye, ChevronDown, X, Upload } from 'lucide-react-native';
+import { ArrowLeft, Plus, FolderOpen, FileText, Trash2, Eye, Download, ChevronDown, X, Upload } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
+import { viewDocument, downloadDocument } from '../../../../lib/documentActions';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -35,6 +36,7 @@ const CATEGORIES = [
   { value: 'procedure', label: 'Procedure' },
   { value: 'contract', label: 'Contract' },
   { value: 'form', label: 'Form' },
+  { value: 'training', label: 'Training' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -246,6 +248,7 @@ export default function DocumentsManager() {
       case 'policy': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
       case 'procedure': return { bg: isDark ? '#064e3b' : '#d1fae5', text: '#10b981' };
       case 'contract': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
+      case 'training': return { bg: isDark ? '#134e4a' : '#ccfbf1', text: '#14b8a6' };
       default: return { bg: isDark ? colors.gray[800] : colors.gray[200], text: colors.gray[500] };
     }
   }
@@ -400,13 +403,15 @@ export default function DocumentsManager() {
                 <View style={styles.docActions}>
                   <TouchableOpacity
                     style={[styles.docActionBtn, { backgroundColor: theme.input }]}
-                    onPress={() => {
-                      // Open URL
-                      const { Linking } = require('react-native');
-                      Linking.openURL(doc.file_url);
-                    }}
+                    onPress={() => viewDocument(doc.file_url)}
                   >
                     <Eye color={colors.yellow} size={16} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.docActionBtn, { backgroundColor: theme.input }]}
+                    onPress={() => downloadDocument(doc.file_url, doc.name, doc.file_type)}
+                  >
+                    <Download color={colors.yellow} size={16} />
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.docActionBtn, { backgroundColor: isDark ? '#3b1a1a' : '#fee2e2' }]}

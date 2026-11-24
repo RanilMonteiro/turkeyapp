@@ -2,12 +2,13 @@ import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Linking, RefreshControl
+  RefreshControl
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, FileText, FolderOpen } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
+import { viewDocument, downloadDocument } from '../../../lib/documentActions';
 
 const colors = {
   yellow: '#fbbf24',
@@ -75,6 +76,7 @@ export default function MyDocuments() {
       case 'policy': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
       case 'procedure': return { bg: isDark ? '#064e3b' : '#d1fae5', text: '#10b981' };
       case 'contract': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
+      case 'training': return { bg: isDark ? '#134e4a' : '#ccfbf1', text: '#14b8a6' };
       default: return { bg: isDark ? colors.gray[800] : colors.gray[200], text: colors.gray[500] };
     }
   }
@@ -119,11 +121,9 @@ export default function MyDocuments() {
           documents.map(doc => {
             const cat = getCategoryColor(doc.category);
             return (
-              <TouchableOpacity
+              <View
                 key={doc.id}
                 style={[styles.docCard, { backgroundColor: theme.card, borderColor: theme.border }]}
-                onPress={() => Linking.openURL(doc.file_url)}
-                activeOpacity={0.8}
               >
                 <View style={[styles.docIcon, { backgroundColor: `${colors.yellow}20` }]}>
                   <FileText color={colors.yellow} size={22} />
@@ -137,8 +137,15 @@ export default function MyDocuments() {
                     {new Date(doc.created_at).toLocaleDateString('en-ZA')}
                   </Text>
                 </View>
-                <Text style={[styles.openText, { color: colors.yellow }]}>Open</Text>
-              </TouchableOpacity>
+                <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                  <TouchableOpacity onPress={() => viewDocument(doc.file_url)} hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}>
+                    <Text style={[styles.openText, { color: colors.yellow }]}>View</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => downloadDocument(doc.file_url, doc.name, doc.file_type)} hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}>
+                    <Text style={[styles.openText, { color: colors.yellow }]}>Download</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             );
           })
         )}

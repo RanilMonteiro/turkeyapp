@@ -13,6 +13,7 @@ import {
 import Avatar from '../../../../components/Avatar';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
+import { viewDocument, downloadDocument } from '../../../../lib/documentActions';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -39,6 +40,7 @@ const DOC_CATEGORIES = [
   { value: 'contract', label: 'Contract' },
   { value: 'form', label: 'Form' },
   { value: 'disciplinary', label: 'Disciplinary' },
+  { value: 'training', label: 'Training' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -1050,6 +1052,7 @@ export default function EmployeeProfile() {
       case 'procedure': return { bg: isDark ? '#064e3b' : '#d1fae5', text: '#10b981' };
       case 'contract': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
       case 'disciplinary': return { bg: isDark ? '#7f1d1d' : '#fee2e2', text: '#dc2626' };
+      case 'training': return { bg: isDark ? '#134e4a' : '#ccfbf1', text: '#14b8a6' };
       default: return { bg: isDark ? colors.gray[800] : colors.gray[200], text: colors.gray[500] };
     }
   }
@@ -2096,12 +2099,15 @@ function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument, getExpir
       </View>
       <TouchableOpacity
         style={styles.docActionBtn}
-        onPress={() => {
-          const { Linking } = require('react-native');
-          Linking.openURL(doc.file_url);
-        }}
+        onPress={() => viewDocument(doc.file_url)}
       >
         <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>View</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.docActionBtn}
+        onPress={() => downloadDocument(doc.file_url, doc.name, doc.file_type)}
+      >
+        <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>Download</Text>
       </TouchableOpacity>
       <TouchableOpacity style={styles.docActionBtn} onPress={() => deleteDocument(doc)}>
         <Trash2 color="#ef4444" size={16} />

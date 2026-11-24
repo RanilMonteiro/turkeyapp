@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { ArrowLeft, FolderOpen, Search, Folder, ChevronDown, User } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
+import { viewDocument, downloadDocument } from '../../../lib/documentActions';
 
 const colors = {
   yellow: '#fbbf24',
@@ -29,6 +30,7 @@ const DOC_CATEGORIES = [
   { value: 'procedure', label: 'Procedure' },
   { value: 'contract', label: 'Contract' },
   { value: 'form', label: 'Form' },
+  { value: 'training', label: 'Training' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -37,6 +39,7 @@ type Document = {
   name: string;
   category: string;
   file_url: string;
+  file_type?: string | null;
   created_at: string;
   document_date: string | null;
   employee_id: string | null;
@@ -86,6 +89,7 @@ export default function GrantedDocuments() {
       case 'policy': return { bg: isDark ? '#3b1f5f' : '#ede9fe', text: '#8b5cf6' };
       case 'procedure': return { bg: isDark ? '#064e3b' : '#d1fae5', text: '#10b981' };
       case 'contract': return { bg: isDark ? '#78350f' : '#fef3c7', text: '#f59e0b' };
+      case 'training': return { bg: isDark ? '#134e4a' : '#ccfbf1', text: '#14b8a6' };
       default: return { bg: isDark ? colors.gray[800] : colors.gray[200], text: colors.gray[500] };
     }
   }
@@ -119,13 +123,7 @@ export default function GrantedDocuments() {
   function DocRow({ doc }: { doc: Document }) {
     const cat = getCategoryColor(doc.category);
     return (
-      <TouchableOpacity
-        style={[styles.docRow, { borderColor: theme.border }]}
-        onPress={() => {
-          const { Linking } = require('react-native');
-          Linking.openURL(doc.file_url);
-        }}
-      >
+      <View style={[styles.docRow, { borderColor: theme.border }]}>
         <View style={{ flex: 1 }}>
           <Text style={[styles.docName, { color: theme.text }]} numberOfLines={1}>{doc.name}</Text>
           <View style={styles.docMetaRow}>
@@ -144,8 +142,13 @@ export default function GrantedDocuments() {
             </Text>
           </View>
         </View>
-        <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>View</Text>
-      </TouchableOpacity>
+        <TouchableOpacity style={{ paddingHorizontal: 8, paddingVertical: 6 }} onPress={() => viewDocument(doc.file_url)}>
+          <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>View</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={{ paddingHorizontal: 8, paddingVertical: 6 }} onPress={() => downloadDocument(doc.file_url, doc.name, doc.file_type)}>
+          <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>Download</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
