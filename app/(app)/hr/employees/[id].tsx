@@ -69,6 +69,11 @@ type Employee = {
   next_of_kin_name: string | null;
   next_of_kin_relationship: string | null;
   next_of_kin_phone: string | null;
+  next_of_kin_address: string | null;
+  next_of_kin_2_name: string | null;
+  next_of_kin_2_relationship: string | null;
+  next_of_kin_2_phone: string | null;
+  next_of_kin_2_address: string | null;
   address_unit: string | null;
   address_complex: string | null;
   address_street: string | null;
@@ -134,6 +139,11 @@ export default function EmployeeProfile() {
   const [kinName, setKinName] = useState('');
   const [kinRelationship, setKinRelationship] = useState('');
   const [kinPhone, setKinPhone] = useState('');
+  const [kinAddress, setKinAddress] = useState('');
+  const [kin2Name, setKin2Name] = useState('');
+  const [kin2Relationship, setKin2Relationship] = useState('');
+  const [kin2Phone, setKin2Phone] = useState('');
+  const [kin2Address, setKin2Address] = useState('');
   const [addressUnit, setAddressUnit] = useState('');
   const [addressComplex, setAddressComplex] = useState('');
   const [addressStreet, setAddressStreet] = useState('');
@@ -260,6 +270,11 @@ export default function EmployeeProfile() {
       setKinName(emp.next_of_kin_name ?? '');
       setKinRelationship(emp.next_of_kin_relationship ?? '');
       setKinPhone(emp.next_of_kin_phone ?? '');
+      setKinAddress(emp.next_of_kin_address ?? '');
+      setKin2Name(emp.next_of_kin_2_name ?? '');
+      setKin2Relationship(emp.next_of_kin_2_relationship ?? '');
+      setKin2Phone(emp.next_of_kin_2_phone ?? '');
+      setKin2Address(emp.next_of_kin_2_address ?? '');
       setAddressUnit(emp.address_unit ?? '');
       setAddressComplex(emp.address_complex ?? '');
       setAddressStreet(emp.address_street ?? '');
@@ -431,6 +446,11 @@ export default function EmployeeProfile() {
         next_of_kin_name: kinName.trim() || null,
         next_of_kin_relationship: kinRelationship.trim() || null,
         next_of_kin_phone: kinPhone.trim() || null,
+        next_of_kin_address: kinAddress.trim() || null,
+        next_of_kin_2_name: kin2Name.trim() || null,
+        next_of_kin_2_relationship: kin2Relationship.trim() || null,
+        next_of_kin_2_phone: kin2Phone.trim() || null,
+        next_of_kin_2_address: kin2Address.trim() || null,
         address_unit: addressUnit.trim() || null,
         address_complex: addressComplex.trim() || null,
         address_street: addressStreet.trim() || null,
@@ -1101,7 +1121,18 @@ export default function EmployeeProfile() {
             name={employee.next_of_kin_name}
             relationship={employee.next_of_kin_relationship}
             phone={employee.next_of_kin_phone}
+            address={employee.next_of_kin_address}
             theme={theme}
+            label="Next of Kin"
+            isLast={false}
+          />
+          <NextOfKinRow
+            name={employee.next_of_kin_2_name}
+            relationship={employee.next_of_kin_2_relationship}
+            phone={employee.next_of_kin_2_phone}
+            address={employee.next_of_kin_2_address}
+            theme={theme}
+            label="Next of Kin 2"
             isLast={customFields.length === 0}
           />
           {customFields.map((f, i) => (
@@ -1455,6 +1486,14 @@ export default function EmployeeProfile() {
             <Field label="Name" value={kinName} onChange={setKinName} theme={theme} placeholder="e.g. Jane Smith" />
             <Field label="Relationship" value={kinRelationship} onChange={setKinRelationship} theme={theme} placeholder="e.g. Wife, Mother, Brother" />
             <Field label="Contact Number" value={kinPhone} onChange={setKinPhone} theme={theme} placeholder="e.g. 071 234 5678" keyboardType="phone-pad" />
+            <Field label="Address (one line)" value={kinAddress} onChange={setKinAddress} theme={theme} placeholder="e.g. 12 Oak Street, Bryanston, Johannesburg, 2191" />
+
+            {/* Next of kin 2 */}
+            <Text style={[styles.fieldLabel, { color: colors.yellow, marginTop: 8, marginBottom: 10, fontSize: 12 }]}>NEXT OF KIN 2 (OPTIONAL)</Text>
+            <Field label="Name" value={kin2Name} onChange={setKin2Name} theme={theme} placeholder="e.g. John Smith" />
+            <Field label="Relationship" value={kin2Relationship} onChange={setKin2Relationship} theme={theme} placeholder="e.g. Husband, Father, Sister" />
+            <Field label="Contact Number" value={kin2Phone} onChange={setKin2Phone} theme={theme} placeholder="e.g. 071 234 5678" keyboardType="phone-pad" />
+            <Field label="Address (one line)" value={kin2Address} onChange={setKin2Address} theme={theme} placeholder="e.g. 12 Oak Street, Bryanston, Johannesburg, 2191" />
 
             {/* Home address */}
             <Text style={[styles.fieldLabel, { color: colors.yellow, marginTop: 8, marginBottom: 10, fontSize: 12 }]}>HOME ADDRESS</Text>
@@ -2057,18 +2096,25 @@ function DetailRow({ icon, label, value, theme, isLast }: any) {
   );
 }
 
-function NextOfKinRow({ name, relationship, phone, theme, isLast }: any) {
-  const hasAny = !!(name || relationship || phone);
+function NextOfKinRow({
+  name, relationship, phone, theme, isLast, label,
+  address,
+}: any) {
+  const addressText = typeof address === 'string' ? address.trim() : '';
+  const hasAny = !!(name || relationship || phone || addressText);
   return (
     <View style={[styles.detailRow, !isLast && { borderBottomWidth: 1, borderBottomColor: theme.border }]}>
       <View style={styles.detailIcon}><Users color={colors.yellow} size={16} /></View>
       <View style={styles.detailInfo}>
-        <Text style={[styles.detailLabel, { color: theme.subtext }]}>Next of Kin</Text>
+        <Text style={[styles.detailLabel, { color: theme.subtext }]}>{label || 'Next of Kin'}</Text>
         {hasAny ? (
           <View style={{ gap: 2 }}>
             <Text style={[styles.detailValue, { color: theme.text, fontWeight: '700' }]}>{name || 'No name'}</Text>
             <Text style={[styles.detailValue, { color: theme.subtext }]}>{relationship || 'Relationship not set'}</Text>
             <Text style={[styles.detailValue, { color: phone ? theme.text : theme.muted }]}>{phone || 'No number'}</Text>
+            <Text style={[styles.detailValue, { color: addressText ? theme.text : theme.muted }]}>
+              {addressText || 'No address'}
+            </Text>
           </View>
         ) : (
           <Text style={[styles.detailValue, { color: theme.muted }]}>Not set</Text>
