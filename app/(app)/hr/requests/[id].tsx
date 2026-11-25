@@ -14,6 +14,7 @@ import { uploadSignatureDataUrl } from '../../../../lib/signatureImage';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Asset } from 'expo-asset';
+import { downloadHtmlAsPdf } from '../../../../lib/htmlToPdf';
 const turnkeyLogo = require('../../../../assets/images/Turnkeylogo.png');
 
 
@@ -548,47 +549,6 @@ function cancelSubmission() {
       </html>`;
   }
 
-  function printHtmlInIframe(html: string): Promise<void> {
-    return new Promise((resolve) => {
-      const iframe = document.createElement('iframe');
-      iframe.setAttribute('aria-hidden', 'true');
-      iframe.style.cssText =
-        'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
-      document.body.appendChild(iframe);
-
-      const win = iframe.contentWindow as Window;
-      const doc = win.document;
-      doc.open();
-      doc.write(html);
-      doc.close();
-
-      let cleaned = false;
-      const cleanup = () => {
-        if (cleaned) return;
-        cleaned = true;
-        iframe.remove();
-        resolve();
-      };
-      win.addEventListener('afterprint', cleanup);
-      setTimeout(cleanup, 120000); // safety net
-
-      // Wait for logo / signature images before printing.
-      const pending = Array.from(doc.images)
-        .filter((img) => !img.complete)
-        .map((img) => new Promise((r) => { img.onload = img.onerror = () => r(null); }));
-      Promise.all(pending).then(() => {
-        setTimeout(() => {
-          try {
-            win.focus();
-            win.print();
-          } catch {
-            cleanup();
-          }
-        }, 150);
-      });
-    });
-  }
-
   async function handleDownloadPdf() {
     if (!submission) return;
     setDownloadingPdf(true);
@@ -599,13 +559,10 @@ function cancelSubmission() {
       const html=buildSubmissionHtml(asset.localUri ?? asset.uri);
 
       if (Platform.OS === 'web') {
-        // Print from a hidden iframe on the same page. The old way opened
-        // a new window (window.open) AFTER we'd already awaited the logo
-        // download, and by then the browser no longer counted it as a
-        // direct click, so it blocked it as a pop-up. An iframe is not a
-        // pop-up, so nothing can be blocked, and it still prints only our
-        // report (not the app screen).
-        await printHtmlInIframe(html);
+        // Build a real PDF and download it directly (no print dialog).
+        const safeForm = (submission.template?.name ?? 'Form').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
+        const safeName = (submission.employee?.full_name ?? 'Employee').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
+        await downloadHtmlAsPdf(html, `${safeForm}_${safeName}.pdf`);
       } else {
         // On native, generate an actual PDF file, then hand it off
         // via the share sheet so the user can save or send it.

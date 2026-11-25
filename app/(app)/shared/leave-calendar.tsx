@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, useColorScheme, ActivityIndicator, Modal, Platform
+  StyleSheet, useColorScheme, ActivityIndicator, Modal, Platform, PanResponder
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, ChevronDown, MapPin, User, Tag, ChevronLeft, ChevronRight, X, FileDown } from 'lucide-react-native';
@@ -11,6 +11,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { notify } from '../../../lib/notify';
+import { downloadHtmlAsPdf } from '../../../lib/htmlToPdf';
 
 const colors = {
   yellow: '#fbbf24',
@@ -79,6 +80,15 @@ export default function LeaveCalendar() {
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  // Month shown on the main calendar (month is 0-indexed). Driven by our own
+  // header — same as the Operational Calendar — so it is easy to move around.
+  const [viewDate, setViewDate] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
 
   // Monthly report modal — separate from the day-click detail view.
   // Lets you page through months and export a flat list to PDF.
@@ -372,10 +382,8 @@ function expandDateRange(from: string, to: string): string[] {
         </body></html>`;
 
       if (Platform.OS === 'web') {
-        // On web, printToFileAsync doesn't reliably return a uri — use
-        // printAsync instead, which opens the browser's native print
-        // dialog directly (the user can "Save as PDF" from there).
-        await Print.printAsync({ html });
+        // On web, build a real PDF and download it directly (no print dialog).
+        await downloadHtmlAsPdf(html, `Leave_Report_${year}-${String(month + 1).padStart(2, '0')}.pdf`);
         setGeneratingPdf(false);
         return;
       }
@@ -398,6 +406,33 @@ function expandDateRange(from: string, to: string): string[] {
     }
     setGeneratingPdf(false);
   }
+
+  function stepViewMonth(dir: 1 | -1) {
+    setViewDate(prev => {
+      const d = new Date(prev.year, prev.month + dir, 1);
+      return { year: d.getFullYear(), month: d.getMonth() };
+    });
+  }
+
+  function goToToday() {
+    const now = new Date();
+    setViewDate({ year: now.getFullYear(), month: now.getMonth() });
+    setSelectedDate(toDateString(now));
+  }
+
+  // Swipe left/right on the calendar to change month.
+  const swipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_e, g) =>
+          Math.abs(g.dx) > 20 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+        onPanResponderRelease: (_e, g) => {
+          if (g.dx <= -50) stepViewMonth(1);
+          else if (g.dx >= 50) stepViewMonth(-1);
+        },
+      }),
+    []
+  );
 
   const monthlyReportRows = buildMonthlyReport(reportMonth.year, reportMonth.month);
 
@@ -488,19 +523,59 @@ function expandDateRange(from: string, to: string): string[] {
 
         {/* Calendar */}
         <View style={[styles.calendarCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Calendar
-            markingType="multi-dot"
-            markedDates={markedDates}
-            onDayPress={(day) => setSelectedDate(day.dateString)}
-            theme={{
-              calendarBackground: theme.card,
-              dayTextColor: theme.text,
-              monthTextColor: theme.text,
-              textDisabledColor: theme.muted,
-              todayTextColor: colors.yellow,
-              arrowColor: colors.yellow,
-            }}
-          />
+          {/* Month nav — tap the month to jump to any month / year */}
+          <View style={styles.monthNavRow}>
+            <TouchableOpacity onPress={() => stepViewMonth(-1)} style={styles.monthNavBtn}>
+              <ChevronLeft color={colors.yellow} size={22} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { setPickerYear(viewDate.year); setShowMonthPicker(true); }}
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 160 }}
+            >
+              <Text style={[styles.monthNavLabel, { color: theme.text, minWidth: 0 }]}>
+                {new Date(viewDate.year, viewDate.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
+              </Text>
+              <ChevronDown color={theme.muted} size={16} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => stepViewMonth(1)} style={styles.monthNavBtn}>
+              <ChevronRight color={colors.yellow} size={22} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.todayRow}>
+            <TouchableOpacity
+              onPress={goToToday}
+              style={[styles.todayPill, { borderColor: theme.border, backgroundColor: theme.input }]}
+            >
+              <Text style={{ color: theme.text, fontSize: 12.5, fontWeight: '700' }}>Today</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View {...swipe.panHandlers}>
+            <Calendar
+              key={`${viewDate.year}-${viewDate.month}`}
+              current={`${viewDate.year}-${String(viewDate.month + 1).padStart(2, '0')}-01`}
+              hideArrows
+              renderHeader={() => <View />}
+              firstDay={1}
+              markingType="multi-dot"
+              markedDates={markedDates}
+              onDayPress={(day) => setSelectedDate(day.dateString)}
+              theme={{
+                backgroundColor: theme.card,
+                calendarBackground: theme.card,
+                textSectionTitleColor: theme.subtext,
+                dayTextColor: theme.text,
+                textDisabledColor: theme.muted,
+                todayTextColor: colors.yellow,
+                selectedDayTextColor: theme.text,
+                textDayFontSize: 14,
+                textDayHeaderFontSize: 12,
+                textDayFontWeight: '400',
+                textDayHeaderFontWeight: '500',
+              }}
+            />
+          </View>
         </View>
 
         {/* Selected day details */}
@@ -537,6 +612,46 @@ function expandDateRange(from: string, to: string): string[] {
           </View>
         )}
       </ScrollView>
+
+      {/* Jump to any month / year */}
+      <Modal visible={showMonthPicker} transparent animationType="fade" onRequestClose={() => setShowMonthPicker(false)}>
+        <TouchableOpacity style={styles.pickerOverlay} activeOpacity={1} onPress={() => setShowMonthPicker(false)}>
+          <View style={[styles.pickerSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <TouchableOpacity onPress={() => setPickerYear(y => y - 1)} style={styles.monthNavBtn}>
+                <ChevronLeft color={colors.yellow} size={22} />
+              </TouchableOpacity>
+              <Text style={[styles.pickerTitle, { color: theme.text, marginBottom: 0 }]}>{pickerYear}</Text>
+              <TouchableOpacity onPress={() => setPickerYear(y => y + 1)} style={styles.monthNavBtn}>
+                <ChevronRight color={colors.yellow} size={22} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {Array.from({ length: 12 }, (_, m) => {
+                const isCurrent = viewDate.year === pickerYear && viewDate.month === m;
+                return (
+                  <TouchableOpacity
+                    key={m}
+                    style={{
+                      width: '31%', paddingVertical: 14, borderRadius: 10, borderWidth: 1, alignItems: 'center',
+                      borderColor: isCurrent ? colors.yellow : theme.border,
+                      backgroundColor: isCurrent ? `${colors.yellow}20` : theme.input,
+                    }}
+                    onPress={() => {
+                      setViewDate({ year: pickerYear, month: m });
+                      setShowMonthPicker(false);
+                    }}
+                  >
+                    <Text style={{ color: isCurrent ? colors.yellow : theme.text, fontWeight: '700', fontSize: 14 }}>
+                      {new Date(pickerYear, m, 1).toLocaleDateString('en-ZA', { month: 'short' })}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Person picker */}
       <Modal visible={showPersonDropdown} transparent animationType="fade" onRequestClose={() => setShowPersonDropdown(false)}>
@@ -718,6 +833,8 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 18, fontWeight: '700' },
   monthNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, paddingVertical: 14 },
+  todayRow: { flexDirection: 'row', justifyContent: 'center', paddingBottom: 6 },
+  todayPill: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6 },
   monthNavBtn: { padding: 8 },
   monthNavLabel: { fontSize: 16, fontWeight: '700', minWidth: 160, textAlign: 'center' },
   reportRow: {
