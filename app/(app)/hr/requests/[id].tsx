@@ -529,6 +529,11 @@ function cancelSubmission() {
               font-size: 13px; font-weight: 700; text-transform: capitalize;
               background: ${statusColor}20; color: ${statusColor};
             }
+            .submitted-by { margin-top: 14px; padding: 12px 18px; border: 2px solid #fbbf24; border-left: 10px solid #fbbf24; border-radius: 8px; background: #fffbeb; -webkit-print-color-adjust: exact; print-color-adjust: exact; min-width: 260px; }
+            .sb-label { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #92400e; }
+            .sb-name { font-size: 26px; font-weight: 800; color: #0f172a; margin-top: 2px; line-height: 1.15; }
+            .sb-title { font-size: 14px; font-weight: 600; color: #475569; margin-top: 2px; }
+            .sb-date { font-size: 12px; color: #64748b; margin-top: 6px; }
             .header-row { display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;}.logo-section{display:flex;flex-direction:column;align-items:flex-end;}.logo{width:100px;height:auto;margin-bottom:12px;}
           </style>
         </head>
@@ -536,9 +541,12 @@ function cancelSubmission() {
           <div class="header-row">
             <div>
               <h1>${escapeHtml(submission.template?.name ?? 'Form Submission')}</h1>
-              <div class="meta">Submitted by: ${escapeHtml(submission.employee?.full_name ?? 'Unknown')}</div>
-              ${submission.employee?.job_title ? `<div class="meta">${escapeHtml(submission.employee.job_title)}</div>` : ''}
-              <div class="meta">${formatDateTime(submission.submitted_at)}</div>
+              <div class="submitted-by">
+                <div class="sb-label">Submitted by</div>
+                <div class="sb-name">${escapeHtml(submission.employee?.full_name ?? 'Unknown')}</div>
+                ${submission.employee?.job_title ? `<div class="sb-title">${escapeHtml(submission.employee.job_title)}</div>` : ''}
+                <div class="sb-date">${formatDateTime(submission.submitted_at)}</div>
+              </div>
             </div>
             <div class="logo-section">${logoUri?`<img src="${logoUri}" class="logo" />`:``}<div class="status-badge">${escapeHtml(submission.status.replace('_',' '))}</div></div>
           </div>
