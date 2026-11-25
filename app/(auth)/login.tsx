@@ -46,7 +46,11 @@ export default function LoginScreen() {
       });
 
       if (error) {
-        Alert.alert('Login failed', error.message);
+        const banned = /banned/i.test(error.message);
+        Alert.alert(
+          banned ? 'Account deactivated' : 'Login failed',
+          banned ? 'This account has been deactivated. Please contact HR or your administrator.' : error.message
+        );
         setLoading(false);
         return;
       }
@@ -55,7 +59,7 @@ export default function LoginScreen() {
 
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role, is_archived')
         .eq('id', data.user.id)
         .single();
 
@@ -66,6 +70,12 @@ export default function LoginScreen() {
 console.log("PROFILE ERROR:", profileError);
 
       setLoading(false);
+
+      if ((profile as any)?.is_archived) {
+        await supabase.auth.signOut();
+        Alert.alert('Account deactivated', 'This account has been deactivated. Please contact HR or your administrator.');
+        return;
+      }
 
  if (profile?.role === 'superuser') {
   router.replace('/(app)/superuser' as any);

@@ -32,6 +32,7 @@ export default function AppLayout() {
       <Stack.Screen name="superuser/manage-users" />
       <Stack.Screen name="superuser/create-user" />
       <Stack.Screen name="superuser/edit-user" />
+      <Stack.Screen name="superuser/archive" />
       <Stack.Screen name="admin" />
       <Stack.Screen name="technician" />
       <Stack.Screen name="hr" />

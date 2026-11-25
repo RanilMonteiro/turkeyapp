@@ -77,7 +77,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     if (isNewUser) setLoading(true);
 
     const [profileRes, permsRes, grantsRes] = await Promise.all([
-      supabase.from('profiles').select('role, full_name, avatar_url').eq('id', userId).single(),
+      supabase.from('profiles').select('role, full_name, avatar_url, is_archived').eq('id', userId).single(),
       supabase
         .from('user_permissions')
         .select('permission')
@@ -97,6 +97,12 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (permsRes.error) console.error('Access: could not load permissions', permsRes.error);
+
+    // Deactivated (archived) while signed in -> sign them out right away.
+    if ((profileRes.data as any).is_archived) {
+      await supabase.auth.signOut();
+      return;
+    }
 
     setSnap({
       userId,

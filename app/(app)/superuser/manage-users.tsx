@@ -2,14 +2,14 @@ import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, useColorScheme, ActivityIndicator,
-  Alert
+  Modal, TextInput
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { User, Plus, Edit, Trash2, Shield, Wrench } from 'lucide-react-native';
+import { User, Plus, Edit, Archive, Shield, Wrench } from 'lucide-react-native';
 import Avatar from '../../../components/Avatar';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
-import { Platform } from 'react-native';
+import { notify } from '../../../lib/notify';
 
 const colors = {
   yellow: '#fbbf24',
@@ -38,6 +38,10 @@ export default function ManageUsers() {
   const isDark = useColorScheme() === 'dark';
   const [users, setUsers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [archiveReason, setArchiveReason] = useState('');
+  const [archiving, setArchiving] = useState(false);
+  const [archivedCount, setArchivedCount] = useState(0);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -60,61 +64,39 @@ export default function ManageUsers() {
       .from('profiles')
       .select('*')
       .neq('role', 'superuser')
+      .eq('is_archived', false)
       .order('full_name', { ascending: true });
 
     if (!error && data) setUsers(data);
+    const { count } = await supabase
+      .from('profiles')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_archived', true);
+    setArchivedCount(count ?? 0);
     setLoading(false);
   }
 
-async function deleteUser(userId: string, name: string) {
-  const performDelete = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch(
-      `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/create-user`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({ action: 'delete', user_id: userId }),
-      }
-    );
+function askArchive(userId: string, name: string) {
+  setArchiveReason('');
+  setArchiveTarget({ id: userId, name });
+}
 
-    const result = await response.json();
-    if (result.success) {
-      if (Platform.OS === 'web') {
-        window.alert(`${name} has been removed.`);
-      } else {
-        Alert.alert('Deleted', `${name} has been removed.`);
-      }
-      fetchUsers();
-    } else {
-      if (Platform.OS === 'web') {
-        window.alert(`Error: ${result.error}`);
-      } else {
-        Alert.alert('Error', result.error);
-      }
-    }
-  };
-
-  if (Platform.OS === 'web') {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete ${name}? This cannot be undone.`
-    );
-    if (confirmed) {
-      await performDelete();
-    }
-  } else {
-    Alert.alert(
-      'Delete User',
-      `Are you sure you want to delete ${name}? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: performDelete },
-      ]
-    );
+async function confirmArchive() {
+  if (!archiveTarget) return;
+  setArchiving(true);
+  const { error } = await supabase.rpc('archive_user', {
+    p_user_id: archiveTarget.id,
+    p_reason: archiveReason.trim() || null,
+  });
+  setArchiving(false);
+  if (error) {
+    notify('Could not archive', error.message);
+    return;
   }
+  const name = archiveTarget.name;
+  setArchiveTarget(null);
+  notify('Archived', `${name} has been deactivated and moved to the Archive. All their information is kept.`);
+  fetchUsers();
 }
 
 function getRoleIcon(role: string) {
@@ -156,12 +138,23 @@ const hrUsers = users.filter(u => u.role === 'hr');
             {users.length} user{users.length !== 1 ? 's' : ''}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={() => router.push('/(app)/superuser/create-user' as any)}
-        >
-          <Plus color={colors.black} size={22} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <TouchableOpacity
+            style={[styles.archiveButton, { backgroundColor: theme.card, borderColor: theme.border }]}
+            onPress={() => router.push('/(app)/superuser/archive' as any)}
+          >
+            <Archive color={colors.yellow} size={18} />
+            <Text style={{ color: theme.text, fontWeight: '700', fontSize: 13 }}>
+              Archive{archivedCount > 0 ? ` (${archivedCount})` : ''}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.addButton}
+            onPress={() => router.push('/(app)/superuser/create-user' as any)}
+          >
+            <Plus color={colors.black} size={22} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Admins Section */}
@@ -184,7 +177,7 @@ const hrUsers = users.filter(u => u.role === 'hr');
               getRoleBadgeColor={getRoleBadgeColor}
               getRoleTextColor={getRoleTextColor}
               onEdit={() => router.push({ pathname: '/(app)/superuser/edit-user', params: { id: user.id } } as any)}
-              onDelete={() => deleteUser(user.id, user.full_name)}
+              onDelete={() => askArchive(user.id, user.full_name)}
             />
           ))
         )}
@@ -210,7 +203,7 @@ const hrUsers = users.filter(u => u.role === 'hr');
         getRoleBadgeColor={getRoleBadgeColor}
         getRoleTextColor={getRoleTextColor}
         onEdit={() => router.push({ pathname: '/(app)/superuser/edit-user', params: { id: user.id } } as any)}
-        onDelete={() => deleteUser(user.id, user.full_name)}
+        onDelete={() => askArchive(user.id, user.full_name)}
       />
     ))
   )}
@@ -236,11 +229,39 @@ const hrUsers = users.filter(u => u.role === 'hr');
               getRoleBadgeColor={getRoleBadgeColor}
               getRoleTextColor={getRoleTextColor}
               onEdit={() => router.push({ pathname: '/(app)/superuser/edit-user', params: { id: user.id } } as any)}
-              onDelete={() => deleteUser(user.id, user.full_name)}
+              onDelete={() => askArchive(user.id, user.full_name)}
             />
           ))
         )}
       </View>
+
+      <Modal visible={!!archiveTarget} transparent animationType="fade" onRequestClose={() => setArchiveTarget(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Archive {archiveTarget?.name}?</Text>
+            <Text style={[styles.modalText, { color: theme.subtext }]}>
+              They will no longer be able to sign in and will disappear from all lists. Nothing is deleted:
+              their profile, documents and forms are kept in the Archive, and you can reactivate them at any time.
+            </Text>
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: theme.avatarBg, borderColor: theme.border, color: theme.text }]}
+              placeholder="Reason (optional), e.g. Resigned 30 Nov 2026"
+              placeholderTextColor={theme.muted}
+              value={archiveReason}
+              onChangeText={setArchiveReason}
+              multiline
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: theme.avatarBg }]} onPress={() => setArchiveTarget(null)} disabled={archiving}>
+                <Text style={{ color: theme.text, fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.yellow, opacity: archiving ? 0.6 : 1 }]} onPress={confirmArchive} disabled={archiving}>
+                {archiving ? <ActivityIndicator color="#111827" /> : <Text style={{ color: '#111827', fontWeight: '800' }}>Archive</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -263,8 +284,8 @@ function UserCard({ user, theme, isDark, getRoleIcon, getRoleBadgeColor, getRole
           <TouchableOpacity style={[styles.actionBtn, { backgroundColor: theme.avatarBg }]} onPress={onEdit}>
             <Edit color={colors.yellow} size={16} />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: isDark ? '#3b1a1a' : '#fee2e2' }]} onPress={onDelete}>
-            <Trash2 color="#ef4444" size={16} />
+          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: isDark ? '#3b2a0a' : '#fef3c7' }]} onPress={onDelete}>
+            <Archive color="#f59e0b" size={16} />
           </TouchableOpacity>
         </View>
       </View>
@@ -273,6 +294,14 @@ function UserCard({ user, theme, isDark, getRoleIcon, getRoleBadgeColor, getRole
 }
 
 const styles = StyleSheet.create({
+  archiveButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 44, borderRadius: 22, borderWidth: 1 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  modalCard: { width: '100%', maxWidth: 420, borderRadius: 18, borderWidth: 1, padding: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '800', marginBottom: 8 },
+  modalText: { fontSize: 14, lineHeight: 20, marginBottom: 14 },
+  modalInput: { borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 70, fontSize: 14, textAlignVertical: 'top' },
+  modalButtons: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  modalBtn: { flex: 1, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   container: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {

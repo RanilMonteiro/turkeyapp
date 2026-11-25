@@ -84,6 +84,9 @@ type Employee = {
   address_city: string | null;
   address_province: string | null;
   address_postal_code: string | null;
+  is_archived?: boolean;
+  archived_at?: string | null;
+  archive_reason?: string | null;
   medical_aid_name: string | null;
   medical_aid_plan: string | null;
   medical_aid_policy_number: string | null;
@@ -1113,6 +1116,15 @@ export default function EmployeeProfile() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {employee.is_archived && (
+          <View style={{ backgroundColor: '#f59e0b22', borderColor: '#f59e0b', borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+            <Text style={{ color: '#f59e0b', fontWeight: '800', fontSize: 14 }}>ARCHIVED — deactivated user</Text>
+            <Text style={{ color: theme.subtext, fontSize: 13, marginTop: 4 }}>
+              {employee.archived_at ? `Archived ${new Date(employee.archived_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' })}. ` : ''}
+              {employee.archive_reason ? employee.archive_reason : 'All records are kept.'}
+            </Text>
+          </View>
+        )}
         {/* Avatar + Name */}
         <View style={[styles.profileCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Avatar fallback="icon" url={employee.avatar_url} name={employee.full_name} size={80} backgroundColor={theme.avatarBg} style={{ marginBottom: 8 }} />
