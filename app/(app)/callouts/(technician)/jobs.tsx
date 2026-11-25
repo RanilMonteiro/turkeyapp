@@ -11,7 +11,8 @@ import { supabase } from '../../../../lib/supabase';
 import { showMessage } from '../../../../lib/dialog';
 import { formatTime as trimSeconds } from '../../../../lib/formatTime';
 import { useFocusEffect } from '@react-navigation/native';
-import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
+import SignatureModal from '../../../../components/SignatureModal';
+import { uploadSignatureDataUrl } from '../../../../lib/signatureImage';
 import TimePickerField from '../../../../components/TimePickerField';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -77,7 +78,6 @@ const [slipImage, setSlipImage] = useState<{ uri: string; mimeType?: string } | 
 
 
 
-  const signatureRef = useRef<SignaturePadHandle>(null);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -183,23 +183,8 @@ async function fileToUint8Array(uri: string): Promise<Uint8Array> {
   });
   return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
 }
-  async function uploadSignature(base64: string, calloutId: string): Promise<string | null> {
-    try {
-      const base64Data = base64.replace('data:image/png;base64,', '');
-      const arrayBuffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-      const fileName = `signature_${calloutId}_${Date.now()}.png`;
-
-      const { error } = await supabase.storage
-        .from('signatures')
-        .upload(fileName, arrayBuffer, { contentType: 'image/png' });
-
-      if (error) return null;
-
-      const { data } = supabase.storage.from('signatures').getPublicUrl(fileName);
-      return data.publicUrl;
-    } catch {
-      return null;
-    }
+  async function uploadSignature(dataUrl: string, calloutId: string): Promise<string | null> {
+    return uploadSignatureDataUrl(dataUrl, `signature_${calloutId}_${Date.now()}`);
   }
   async function pickSlipImage() {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -689,50 +674,15 @@ async function uploadSlip(uri: string, calloutId: string, mimeType?: string): Pr
   )}
 </View>
   </ScrollView>
-        {/* Signature Canvas Modal */}
-        <Modal
+        <SignatureModal
           visible={showSignature}
-          animationType="slide"
-          transparent={false}
-        >
-          <View style={[styles.signatureCanvasContainer, { backgroundColor: theme.background }]}>
-            <View style={[styles.signatureCanvasHeader, { borderBottomColor: theme.border }]}>
-              <TouchableOpacity onPress={() => setShowSignature(false)}>
-                <Text style={[styles.cancelText, { color: theme.subtext }]}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={[styles.modalTitle, { color: theme.text }]}>Sign Here</Text>
-              <View style={{ flexDirection: 'row', gap: 16 }}>
-                <TouchableOpacity onPress={() => signatureRef.current?.clearSignature()}>
-                  <Text style={{ color: theme.subtext, fontWeight: '600', fontSize: 16 }}>Clear</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => signatureRef.current?.readSignature()}>
-                  <Text style={{ color: colors.yellow, fontWeight: '600', fontSize: 16 }}>Save</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <Text style={[styles.signatureHint, { color: theme.subtext }]}>
-              Draw your signature then tap Save
-            </Text>
-
-            <SignaturePad
-              ref={signatureRef}
-              onOK={(sig) => {
-                setSignature(sig);
-                setShowSignature(false);
-              }}
-              onEmpty={() => showMessage('Empty', 'Please draw your signature first.')}
-              style={{
-                flex: 1,
-                borderWidth: 1,
-                borderColor: theme.border,
-                margin: 16,
-                borderRadius: 12,
-                minHeight: 400,
-              }}
-            />
-          </View>
-        </Modal>
+          onCancel={() => setShowSignature(false)}
+          theme={{ background: theme.background, text: theme.text, subtext: theme.subtext, border: theme.border }}
+          onSigned={(sig) => {
+            setSignature(sig);
+            setShowSignature(false);
+          }}
+        />
       </Modal>
     </>
   );

@@ -9,7 +9,8 @@ import { ArrowLeft, CheckCircle, XCircle, Clock, User, Paperclip, ShieldAlert, D
 import { supabase } from '../../../../lib/supabase';
 import { formatRand } from '../../../../lib/money';
 import { notify, confirm } from '../../../../lib/notify';
-import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
+import SignatureModal from '../../../../components/SignatureModal';
+import { uploadSignatureDataUrl } from '../../../../lib/signatureImage';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Asset } from 'expo-asset';
@@ -64,7 +65,6 @@ export default function SubmissionDetail() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
-  const signatureRef = useRef<SignaturePadHandle>(null);
 
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
@@ -184,23 +184,8 @@ export default function SubmissionDetail() {
 
   const canAct = !!targetApproval && !isFinal;
 
-  async function uploadSignature(base64: string): Promise<string | null> {
-    try {
-      const base64Data = base64.replace('data:image/png;base64,', '');
-      const arrayBuffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-      const fileName = `approval_sig_${id}_${currentUserId}_${Date.now()}.png`;
-
-      const { error } = await supabase.storage
-        .from('signatures')
-        .upload(fileName, arrayBuffer, { contentType: 'image/png' });
-
-      if (error) return null;
-
-      const { data } = supabase.storage.from('signatures').getPublicUrl(fileName);
-      return data.publicUrl;
-    } catch {
-      return null;
-    }
+  async function uploadSignature(dataUrl: string): Promise<string | null> {
+    return uploadSignatureDataUrl(dataUrl, `approval_sig_${id}_${currentUserId}_${Date.now()}`);
   }
 
   function requestAction(type: 'approved' | 'declined') {
@@ -937,47 +922,15 @@ function cancelSubmission() {
       </ScrollView>
 
       {/* Signature Modal */}
-      <Modal
+      <SignatureModal
         visible={showSignatureModal}
-        animationType="slide"
-        transparent={false}
-      >
-        <View style={[styles.sigContainer, { backgroundColor: theme.background }]}>
-          <View style={[styles.sigHeader, { borderBottomColor: theme.border }]}>
-            <TouchableOpacity onPress={() => setShowSignatureModal(false)}>
-              <Text style={[styles.sigCancel, { color: theme.subtext }]}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={[styles.sigTitle, { color: theme.text }]}>Sign Here</Text>
-            <TouchableOpacity onPress={() => signatureRef.current?.clearSignature()}>
-              <Text style={{ color: colors.yellow, fontWeight: '600', fontSize: 16 }}>Clear</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={[styles.sigHint, { color: theme.subtext }]}>
-            Draw your signature then tap Save Signature
-          </Text>
-          <SignaturePad
-            ref={signatureRef}
-            onOK={(sig) => {
-              setSignature(sig);
-              setShowSignatureModal(false);
-            }}
-            onEmpty={() => notify('Empty', 'Please draw your signature first.')}
-            style={{
-              borderWidth: 1,
-              borderColor: theme.border,
-              margin: 16,
-              borderRadius: 12,
-              minHeight: 300,
-            }}
-          />
-          <TouchableOpacity
-            style={styles.sigSaveBtn}
-            onPress={() => signatureRef.current?.readSignature()}
-          >
-            <Text style={styles.sigSaveBtnText}>Save Signature</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
+        onCancel={() => setShowSignatureModal(false)}
+        theme={{ background: theme.background, text: theme.text, subtext: theme.subtext, border: theme.border }}
+        onSigned={(sig) => {
+          setSignature(sig);
+          setShowSignatureModal(false);
+        }}
+      />
     </>
   );
 }

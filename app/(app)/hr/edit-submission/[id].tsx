@@ -9,7 +9,8 @@ import { ArrowLeft, ChevronDown, Paperclip, X, CheckCircle } from 'lucide-react-
 import { supabase } from '../../../../lib/supabase';
 import { cleanAmountInput } from '../../../../lib/money';
 import { notify } from '../../../../lib/notify';
-import SignaturePad, { SignaturePadHandle } from '../../../../components/SignaturePad';
+import SignatureModal from '../../../../components/SignatureModal';
+import { uploadSignatureDataUrl } from '../../../../lib/signatureImage';
 import DatePickerField from '../../../../components/DatepickerField';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -56,7 +57,6 @@ export default function EditSubmission() {
   const [activeSignatureField, setActiveSignatureField] = useState<string | null>(null);
   const [activeDropdownField, setActiveDropdownField] = useState<string | null>(null);
   const [uploadingAttachmentField, setUploadingAttachmentField] = useState<string | null>(null);
-  const signatureRef = useRef<SignaturePadHandle>(null);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -122,16 +122,8 @@ export default function EditSubmission() {
     setFieldValue(fieldId, null);
   }
 
-  async function uploadSignatureForField(base64: string, fieldId: string): Promise<string | null> {
-    try {
-      const base64Data = base64.replace('data:image/png;base64,', '');
-      const arrayBuffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-      const fileName = `form_sig_edit_${id}_${fieldId}_${Date.now()}.png`;
-      const { error } = await supabase.storage.from('signatures').upload(fileName, arrayBuffer, { contentType: 'image/png' });
-      if (error) return null;
-      const { data } = supabase.storage.from('signatures').getPublicUrl(fileName);
-      return data.publicUrl;
-    } catch { return null; }
+  async function uploadSignatureForField(dataUrl: string, fieldId: string): Promise<string | null> {
+    return uploadSignatureDataUrl(dataUrl, `form_sig_edit_${id}_${fieldId}_${Date.now()}`);
   }
 
   async function handleSaveEdit() {
@@ -312,35 +304,18 @@ export default function EditSubmission() {
         </TouchableOpacity>
       </ScrollView>
 
-      <Modal visible={activeSignatureField !== null} animationType="slide" transparent={false}>
-        <View style={[styles.sigContainer, { backgroundColor: theme.background }]}>
-          <View style={[styles.sigHeader, { borderBottomColor: theme.border }]}>
-            <TouchableOpacity onPress={() => setActiveSignatureField(null)}>
-              <Text style={[styles.sigCancel, { color: theme.subtext }]}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={[styles.sigTitle, { color: theme.text }]}>Sign Here</Text>
-            <TouchableOpacity onPress={() => signatureRef.current?.clearSignature()}>
-              <Text style={{ color: colors.yellow, fontWeight: '600', fontSize: 16 }}>Clear</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={[styles.sigHint, { color: theme.subtext }]}>Draw signature then tap Save Signature</Text>
-          <SignaturePad
-            ref={signatureRef}
-            onOK={async (sig) => {
-              if (activeSignatureField) {
-                const url = await uploadSignatureForField(sig, activeSignatureField);
-                setFieldValue(activeSignatureField, url ?? sig);
-                setActiveSignatureField(null);
-              }
-            }}
-            onEmpty={() => notify('Empty', 'Please draw your signature first.')}
-            style={{ borderWidth: 1, borderColor: theme.border, margin: 16, borderRadius: 12, minHeight: 300 }}
-          />
-          <TouchableOpacity style={styles.sigSaveBtn} onPress={() => signatureRef.current?.readSignature()}>
-            <Text style={styles.sigSaveBtnText}>Save Signature</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
+      <SignatureModal
+        visible={activeSignatureField !== null}
+        onCancel={() => setActiveSignatureField(null)}
+        theme={{ background: theme.background, text: theme.text, subtext: theme.subtext, border: theme.border }}
+        onSigned={async (sig) => {
+          if (activeSignatureField) {
+            const url = await uploadSignatureForField(sig, activeSignatureField);
+            setFieldValue(activeSignatureField, url ?? sig);
+            setActiveSignatureField(null);
+          }
+        }}
+      />
     </>
   );
 }
