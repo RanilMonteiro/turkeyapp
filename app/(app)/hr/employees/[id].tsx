@@ -18,6 +18,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import DatePickerField from '../../../../components/DatepickerField'
+import FileDropZone from '../../../../components/FileDropZone';
 const colors = {
   yellow: '#fbbf24',
   white: '#ffffff',
@@ -945,6 +946,18 @@ export default function EmployeeProfile() {
     setDocModalVisible(true);
   }
 
+  function handleDroppedFile(asset: any) {
+    const type = (asset.mimeType || '').toLowerCase();
+    const name = (asset.name || '').toLowerCase();
+    const ok = type === 'application/pdf' || type.startsWith('image/') || /\.(pdf|png|jpe?g|webp|gif|heic)$/.test(name);
+    if (!ok) {
+      notify('Unsupported file', 'Please drop a PDF or an image.');
+      return;
+    }
+    setSelectedFile(asset);
+    if (!docName) setDocName(asset.name.replace(/\.[^.]+$/, ''));
+  }
+
   async function pickDocFile() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -1757,15 +1770,17 @@ export default function EmployeeProfile() {
           </View>
 
           <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <TouchableOpacity
-              style={[styles.filePicker, { backgroundColor: theme.input, borderColor: selectedFile ? colors.yellow : theme.border }]}
-              onPress={pickDocFile}
-            >
-              <Upload color={selectedFile ? colors.yellow : theme.muted} size={24} />
-              <Text style={[styles.filePickerText, { color: selectedFile ? colors.yellow : theme.muted }]}>
-                {selectedFile ? selectedFile.name : 'Tap to select a PDF or image'}
-              </Text>
-            </TouchableOpacity>
+            <FileDropZone onFile={handleDroppedFile}>
+              <TouchableOpacity
+                style={[styles.filePicker, { backgroundColor: theme.input, borderColor: selectedFile ? colors.yellow : theme.border }]}
+                onPress={pickDocFile}
+              >
+                <Upload color={selectedFile ? colors.yellow : theme.muted} size={24} />
+                <Text style={[styles.filePickerText, { color: selectedFile ? colors.yellow : theme.muted }]}>
+                  {selectedFile ? selectedFile.name : Platform.OS === 'web' ? 'Drag a PDF or image here, or click to select' : 'Tap to select a PDF or image'}
+                </Text>
+              </TouchableOpacity>
+            </FileDropZone>
 
             <View style={styles.fieldGroup}>
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>DOCUMENT NAME *</Text>
