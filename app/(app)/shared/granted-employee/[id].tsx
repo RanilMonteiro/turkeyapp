@@ -51,18 +51,15 @@ function Inner() {
   useFocusEffect(useCallback(() => { load(); }, [id]));
 
   async function load() {
-    const { data: auth } = await supabase.auth.getUser();
-    const uid = auth.user?.id;
-    if (!uid || !id) return;
+    if (!id) return;
 
-    const [{ data: infoG }, { data: docG }] = await Promise.all([
-      supabase.from('employee_info_grants').select('id').eq('admin_id', uid).eq('employee_id', id).limit(1),
-      supabase.from('document_access_grants').select('id').eq('admin_id', uid).eq('employee_id', id).limit(1),
-    ]);
-    const info = (infoG?.length ?? 0) > 0;
-    const docAccess = (docG?.length ?? 0) > 0;
+    const { data: access } = await supabase.rpc('get_my_employee_access');
+    const mine = ((access as any[]) ?? []).find(r => r.employee_id === id);
+    const info = !!mine?.info;
+    const docAccess = !!mine && mine.docs_mode !== 'none';
     setHasInfo(info);
     setHasDocs(docAccess);
+    if (!mine) { setEmp(null); setLoading(false); return; }
 
     const { data: p } = await supabase.from('profiles').select('*').eq('id', id).single();
     setEmp(p);

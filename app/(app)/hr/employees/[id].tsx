@@ -11,6 +11,7 @@ import {
   FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye, Building2, Users
 } from 'lucide-react-native';
 import Avatar from '../../../../components/Avatar';
+import AdminEmployeeAccessModal from '../../../../components/AdminEmployeeAccessModal';
 import { supabase } from '../../../../lib/supabase';
 import { notify, confirm } from '../../../../lib/notify';
 import { viewDocument, downloadDocument } from '../../../../lib/documentActions';
@@ -220,6 +221,7 @@ export default function EmployeeProfile() {
   const [adminUsers, setAdminUsers] = useState<Profile[]>([]);
   const [docGrants, setDocGrants] = useState<DocGrant[]>([]);
   const [infoGrantAdminIds, setInfoGrantAdminIds] = useState<string[]>([]);
+  const [empAccessVisible, setEmpAccessVisible] = useState(false);
   const [docAccessModalVisible, setDocAccessModalVisible] = useState(false);
   const [editableGrants, setEditableGrants] = useState<Record<string, EditableGrant>>({});
   const [savingDocAccess, setSavingDocAccess] = useState(false);
@@ -1516,6 +1518,23 @@ export default function EmployeeProfile() {
           </TouchableOpacity>
         </View>
 
+        {/* Employee Access — only for admins: pick what THIS admin can see of each employee */}
+        {employee.role === 'admin' && (
+          <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.cardHeaderLeft}>
+              <Users color={colors.yellow} size={18} />
+              <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Employee Access</Text>
+            </View>
+            <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
+              Choose which employees {employee.full_name} can see - their personal info (read only) and which documents -
+              or switch everyone on at once.
+            </Text>
+            <TouchableOpacity style={[styles.inlineActionBtn, { borderColor: colors.yellow }]} onPress={() => setEmpAccessVisible(true)}>
+              <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Manage Employee Access</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Leave Calendar Access — only relevant when this employee is an admin */}
         {employee.role === 'admin' && (
           <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -1985,6 +2004,18 @@ export default function EmployeeProfile() {
           </TouchableOpacity>
         </ScrollView>
       </Modal>
+
+      {employee.role === 'admin' && (
+        <AdminEmployeeAccessModal
+          visible={empAccessVisible}
+          onClose={() => setEmpAccessVisible(false)}
+          onSaved={fetchDocAccess}
+          adminId={id as string}
+          adminName={employee.full_name}
+          theme={theme}
+          categories={DOC_CATEGORIES}
+        />
+      )}
 
       {/* Document Access Modal */}
       <Modal visible={docAccessModalVisible} animationType="slide" transparent={false} onRequestClose={() => setDocAccessModalVisible(false)}>

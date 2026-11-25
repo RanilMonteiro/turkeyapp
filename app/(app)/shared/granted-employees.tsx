@@ -45,36 +45,19 @@ function Inner() {
   useFocusEffect(useCallback(() => { load(); }, []));
 
   async function load() {
-    const { data: auth } = await supabase.auth.getUser();
-    const uid = auth.user?.id;
-    if (!uid) return;
-
-    const [{ data: infoRows }, { data: docRows }] = await Promise.all([
-      supabase.from('employee_info_grants').select('employee_id').eq('admin_id', uid),
-      supabase.from('document_access_grants').select('employee_id, categories').eq('admin_id', uid),
-    ]);
-
-    const ids = Array.from(new Set([
-      ...(infoRows ?? []).map((r: any) => r.employee_id),
-      ...(docRows ?? []).map((r: any) => r.employee_id),
-    ]));
-
-    if (ids.length === 0) { setRows([]); setLoading(false); return; }
-
-    const { data: people } = await supabase
-      .from('profiles')
-      .select('id, full_name, avatar_url, job_title, employee_number')
-      .in('id', ids)
-      .order('full_name');
-
-    const infoSet = new Set((infoRows ?? []).map((r: any) => r.employee_id));
-    const docMap = new Map<string, string[] | null>((docRows ?? []).map((r: any) => [r.employee_id, r.categories]));
-
+    // One database call: everyone this admin may see (specific grants plus
+    // the "everyone" switches), already limited to active employees.
+    const { data, error } = await supabase.rpc('get_my_employee_access');
+    if (error) console.error('Employees: could not load', error);
     setRows(
-      (people ?? []).map((p: any) => ({
-        ...p,
-        info: infoSet.has(p.id),
-        docs: !docMap.has(p.id) ? 'none' : docMap.get(p.id) === null ? 'all' : (docMap.get(p.id) as string[]).length,
+      ((data as any[]) ?? []).map(r => ({
+        id: r.employee_id,
+        full_name: r.full_name,
+        avatar_url: r.avatar_url,
+        job_title: r.job_title,
+        employee_number: r.employee_number,
+        info: !!r.info,
+        docs: r.docs_mode === 'none' ? 'none' : r.docs_mode === 'all' ? 'all' : Number(r.docs_count),
       }))
     );
     setLoading(false);
