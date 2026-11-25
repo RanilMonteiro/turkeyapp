@@ -37,6 +37,7 @@ export type PermissionKey =
   | 'has_own_operational_calendar'
   | 'manage_team'
   | 'can_approve'
+  | 'view_employees'
   | 'view_sites'
   | 'can_manage_sites';
 
@@ -133,6 +134,15 @@ export const PERMISSIONS: PermissionDef[] = [
     key: 'manage_team',
     label: 'Technicians list',
     description: 'View the field team (technicians).',
+    group: 'people',
+    grantableTo: ['admin'],
+    alwaysOnFor: [],
+  },
+  {
+    key: 'view_employees',
+    label: 'Employees tab',
+    description:
+      'Shows an Employees tab with only the people HR has given them access to (set per employee under "Docs & Info Access"). Read only.',
     group: 'people',
     grantableTo: ['admin'],
     alwaysOnFor: [],

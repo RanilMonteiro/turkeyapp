@@ -120,7 +120,7 @@ type Document = {
 };
 type FormTemplateOption = { id: string; name: string; category: string | null };
 type DocGrant = { admin_id: string; categories: string[] | null; admin: { full_name: string } | null };
-type EditableGrant = { granted: boolean; categories: string[] | null };
+type EditableGrant = { granted: boolean; categories: string[] | null; info: boolean };
 // Leave calendar access: this employee (when they're an admin) can be
 // granted visibility into whole branches and/or specific individuals.
 type LeavePerson = { id: string; full_name: string; branch_id: string | null };
@@ -219,6 +219,7 @@ export default function EmployeeProfile() {
   // Document access grants (which admins can see this employee's docs)
   const [adminUsers, setAdminUsers] = useState<Profile[]>([]);
   const [docGrants, setDocGrants] = useState<DocGrant[]>([]);
+  const [infoGrantAdminIds, setInfoGrantAdminIds] = useState<string[]>([]);
   const [docAccessModalVisible, setDocAccessModalVisible] = useState(false);
   const [editableGrants, setEditableGrants] = useState<Record<string, EditableGrant>>({});
   const [savingDocAccess, setSavingDocAccess] = useState(false);
@@ -383,7 +384,7 @@ export default function EmployeeProfile() {
   }
 
   async function fetchDocAccess() {
-    const [{ data: admins_ }, { data: grants }] = await Promise.all([
+    const [{ data: admins_ }, { data: grants }, { data: infoRows }] = await Promise.all([
       supabase
         .from('profiles')
         .select('id, full_name, role')
@@ -393,7 +394,12 @@ export default function EmployeeProfile() {
         .from('document_access_grants')
         .select('admin_id, categories, admin:admin_id(full_name)')
         .eq('employee_id', id),
+      supabase
+        .from('employee_info_grants')
+        .select('admin_id')
+        .eq('employee_id', id),
     ]);
+    setInfoGrantAdminIds((infoRows ?? []).map((r: any) => r.admin_id));
     if (admins_) setAdminUsers(admins_);
     if (grants) setDocGrants(grants as any);
   }
@@ -718,9 +724,10 @@ export default function EmployeeProfile() {
     const initial: Record<string, EditableGrant> = {};
     adminUsers.forEach(admin => {
       const existing = docGrants.find(g => g.admin_id === admin.id);
+      const info = infoGrantAdminIds.includes(admin.id);
       initial[admin.id] = existing
-        ? { granted: true, categories: existing.categories }
-        : { granted: false, categories: null };
+        ? { granted: true, categories: existing.categories, info }
+        : { granted: false, categories: null, info };
     });
     setEditableGrants(initial);
     setDocAccessModalVisible(true);
@@ -730,9 +737,17 @@ export default function EmployeeProfile() {
     setEditableGrants(prev => ({
       ...prev,
       [adminId]: {
+        ...prev[adminId],
         granted: !prev[adminId]?.granted,
         categories: prev[adminId]?.categories ?? null,
       },
+    }));
+  }
+
+  function toggleAdminInfo(adminId: string) {
+    setEditableGrants(prev => ({
+      ...prev,
+      [adminId]: { ...prev[adminId], info: !prev[adminId]?.info },
     }));
   }
 
@@ -778,6 +793,20 @@ export default function EmployeeProfile() {
 
     if (rows.length > 0) {
       const { error } = await supabase.from('document_access_grants').insert(rows);
+      if (error) {
+        setSavingDocAccess(false);
+        notify('Error', error.message);
+        return;
+      }
+    }
+
+    // Personal info (read-only) grants for this employee
+    await supabase.from('employee_info_grants').delete().eq('employee_id', id);
+    const infoRows = Object.entries(editableGrants)
+      .filter(([_, g]) => g.info)
+      .map(([adminId]) => ({ admin_id: adminId, employee_id: id, granted_by: userData.user?.id }));
+    if (infoRows.length > 0) {
+      const { error } = await supabase.from('employee_info_grants').insert(infoRows);
       if (error) {
         setSavingDocAccess(false);
         notify('Error', error.message);
@@ -1468,15 +1497,22 @@ export default function EmployeeProfile() {
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <View style={styles.cardHeaderLeft}>
             <Eye color={colors.yellow} size={18} />
-            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Document Access</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Docs & Info Access</Text>
           </View>
           <Text style={[styles.emptyInlineText, { color: theme.muted, fontStyle: 'normal', marginBottom: 12 }]}>
-            {docGrants.length === 0
-              ? `No admins currently have access to ${employee.full_name}'s documents.`
-              : docGrants.map(g => g.admin?.full_name).filter(Boolean).join(', ') + ' can see some or all of these documents.'}
+            {docGrants.length === 0 && infoGrantAdminIds.length === 0
+              ? `No admins currently have access to ${employee.full_name}'s documents or personal info.`
+              : [
+                  infoGrantAdminIds.length > 0
+                    ? `Personal info: ${infoGrantAdminIds.map(i => adminUsers.find(a => a.id === i)?.full_name).filter(Boolean).join(', ')}.`
+                    : '',
+                  docGrants.length > 0
+                    ? `Documents: ${docGrants.map(g => g.admin?.full_name).filter(Boolean).join(', ')}.`
+                    : '',
+                ].filter(Boolean).join('  ')}
           </Text>
           <TouchableOpacity style={[styles.inlineActionBtn, { borderColor: colors.yellow }]} onPress={openDocAccessModal}>
-            <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Manage Document Access</Text>
+            <Text style={[styles.inlineActionBtnText, { color: colors.yellow }]}>Manage Docs & Info Access</Text>
           </TouchableOpacity>
         </View>
 
@@ -1961,25 +1997,44 @@ export default function EmployeeProfile() {
             <TouchableOpacity onPress={() => setDocAccessModalVisible(false)}>
               <X color={theme.muted} size={24} />
             </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>Document Access</Text>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Docs & Info Access</Text>
             <View style={{ width: 24 }} />
           </View>
 
           <View style={[styles.formCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.fieldHint, { color: theme.muted, marginBottom: 16 }]}>
-              Grant specific admins access to {employee.full_name}'s documents. Turn on a category
-              restriction to limit them to just that type, or leave on "All Categories" for full access.
+              Choose what each admin can see about {employee.full_name}. Personal info is read-only
+              (medical aid, address, next of kin...) - they can never change it or access settings. For documents,
+              pick "All Categories" or just the types they need. The admin also needs the "Employees tab"
+              switch on in Edit User to open this.
             </Text>
             {adminUsers.length === 0 ? (
               <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No admin users exist yet.</Text>
             ) : (
               adminUsers.map(admin => {
-                const grant = editableGrants[admin.id] ?? { granted: false, categories: null };
+                const grant = editableGrants[admin.id] ?? { granted: false, categories: null, info: false };
                 return (
                   <View key={admin.id} style={styles.docAccessBlock}>
+                    <Text style={[styles.switchLabel, { color: theme.text, fontSize: 16, marginBottom: 6 }]}>{admin.full_name}</Text>
+
                     <View style={styles.switchRow}>
                       <View style={styles.switchInfo}>
-                        <Text style={[styles.switchLabel, { color: theme.text }]}>{admin.full_name}</Text>
+                        <Text style={[styles.switchLabel, { color: theme.text }]}>Personal info (read only)</Text>
+                        <Text style={[styles.switchDesc, { color: theme.subtext }]}>
+                          {grant.info ? 'Can view their profile, address, next of kin, medical aid' : 'No access'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.toggle, { backgroundColor: grant.info ? colors.yellow : theme.input, borderColor: theme.border }]}
+                        onPress={() => toggleAdminInfo(admin.id)}
+                      >
+                        <View style={[styles.toggleThumb, { backgroundColor: colors.white, transform: [{ translateX: grant.info ? 20 : 2 }] }]} />
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.switchRow}>
+                      <View style={styles.switchInfo}>
+                        <Text style={[styles.switchLabel, { color: theme.text }]}>Documents</Text>
                         <Text style={[styles.switchDesc, { color: theme.subtext }]}>
                           {grant.granted
                             ? (grant.categories === null ? 'All categories' : grant.categories.join(', ') || 'No categories selected')
@@ -2035,7 +2090,7 @@ export default function EmployeeProfile() {
           </View>
 
           <TouchableOpacity style={[styles.saveBtn, savingDocAccess && { opacity: 0.6 }]} onPress={handleSaveDocAccess} disabled={savingDocAccess}>
-            {savingDocAccess ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Document Access</Text>}
+            {savingDocAccess ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Save Docs & Info Access</Text>}
           </TouchableOpacity>
         </ScrollView>
       </Modal>

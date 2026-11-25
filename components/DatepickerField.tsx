@@ -171,7 +171,7 @@ export default function DatePickerField({ value, onChange, placeholder, isDark, 
                       <TouchableOpacity
                         key={i}
                         style={s.cell}
-                        onPress={() => commit(toStr(view.y, view.m, d))}
+                        onPress={() => setDraft(toStr(view.y, view.m, d))}
                       >
                         <View style={[s.dayInner, isSel && { backgroundColor: YELLOW }, !isSel && isToday && { borderWidth: 1, borderColor: YELLOW }]}>
                           <Text style={{ color: isSel ? '#111827' : text, fontWeight: isSel || isToday ? '800' : '500', fontSize: 14 }}>{d}</Text>
@@ -234,7 +234,7 @@ export default function DatePickerField({ value, onChange, placeholder, isDark, 
               <TouchableOpacity onPress={() => commit('')}>
                 <Text style={{ color: '#ef4444', fontWeight: '700' }}>Clear</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => commit(toStr(t.y, t.m, t.d))}>
+              <TouchableOpacity onPress={() => { setDraft(toStr(t.y, t.m, t.d)); setView({ y: t.y, m: t.m }); setMode('days'); }}>
                 <Text style={{ color: theme.muted, fontWeight: '700' }}>Today</Text>
               </TouchableOpacity>
               <TouchableOpacity

@@ -148,6 +148,17 @@ export const FEATURES: Feature[] = [
     roles: ['superuser', 'hr'],
   },
     {
+    id: 'my-employees',
+    title: 'Employees',
+    description: 'Employees you have been given access to',
+    icon: Users,
+    route: '/(app)/shared/granted-employees',
+    group: 'people',
+    roles: ['admin'],
+    permission: 'view_employees',
+    alsoMatches: ['/shared/granted-employee'],
+  },
+  {
     id: 'branches',
     title: 'Branches',
     description: 'Manage branches and see who works there',
