@@ -13,6 +13,7 @@ type Props = {
   isDark?: boolean;
   theme: { input: string; border: string; text: string; muted: string };
   style?: ViewStyle;
+  defaultYear?: number; // year to open on when empty (e.g. 1990 for a date of birth)
 };
 
 const YELLOW = '#fbbf24';
@@ -47,7 +48,7 @@ function addMonths(base: { y: number; m: number; d: number }, n: number) {
   return { y, m, d: Math.min(base.d, daysIn(y, m)) };
 }
 
-export default function DatePickerField({ value, onChange, placeholder, isDark, theme, style }: Props) {
+export default function DatePickerField({ value, onChange, placeholder, isDark, theme, style, defaultYear }: Props) {
   const [show, setShow] = useState(false);
   const [mode, setMode] = useState<'days' | 'months' | 'years'>('days');
   const [view, setView] = useState({ y: 2026, m: 0 });
@@ -59,7 +60,7 @@ export default function DatePickerField({ value, onChange, placeholder, isDark, 
   const text = theme.text;
 
   function open() {
-    const p = parse(value) ?? today();
+    const p = parse(value) ?? (defaultYear ? { y: defaultYear, m: 0, d: 1 } : today());
     setDraft(value || '');
     setView({ y: p.y, m: p.m });
     setMode('days');

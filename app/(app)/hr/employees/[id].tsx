@@ -69,6 +69,7 @@ type Employee = {
   phone: string | null;
   id_number: string | null;
   date_joined: string | null;
+  date_of_birth: string | null;
   next_of_kin_name: string | null;
   next_of_kin_relationship: string | null;
   next_of_kin_phone: string | null;
@@ -145,6 +146,7 @@ export default function EmployeeProfile() {
   const [phone, setPhone] = useState('');
   const [idNumber, setIdNumber] = useState('');
   const [dateJoined, setDateJoined] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
   const [kinName, setKinName] = useState('');
   const [kinRelationship, setKinRelationship] = useState('');
   const [kinPhone, setKinPhone] = useState('');
@@ -279,6 +281,7 @@ export default function EmployeeProfile() {
       setPhone(emp.phone ?? '');
       setIdNumber(emp.id_number ?? '');
       setDateJoined(emp.date_joined ?? '');
+      setDateOfBirth(emp.date_of_birth ?? '');
       setKinName(emp.next_of_kin_name ?? '');
       setKinRelationship(emp.next_of_kin_relationship ?? '');
       setKinPhone(emp.next_of_kin_phone ?? '');
@@ -458,6 +461,7 @@ export default function EmployeeProfile() {
         phone: phone || null,
         id_number: idNumber || null,
         date_joined: dateJoined || null,
+        date_of_birth: dateOfBirth || null,
         next_of_kin_name: kinName.trim() || null,
         next_of_kin_relationship: kinRelationship.trim() || null,
         next_of_kin_phone: kinPhone.trim() || null,
@@ -1157,6 +1161,7 @@ export default function EmployeeProfile() {
           <DetailRow icon={<Phone color={colors.yellow} size={16} />} label="Phone" value={employee.phone} theme={theme} />
           <DetailRow icon={<Hash color={colors.yellow} size={16} />} label="ID Number" value={employee.id_number} theme={theme} />
           <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Date Joined" value={employee.date_joined} theme={theme} />
+          <DetailRow icon={<Briefcase color={colors.yellow} size={16} />} label="Date of Birth" value={employee.date_of_birth} theme={theme} />
           <NextOfKinRow
             name={employee.next_of_kin_name}
             relationship={employee.next_of_kin_relationship}
@@ -1526,6 +1531,21 @@ export default function EmployeeProfile() {
                 placeholder="Select date"
                 isDark={isDark}
                 theme={theme}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
+                DATE OF BIRTH (BIRTHDAY NOTIFICATION)
+              </Text>
+
+              <DatePickerField
+                value={dateOfBirth}
+                onChange={setDateOfBirth}
+                placeholder="Select date of birth"
+                isDark={isDark}
+                theme={theme}
+                defaultYear={1990}
               />
             </View>
 
