@@ -58,10 +58,16 @@ export default function AdminEmployeeAccessModal({ visible, onClose, onSaved, ad
         map[r.employee_id].docs = r.categories === null ? 'all' : 'some';
         map[r.employee_id].cats = r.categories ?? [];
       });
+      const fInfo = !!(flags as any)?.info;
+      const fDocs = !!(flags as any)?.docs;
+      Object.keys(map).forEach(id => {
+        if (fInfo) map[id].info = true;
+        if (fDocs) { map[id].docs = 'all'; map[id].cats = []; }
+      });
       setPeople((ppl as Person[]) ?? []);
       setAccess(map);
-      setAllInfo(!!(flags as any)?.info);
-      setAllDocs(!!(flags as any)?.docs);
+      setAllInfo(fInfo);
+      setAllDocs(fDocs);
       setLoading(false);
     })();
   }, [visible, adminId]);
@@ -71,8 +77,20 @@ export default function AdminEmployeeAccessModal({ visible, onClose, onSaved, ad
     return q ? people.filter(p => (p.full_name ?? '').toLowerCase().includes(q) || (p.job_title ?? '').toLowerCase().includes(q)) : people;
   }, [people, search]);
 
-  const infoCount = allInfo ? people.length : Object.values(access).filter(a => a.info).length;
-  const docsCount = allDocs ? people.length : Object.values(access).filter(a => a.docs !== 'none').length;
+  const infoCount = Object.values(access).filter(a => a.info).length;
+  const docsCount = Object.values(access).filter(a => a.docs !== 'none').length;
+
+  // "Everyone" is a shortcut: switching it on ticks every employee, and the
+  // individual controls stay editable. Changing one person away from the
+  // shortcut switches "Everyone" off so nothing is silently ignored.
+  function setEveryoneInfo(v: boolean) {
+    setAllInfo(v);
+    if (v) setAccess(prev => Object.fromEntries(Object.entries(prev).map(([id, a]) => [id, { ...a, info: true }])));
+  }
+  function setEveryoneDocs(v: boolean) {
+    setAllDocs(v);
+    if (v) setAccess(prev => Object.fromEntries(Object.entries(prev).map(([id, a]) => [id, { ...a, docs: 'all' as const, cats: [] }])));
+  }
 
   function patch(id: string, p: Partial<Access>) {
     setAccess(prev => ({ ...prev, [id]: { ...(prev[id] ?? EMPTY), ...p } }));
@@ -164,13 +182,13 @@ export default function AdminEmployeeAccessModal({ visible, onClose, onSaved, ad
                 <View style={{ flex: 1 }}>
                   <Text style={[s.rowTitle, { color: theme.text }]}>All employees - personal info</Text>
                 </View>
-                <Switch value={allInfo} onValueChange={setAllInfo} trackColor={{ true: YELLOW }} />
+                <Switch value={allInfo} onValueChange={setEveryoneInfo} trackColor={{ true: YELLOW }} />
               </View>
               <View style={s.switchRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={[s.rowTitle, { color: theme.text }]}>All employees - all documents</Text>
                 </View>
-                <Switch value={allDocs} onValueChange={setAllDocs} trackColor={{ true: YELLOW }} />
+                <Switch value={allDocs} onValueChange={setEveryoneDocs} trackColor={{ true: YELLOW }} />
               </View>
             </View>
 
@@ -188,8 +206,8 @@ export default function AdminEmployeeAccessModal({ visible, onClose, onSaved, ad
 
             {filtered.map(p => {
               const a = access[p.id] ?? EMPTY;
-              const infoOn = allInfo || a.info;
-              const docsMode = allDocs ? 'all' : a.docs;
+              const infoOn = a.info;
+              const docsMode = a.docs;
               return (
                 <View key={p.id} style={[s.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
@@ -206,21 +224,20 @@ export default function AdminEmployeeAccessModal({ visible, onClose, onSaved, ad
                     <Text style={{ color: theme.text, fontWeight: '600', flex: 1 }}>Personal info</Text>
                     <Switch
                       value={infoOn}
-                      disabled={allInfo}
-                      onValueChange={v => patch(p.id, { info: v })}
+                      onValueChange={v => { patch(p.id, { info: v }); if (!v) setAllInfo(false); }}
                       trackColor={{ true: YELLOW }}
                     />
                   </View>
 
                   <Text style={{ color: theme.text, fontWeight: '600', marginTop: 6, marginBottom: 6 }}>Documents</Text>
                   <View style={s.chips}>
-                    {chip('None', docsMode === 'none', () => patch(p.id, { docs: 'none' }), allDocs)}
-                    {chip('All', docsMode === 'all', () => patch(p.id, { docs: 'all' }), allDocs)}
-                    {chip('Pick types', docsMode === 'some', () => patch(p.id, { docs: 'some' }), allDocs)}
+                    {chip('None', docsMode === 'none', () => { patch(p.id, { docs: 'none' }); setAllDocs(false); })}
+                    {chip('All', docsMode === 'all', () => patch(p.id, { docs: 'all' }))}
+                    {chip('Pick types', docsMode === 'some', () => { patch(p.id, { docs: 'some' }); setAllDocs(false); })}
                   </View>
                   {docsMode === 'some' && (
                     <View style={[s.chips, { marginTop: 8 }]}>
-                      {categories.map(c => chip(c.label, a.cats.includes(c.value), () => toggleCat(p.id, c.value)))}
+                      {categories.map(c => chip(c.label, a.cats.includes(c.value), () => { toggleCat(p.id, c.value); setAllDocs(false); }))}
                     </View>
                   )}
                 </View>
