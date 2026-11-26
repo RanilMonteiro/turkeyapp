@@ -41,6 +41,7 @@ export default function AppLayout() {
       <Stack.Screen name="hr/forms" />
       <Stack.Screen name="hr/documents" />
       <Stack.Screen name="hr/requests" />
+      <Stack.Screen name="hr/leave-actions" />
       <Stack.Screen name="hr/branches" />
       <Stack.Screen name="shared/forms" />
 <Stack.Screen name="shared/my-requests" />

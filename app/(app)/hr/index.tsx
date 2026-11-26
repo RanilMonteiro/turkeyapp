@@ -1,6 +1,8 @@
+import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, useColorScheme } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
-import { LogOut } from 'lucide-react-native';
+import { LogOut, Bell } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { useAccess } from '../../../context/AccessContext';
 import Avatar from '../../../components/Avatar';
@@ -24,6 +26,28 @@ export default function HRDashboard() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
   const { fullName, avatarUrl, dashboardFeatures: features } = useAccess();
+
+  // Leave forms that have been fully approved / declined and still need HR action
+  const [pendingActions, setPendingActions] = useState(0);
+
+  const loadPending = useCallback(async () => {
+    const { count } = await supabase
+      .from('hr_notifications')
+      .select('id', { count: 'exact', head: true })
+      .is('actioned_at', null);
+    setPendingActions(count ?? 0);
+  }, []);
+
+  useFocusEffect(useCallback(() => { loadPending(); }, [loadPending]));
+
+  useEffect(() => {
+    // Update the banner live when a new leave outcome arrives
+    const channel = supabase
+      .channel('hr-leave-actions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hr_notifications' }, () => loadPending())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [loadPending]);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -67,6 +91,23 @@ export default function HRDashboard() {
       <View style={[styles.roleBadge, { backgroundColor: '#8b5cf6' }]}>
         <Text style={styles.roleText}>HR</Text>
       </View>
+
+      {/* Leave outcomes waiting for HR to action */}
+      {pendingActions > 0 && (
+        <TouchableOpacity
+          style={[styles.alertBanner, { backgroundColor: `${colors.yellow}22`, borderColor: colors.yellow }]}
+          onPress={() => router.push('/(app)/hr/leave-actions' as any)}
+          activeOpacity={0.85}
+        >
+          <Bell color={colors.yellow} size={22} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: theme.text, fontWeight: '700', fontSize: 15 }}>
+              {pendingActions} leave form{pendingActions !== 1 ? 's' : ''} need{pendingActions === 1 ? 's' : ''} HR action
+            </Text>
+            <Text style={{ color: theme.subtext, fontSize: 12.5 }}>Fully approved or declined — tap to action</Text>
+          </View>
+        </TouchableOpacity>
+      )}
 
       {/* Features Grid */}
       <View style={styles.grid}>
@@ -125,6 +166,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   roleText: { color: colors.white, fontWeight: '600', fontSize: 14 },
+  alertBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    marginHorizontal: 16, marginBottom: 4, padding: 14,
+    borderRadius: 14, borderWidth: 1,
+  },
   grid: { padding: 16, gap: 16 },
   card: {
     padding: 24,
