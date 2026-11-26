@@ -5,7 +5,7 @@ import {
   RefreshControl
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, FileText, FolderOpen } from 'lucide-react-native';
+import { ArrowLeft, FileText, FolderOpen, Folder, ChevronRight } from 'lucide-react-native';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import { viewDocument, downloadDocument } from '../../../lib/documentActions';
@@ -25,6 +25,16 @@ const colors = {
   }
 };
 
+const CATEGORIES = [
+  { value: 'personal', label: 'Personal Documents' },
+  { value: 'policy', label: 'Policies' },
+  { value: 'procedure', label: 'Procedures' },
+  { value: 'contract', label: 'Contracts' },
+  { value: 'form', label: 'Forms' },
+  { value: 'training', label: 'Training' },
+  { value: 'other', label: 'Other' },
+];
+
 type Document = {
   id: string;
   name: string;
@@ -42,6 +52,8 @@ export default function MyDocuments() {
   const [folderNames, setFolderNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [openCategory, setOpenCategory] = useState<string | null>(null);
+  const [openSubfolder, setOpenSubfolder] = useState<string | null>(null);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -121,39 +133,115 @@ export default function MyDocuments() {
               HR will upload your documents here
             </Text>
           </View>
+        ) : !openCategory ? (
+          // Level 1 — a folder for each category that has documents
+          <>
+            {[...CATEGORIES, ...Array.from(new Set(documents.map(d => d.category)))
+              .filter(c => !CATEGORIES.some(k => k.value === c))
+              .map(c => ({ value: c, label: c }))]
+              .filter(c => documents.some(d => d.category === c.value))
+              .map(c => {
+                const n = documents.filter(d => d.category === c.value).length;
+                const col = getCategoryColor(c.value);
+                return (
+                  <TouchableOpacity
+                    key={c.value}
+                    style={[styles.folderCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+                    onPress={() => { setOpenCategory(c.value); setOpenSubfolder(null); }}
+                  >
+                    <View style={[styles.docIcon, { backgroundColor: col.bg }]}>
+                      <Folder color={col.text} size={22} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.docName, { color: theme.text, marginBottom: 2 }]}>{c.label}</Text>
+                      <Text style={[styles.docDate, { color: theme.muted }]}>{n} document{n !== 1 ? 's' : ''}</Text>
+                    </View>
+                    <ChevronRight color={theme.muted} size={18} />
+                  </TouchableOpacity>
+                );
+              })}
+          </>
         ) : (
-          documents.map(doc => {
-            const cat = getCategoryColor(doc.category);
+          (() => {
+            const catLabel = CATEGORIES.find(c => c.value === openCategory)?.label ?? openCategory;
+            const catDocs = documents.filter(d => d.category === openCategory);
+            const folderIds = Array.from(new Set(catDocs.map(d => d.subfolder_id).filter((x): x is string => !!x && !!folderNames[x])));
+            const inFolder = openSubfolder ? catDocs.filter(d => d.subfolder_id === openSubfolder) : null;
+            const mainDocs = catDocs.filter(d => !d.subfolder_id || !folderNames[d.subfolder_id]);
+            const list = inFolder ?? mainDocs;
+
             return (
-              <View
-                key={doc.id}
-                style={[styles.docCard, { backgroundColor: theme.card, borderColor: theme.border }]}
-              >
-                <View style={[styles.docIcon, { backgroundColor: `${colors.yellow}20` }]}>
-                  <FileText color={colors.yellow} size={22} />
-                </View>
-                <View style={styles.docInfo}>
-                  <Text style={[styles.docName, { color: theme.text }]}>{doc.name}</Text>
-                  <View style={[styles.catBadge, { backgroundColor: cat.bg }]}>
-                    <Text style={[styles.catText, { color: cat.text }]}>
-                      {doc.category}{doc.subfolder_id && folderNames[doc.subfolder_id] ? ` › ${folderNames[doc.subfolder_id]}` : ''}
-                    </Text>
-                  </View>
-                  <Text style={[styles.docDate, { color: theme.muted }]}>
-                    {new Date(doc.created_at).toLocaleDateString('en-ZA')}
+              <>
+                <TouchableOpacity
+                  style={styles.backRow}
+                  onPress={() => (openSubfolder ? setOpenSubfolder(null) : setOpenCategory(null))}
+                >
+                  <ArrowLeft color={colors.yellow} size={16} />
+                  <Text style={{ color: colors.yellow, fontWeight: '600', fontSize: 14 }}>
+                    {openSubfolder ? `Back to ${catLabel}` : 'Back to folders'}
                   </Text>
-                </View>
-                <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                  <TouchableOpacity onPress={() => viewDocument(doc.file_url)} hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}>
-                    <Text style={[styles.openText, { color: colors.yellow }]}>View</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => downloadDocument(doc.file_url, doc.name, doc.file_type)} hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}>
-                    <Text style={[styles.openText, { color: colors.yellow }]}>Download</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+                </TouchableOpacity>
+                <Text style={[styles.folderTitle, { color: theme.text }]}>
+                  {catLabel}{openSubfolder ? ` › ${folderNames[openSubfolder] ?? ''}` : ''}
+                </Text>
+
+                {!openSubfolder && folderIds.map(fid => {
+                  const n = catDocs.filter(d => d.subfolder_id === fid).length;
+                  return (
+                    <TouchableOpacity
+                      key={fid}
+                      style={[styles.folderCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+                      onPress={() => setOpenSubfolder(fid)}
+                    >
+                      <View style={[styles.docIcon, { backgroundColor: `${colors.yellow}20` }]}>
+                        <Folder color={colors.yellow} size={22} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.docName, { color: theme.text, marginBottom: 2 }]}>{folderNames[fid]}</Text>
+                        <Text style={[styles.docDate, { color: theme.muted }]}>{n} document{n !== 1 ? 's' : ''}</Text>
+                      </View>
+                      <ChevronRight color={theme.muted} size={18} />
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {!openSubfolder && folderIds.length > 0 && list.length > 0 && (
+                  <Text style={[styles.sectionLabel, { color: theme.subtext }]}>OTHER DOCUMENTS</Text>
+                )}
+
+                {list.map(doc => {
+                  const cat = getCategoryColor(doc.category);
+                  return (
+                    <View
+                      key={doc.id}
+                      style={[styles.docCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+                    >
+                      <View style={[styles.docIcon, { backgroundColor: `${colors.yellow}20` }]}>
+                        <FileText color={colors.yellow} size={22} />
+                      </View>
+                      <View style={styles.docInfo}>
+                        <Text style={[styles.docName, { color: theme.text }]}>{doc.name}</Text>
+                        <View style={[styles.catBadge, { backgroundColor: cat.bg }]}>
+                          <Text style={[styles.catText, { color: cat.text }]}>{doc.category}</Text>
+                        </View>
+                        <Text style={[styles.docDate, { color: theme.muted }]}>
+                          {new Date(doc.created_at).toLocaleDateString('en-ZA')}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                        <TouchableOpacity onPress={() => viewDocument(doc.file_url)} hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}>
+                          <Text style={[styles.openText, { color: colors.yellow }]}>View</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => downloadDocument(doc.file_url, doc.name, doc.file_type)} hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}>
+                          <Text style={[styles.openText, { color: colors.yellow }]}>Download</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+              </>
             );
-          })
+          })()
         )}
       </ScrollView>
     </View>
@@ -183,6 +271,13 @@ const styles = StyleSheet.create({
     width: 46, height: 46, borderRadius: 23,
     alignItems: 'center', justifyContent: 'center',
   },
+  folderCard: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: 14, borderRadius: 14, borderWidth: 1, gap: 12,
+  },
+  backRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  folderTitle: { fontSize: 17, fontWeight: '700', marginBottom: 2 },
+  sectionLabel: { fontSize: 11.5, fontWeight: '700', marginTop: 6 },
   docInfo: { flex: 1 },
   docName: { fontSize: 15, fontWeight: '600', marginBottom: 6 },
   catBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20, alignSelf: 'flex-start', marginBottom: 4 },
