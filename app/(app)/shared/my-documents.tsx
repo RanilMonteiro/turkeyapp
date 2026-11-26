@@ -32,12 +32,14 @@ type Document = {
   file_url: string;
   file_type: string | null;
   created_at: string;
+  subfolder_id?: string | null;
 };
 
 export default function MyDocuments() {
   const router = useRouter();
   const isDark = useColorScheme() === 'dark';
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [folderNames, setFolderNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -66,6 +68,8 @@ export default function MyDocuments() {
       .order('created_at', { ascending: false });
 
     if (data) setDocuments(data);
+    const { data: folders } = await supabase.from('document_subfolders').select('id, name');
+    setFolderNames(Object.fromEntries((folders ?? []).map((f: any) => [f.id, f.name])));
     setLoading(false);
     setRefreshing(false);
   }
@@ -131,7 +135,9 @@ export default function MyDocuments() {
                 <View style={styles.docInfo}>
                   <Text style={[styles.docName, { color: theme.text }]}>{doc.name}</Text>
                   <View style={[styles.catBadge, { backgroundColor: cat.bg }]}>
-                    <Text style={[styles.catText, { color: cat.text }]}>{doc.category}</Text>
+                    <Text style={[styles.catText, { color: cat.text }]}>
+                      {doc.category}{doc.subfolder_id && folderNames[doc.subfolder_id] ? ` › ${folderNames[doc.subfolder_id]}` : ''}
+                    </Text>
                   </View>
                   <Text style={[styles.docDate, { color: theme.muted }]}>
                     {new Date(doc.created_at).toLocaleDateString('en-ZA')}
