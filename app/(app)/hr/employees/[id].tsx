@@ -8,7 +8,8 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
   ArrowLeft, User, MapPin, Phone, Briefcase, Hash, ChevronDown, X,
   Plus, Trash2, GitBranch, FileText, Clock, CheckCircle, XCircle,
-  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye, Building2, Users
+  FolderOpen, Upload, ClipboardList, Search, Folder, Calendar, Eye, Building2, Users,
+  FolderPlus, FolderInput, Pencil
 } from 'lucide-react-native';
 import Avatar from '../../../../components/Avatar';
 import AdminEmployeeAccessModal from '../../../../components/AdminEmployeeAccessModal';
@@ -118,7 +119,9 @@ type Document = {
   document_date: string | null;
   expiry_date: string | null;
   visible_to_employee: boolean;
+  subfolder_id?: string | null;
 };
+type Subfolder = { id: string; category: string; name: string };
 type FormTemplateOption = { id: string; name: string; category: string | null };
 // Leave calendar access: this employee (when they're an admin) can be
 // granted visibility into whole branches and/or specific individuals.
@@ -203,6 +206,17 @@ export default function EmployeeProfile() {
   const [showDocDatePicker, setShowDocDatePicker] = useState(false);
   const [docSearch, setDocSearch] = useState('');
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+
+  // Subfolders inside a category (optional — documents can stay in the main folder)
+  const [subfolders, setSubfolders] = useState<Subfolder[]>([]);
+  const [expandedSubfolder, setExpandedSubfolder] = useState<string | null>(null);
+  const [uploadSubfolder, setUploadSubfolder] = useState<Subfolder | null>(null);
+  const [showUploadSubfolderDropdown, setShowUploadSubfolderDropdown] = useState(false);
+  const [newFolderInline, setNewFolderInline] = useState(false);
+  const [inlineFolderName, setInlineFolderName] = useState('');
+  const [folderModal, setFolderModal] = useState<{ mode: 'create' | 'rename'; category: string; folder?: Subfolder } | null>(null);
+  const [folderNameInput, setFolderNameInput] = useState('');
+  const [movingDoc, setMovingDoc] = useState<Document | null>(null);
   const [docExpiryDate, setDocExpiryDate] = useState('');
   const [docDateFilterFrom, setDocDateFilterFrom] = useState('');
   const [docDateFilterTo, setDocDateFilterTo] = useState('');
@@ -254,6 +268,7 @@ export default function EmployeeProfile() {
       fetchChain(),
       fetchSubmissions(),
       fetchDocuments(),
+      fetchSubfolders(),
       fetchFormVisibility(),
       fetchLeaveAccess(),
     ]);
@@ -358,6 +373,69 @@ export default function EmployeeProfile() {
       .eq('employee_id', id)
       .order('created_at', { ascending: false });
     if (data) setDocuments(data);
+  }
+
+  async function fetchSubfolders() {
+    const { data } = await supabase.from('document_subfolders').select('id, category, name').order('name');
+    setSubfolders((data as Subfolder[]) ?? []);
+  }
+
+  async function createFolder(category: string, name: string): Promise<Subfolder | null> {
+    const clean = name.trim();
+    if (!clean) { notify('Name needed', 'Please enter a folder name.'); return null; }
+    const existing = subfolders.find(f => f.category === category && f.name.toLowerCase() === clean.toLowerCase());
+    if (existing) return existing;
+    const { data: userData } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('document_subfolders')
+      .insert({ category, name: clean, created_by: userData.user?.id })
+      .select('id, category, name')
+      .single();
+    if (error || !data) {
+      notify('Could not create folder', error?.message ?? 'Make sure document_subfolders.sql has been run in Supabase.');
+      return null;
+    }
+    setSubfolders(prev => [...prev, data as Subfolder].sort((a, b) => a.name.localeCompare(b.name)));
+    return data as Subfolder;
+  }
+
+  async function saveFolderModal() {
+    if (!folderModal) return;
+    const clean = folderNameInput.trim();
+    if (!clean) { notify('Name needed', 'Please enter a folder name.'); return; }
+    if (folderModal.mode === 'create') {
+      const f = await createFolder(folderModal.category, clean);
+      if (f) { setExpandedSubfolder(f.id); setFolderModal(null); }
+    } else if (folderModal.folder) {
+      const { error } = await supabase.from('document_subfolders').update({ name: clean }).eq('id', folderModal.folder.id);
+      if (error) { notify('Error', error.message); return; }
+      setSubfolders(prev => prev.map(f => (f.id === folderModal.folder!.id ? { ...f, name: clean } : f)));
+      setFolderModal(null);
+    }
+  }
+
+  function deleteFolder(folder: Subfolder) {
+    confirm(
+      'Delete Folder',
+      `Delete the folder "${folder.name}"? Documents are not deleted — they move back to the main folder (for every employee).`,
+      async () => {
+        const { error } = await supabase.from('document_subfolders').delete().eq('id', folder.id);
+        if (error) { notify('Error', error.message); return; }
+        setExpandedSubfolder(null);
+        setFolderModal(null);
+        fetchSubfolders();
+        fetchDocuments();
+      }
+    );
+  }
+
+  async function moveDocument(doc: Document, subfolderId: string | null) {
+    const { error } = await supabase.from('documents').update({ subfolder_id: subfolderId }).eq('id', doc.id);
+    if (error) { notify('Error', error.message); return; }
+    setDocuments(prev => prev.map(d => (d.id === doc.id ? { ...d, subfolder_id: subfolderId } : d)));
+    setMovingDoc(null);
+    setNewFolderInline(false);
+    setInlineFolderName('');
   }
 
   async function fetchFormVisibility() {
@@ -847,6 +925,10 @@ export default function EmployeeProfile() {
     setDocName('');
     setDocCategory('');
     setSelectedFile(null);
+    setUploadSubfolder(null);
+    setShowUploadSubfolderDropdown(false);
+    setNewFolderInline(false);
+    setInlineFolderName('');
     setVisibleToEmployee(true);
     setDocDate('');
     setDocExpiryDate('');
@@ -926,6 +1008,7 @@ export default function EmployeeProfile() {
         visible_to_employee: visibleToEmployee,
         document_date: docDate || null,
         expiry_date: docExpiryDate || null,
+        ...(uploadSubfolder ? { subfolder_id: uploadSubfolder.id } : {}),
       });
 
       if (dbError) {
@@ -1318,25 +1401,98 @@ export default function EmployeeProfile() {
               <Text style={[styles.emptyInlineText, { color: theme.muted }]}>No documents match your search.</Text>
             ) : (
               filteredFlatDocuments.map(doc => (
-                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} getExpiryStatus={getExpiryStatus} deleteDocument={deleteDocument} />
+                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} getExpiryStatus={getExpiryStatus} deleteDocument={deleteDocument} onMove={(d: Document) => { setNewFolderInline(false); setInlineFolderName(''); setMovingDoc(d); }} folderLabel={subfolders.find(f => f.id === doc.subfolder_id)?.name} />
               ))
             )
           ) : expandedCategory ? (
-            // Inside a folder: show just that category's documents
-            <View>
-              <TouchableOpacity style={styles.folderBackRow} onPress={() => setExpandedCategory(null)}>
-                <ArrowLeft color={colors.yellow} size={16} />
-                <Text style={{ color: colors.yellow, fontWeight: '600', fontSize: 14 }}>
-                  Back to folders
-                </Text>
-              </TouchableOpacity>
-              <Text style={[styles.folderTitle, { color: theme.text }]}>
-                {DOC_CATEGORIES.find(c => c.value === expandedCategory)?.label ?? expandedCategory}
-              </Text>
-              {(docsByCategory[expandedCategory] ?? []).map(doc => (
-                <DocumentRow key={doc.id} doc={doc} theme={theme} getDocCategoryColor={getDocCategoryColor} getExpiryStatus={getExpiryStatus} deleteDocument={deleteDocument} />
-              ))}
-            </View>
+            // Inside a category: its subfolders, then documents left in the main folder
+            (() => {
+              const catLabel = DOC_CATEGORIES.find(c => c.value === expandedCategory)?.label ?? expandedCategory;
+              const catFolders = subfolders.filter(f => f.category === expandedCategory);
+              const activeFolder = catFolders.find(f => f.id === expandedSubfolder) ?? null;
+              const catDocs = docsByCategory[expandedCategory] ?? [];
+              const rowProps = {
+                theme, getDocCategoryColor, getExpiryStatus, deleteDocument,
+                onMove: (d: Document) => { setNewFolderInline(false); setInlineFolderName(''); setMovingDoc(d); },
+              };
+
+              // Inside one subfolder
+              if (activeFolder) {
+                const folderDocs = catDocs.filter(d => d.subfolder_id === activeFolder.id);
+                return (
+                  <View>
+                    <TouchableOpacity style={styles.folderBackRow} onPress={() => setExpandedSubfolder(null)}>
+                      <ArrowLeft color={colors.yellow} size={16} />
+                      <Text style={{ color: colors.yellow, fontWeight: '600', fontSize: 14 }}>Back to {catLabel}</Text>
+                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={[styles.folderTitle, { color: theme.text, marginBottom: 0 }]}>{catLabel} › {activeFolder.name}</Text>
+                      <TouchableOpacity
+                        onPress={() => { setFolderNameInput(activeFolder.name); setFolderModal({ mode: 'rename', category: activeFolder.category, folder: activeFolder }); }}
+                        hitSlop={8}
+                      >
+                        <Pencil color={colors.yellow} size={16} />
+                      </TouchableOpacity>
+                    </View>
+                    {folderDocs.length === 0 ? (
+                      <Text style={[styles.emptyInlineText, { color: theme.muted }]}>
+                        Nothing in this folder yet for this employee. Use the folder icon on a document to move it here.
+                      </Text>
+                    ) : folderDocs.map(doc => (
+                      <DocumentRow key={doc.id} doc={doc} folderLabel={null} {...rowProps} />
+                    ))}
+                  </View>
+                );
+              }
+
+              const mainDocs = catDocs.filter(d => !d.subfolder_id || !catFolders.some(f => f.id === d.subfolder_id));
+              return (
+                <View>
+                  <TouchableOpacity style={styles.folderBackRow} onPress={() => { setExpandedCategory(null); setExpandedSubfolder(null); }}>
+                    <ArrowLeft color={colors.yellow} size={16} />
+                    <Text style={{ color: colors.yellow, fontWeight: '600', fontSize: 14 }}>Back to folders</Text>
+                  </TouchableOpacity>
+                  <Text style={[styles.folderTitle, { color: theme.text }]}>{catLabel}</Text>
+
+                  {catFolders.map(f => {
+                    const n = catDocs.filter(d => d.subfolder_id === f.id).length;
+                    return (
+                      <TouchableOpacity
+                        key={f.id}
+                        style={[styles.folderRow, { borderColor: theme.border }]}
+                        onPress={() => setExpandedSubfolder(f.id)}
+                      >
+                        <View style={[styles.folderIcon, { backgroundColor: `${colors.yellow}20` }]}>
+                          <Folder color={colors.yellow} size={18} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.folderName, { color: theme.text }]}>{f.name}</Text>
+                          <Text style={[styles.folderCount, { color: theme.muted }]}>{n} document{n !== 1 ? 's' : ''}</Text>
+                        </View>
+                        <ChevronDown color={theme.muted} size={16} style={{ transform: [{ rotate: '-90deg' }] }} />
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  <TouchableOpacity
+                    style={[styles.folderRow, { borderColor: colors.yellow, borderStyle: 'dashed' }]}
+                    onPress={() => { setFolderNameInput(''); setFolderModal({ mode: 'create', category: expandedCategory }); }}
+                  >
+                    <View style={[styles.folderIcon, { backgroundColor: `${colors.yellow}20` }]}>
+                      <FolderPlus color={colors.yellow} size={18} />
+                    </View>
+                    <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 14 }}>New subfolder</Text>
+                  </TouchableOpacity>
+
+                  {catFolders.length > 0 && mainDocs.length > 0 && (
+                    <Text style={{ color: theme.subtext, fontSize: 11.5, fontWeight: '700', marginTop: 10, marginBottom: 4 }}>MAIN FOLDER</Text>
+                  )}
+                  {mainDocs.map(doc => (
+                    <DocumentRow key={doc.id} doc={doc} folderLabel={null} {...rowProps} />
+                  ))}
+                </View>
+              );
+            })()
           ) : (
             // Folder view: only categories that actually have documents
             categoriesWithDocs.map(cat => {
@@ -1743,7 +1899,7 @@ export default function EmployeeProfile() {
                     <TouchableOpacity
                       key={cat.value}
                       style={[styles.dropdownItem, { borderBottomColor: theme.border }, docCategory === cat.value && { backgroundColor: `${colors.yellow}20` }]}
-                      onPress={() => { setDocCategory(cat.value); setShowDocCategoryDropdown(false); }}
+                      onPress={() => { setDocCategory(cat.value); setUploadSubfolder(null); setShowDocCategoryDropdown(false); }}
                     >
                       <Text style={[styles.dropdownItemText, { color: docCategory === cat.value ? colors.yellow : theme.text }]}>
                         {cat.label}
@@ -1753,6 +1909,67 @@ export default function EmployeeProfile() {
                 </View>
               )}
             </View>
+
+            {!!docCategory && (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.fieldLabel, { color: theme.subtext }]}>SUBFOLDER (OPTIONAL)</Text>
+                <TouchableOpacity
+                  style={[styles.dropdownBtn, { backgroundColor: theme.input, borderColor: theme.border }]}
+                  onPress={() => setShowUploadSubfolderDropdown(!showUploadSubfolderDropdown)}
+                >
+                  <Text style={[styles.dropdownBtnText, { color: uploadSubfolder ? theme.text : theme.subtext }]}>
+                    {uploadSubfolder?.name ?? 'Main folder (no subfolder)'}
+                  </Text>
+                  <ChevronDown color={theme.muted} size={16} />
+                </TouchableOpacity>
+                {showUploadSubfolderDropdown && (
+                  <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                    <TouchableOpacity
+                      style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
+                      onPress={() => { setUploadSubfolder(null); setShowUploadSubfolderDropdown(false); }}
+                    >
+                      <Text style={[styles.dropdownItemText, { color: theme.subtext }]}>Main folder (no subfolder)</Text>
+                    </TouchableOpacity>
+                    {subfolders.filter(f => f.category === docCategory).map(f => (
+                      <TouchableOpacity
+                        key={f.id}
+                        style={[styles.dropdownItem, { borderBottomColor: theme.border }, uploadSubfolder?.id === f.id && { backgroundColor: `${colors.yellow}20` }]}
+                        onPress={() => { setUploadSubfolder(f); setShowUploadSubfolderDropdown(false); }}
+                      >
+                        <Text style={[styles.dropdownItemText, { color: uploadSubfolder?.id === f.id ? colors.yellow : theme.text }]}>{f.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity
+                      style={[styles.dropdownItem, { borderBottomColor: theme.border }]}
+                      onPress={() => { setShowUploadSubfolderDropdown(false); setNewFolderInline(true); }}
+                    >
+                      <Text style={[styles.dropdownItemText, { color: colors.yellow, fontWeight: '700' }]}>+ New subfolder</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {newFolderInline && (
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                    <TextInput
+                      style={[styles.input, { flex: 1, backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                      placeholder="New subfolder name"
+                      placeholderTextColor={theme.subtext}
+                      value={inlineFolderName}
+                      onChangeText={setInlineFolderName}
+                      autoFocus
+                    />
+                    <TouchableOpacity
+                      style={{ backgroundColor: colors.yellow, borderRadius: 12, paddingHorizontal: 16, justifyContent: 'center' }}
+                      onPress={async () => {
+                        const f = await createFolder(docCategory, inlineFolderName);
+                        if (f) { setUploadSubfolder(f); setNewFolderInline(false); setInlineFolderName(''); }
+                      }}
+                    >
+                      <Text style={{ fontWeight: '700', color: colors.black }}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
 
             <View style={styles.fieldGroup}>
               <Text style={[styles.fieldLabel, { color: theme.subtext }]}>
@@ -1799,6 +2016,105 @@ export default function EmployeeProfile() {
             {uploadingDoc ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Upload Document</Text>}
           </TouchableOpacity>
         </ScrollView>
+      </Modal>
+
+      {/* Move document into a subfolder */}
+      <Modal visible={!!movingDoc} transparent animationType="fade" onRequestClose={() => setMovingDoc(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: theme.card, borderRadius: 16, borderWidth: 1, borderColor: theme.border, padding: 18 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <Text style={{ color: theme.text, fontSize: 17, fontWeight: '700', flex: 1 }} numberOfLines={1}>Move "{movingDoc?.name}"</Text>
+              <TouchableOpacity onPress={() => setMovingDoc(null)}><X color={theme.muted} size={22} /></TouchableOpacity>
+            </View>
+            <Text style={{ color: theme.subtext, fontSize: 12.5, marginBottom: 10 }}>
+              Choose where it goes inside {DOC_CATEGORIES.find(c => c.value === movingDoc?.category)?.label ?? 'this category'}.
+            </Text>
+            <ScrollView style={{ maxHeight: 280 }}>
+              {[{ id: null as string | null, name: 'Main folder (no subfolder)' },
+                ...subfolders.filter(f => f.category === movingDoc?.category)].map(f => {
+                const current = (movingDoc?.subfolder_id ?? null) === f.id;
+                return (
+                  <TouchableOpacity
+                    key={f.id ?? 'main'}
+                    style={[styles.dropdownItem, { borderBottomColor: theme.border, flexDirection: 'row', alignItems: 'center', gap: 8 }, current && { backgroundColor: `${colors.yellow}20` }]}
+                    onPress={() => movingDoc && moveDocument(movingDoc, f.id)}
+                  >
+                    <Folder color={current ? colors.yellow : theme.muted} size={16} />
+                    <Text style={[styles.dropdownItemText, { color: current ? colors.yellow : theme.text }]}>{f.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            {newFolderInline ? (
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                <TextInput
+                  style={[styles.input, { flex: 1, backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+                  placeholder="New subfolder name"
+                  placeholderTextColor={theme.subtext}
+                  value={inlineFolderName}
+                  onChangeText={setInlineFolderName}
+                  autoFocus
+                />
+                <TouchableOpacity
+                  style={{ backgroundColor: colors.yellow, borderRadius: 12, paddingHorizontal: 16, justifyContent: 'center' }}
+                  onPress={async () => {
+                    if (!movingDoc) return;
+                    const f = await createFolder(movingDoc.category, inlineFolderName);
+                    if (f) moveDocument(movingDoc, f.id);
+                  }}
+                >
+                  <Text style={{ fontWeight: '700', color: colors.black }}>Add</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => setNewFolderInline(true)}>
+                <FolderPlus color={colors.yellow} size={16} />
+                <Text style={{ color: colors.yellow, fontWeight: '700' }}>New subfolder</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Create / rename subfolder */}
+      <Modal visible={!!folderModal} transparent animationType="fade" onRequestClose={() => setFolderModal(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: theme.card, borderRadius: 16, borderWidth: 1, borderColor: theme.border, padding: 18 }}>
+            <Text style={{ color: theme.text, fontSize: 17, fontWeight: '700', marginBottom: 4 }}>
+              {folderModal?.mode === 'rename' ? 'Rename subfolder' : 'New subfolder'}
+            </Text>
+            <Text style={{ color: theme.subtext, fontSize: 12.5, marginBottom: 10 }}>
+              Inside {DOC_CATEGORIES.find(c => c.value === folderModal?.category)?.label}
+            </Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: theme.input, borderColor: theme.border, color: theme.text }]}
+              placeholder="e.g. Safety Induction"
+              placeholderTextColor={theme.subtext}
+              value={folderNameInput}
+              onChangeText={setFolderNameInput}
+              autoFocus
+            />
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+              <TouchableOpacity
+                style={{ flex: 1, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.input, borderWidth: 1, borderColor: theme.border }}
+                onPress={() => setFolderModal(null)}
+              >
+                <Text style={{ color: theme.text, fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.yellow }}
+                onPress={saveFolderModal}
+              >
+                <Text style={{ color: colors.black, fontWeight: '700' }}>{folderModal?.mode === 'rename' ? 'Save' : 'Create'}</Text>
+              </TouchableOpacity>
+            </View>
+            {folderModal?.mode === 'rename' && folderModal.folder && (
+              <TouchableOpacity style={{ marginTop: 14, alignItems: 'center' }} onPress={() => deleteFolder(folderModal.folder!)}>
+                <Text style={{ color: '#ef4444', fontWeight: '600' }}>Delete subfolder</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
       </Modal>
 
       {/* Form Visibility Modal */}
@@ -1945,7 +2261,7 @@ export default function EmployeeProfile() {
   );
 }
 
-function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument, getExpiryStatus }: any) {
+function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument, getExpiryStatus, onMove, folderLabel }: any) {
   const cat = getDocCategoryColor(doc.category);
   const expiry = getExpiryStatus(doc.expiry_date);
   return (
@@ -1956,6 +2272,12 @@ function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument, getExpir
           <View style={[styles.catBadge, { backgroundColor: cat.bg }]}>
             <Text style={[styles.catText, { color: cat.text }]}>{doc.category}</Text>
           </View>
+          {!!folderLabel && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Folder color={theme.muted} size={11} />
+              <Text style={{ color: theme.muted, fontSize: 11, fontWeight: '600' }}>{folderLabel}</Text>
+            </View>
+          )}
           <Text style={[styles.docDate, { color: theme.muted }]}>
             {doc.document_date
               ? new Date(doc.document_date).toLocaleDateString('en-ZA')
@@ -1978,6 +2300,11 @@ function DocumentRow({ doc, theme, getDocCategoryColor, deleteDocument, getExpir
       >
         <Text style={{ color: colors.yellow, fontSize: 13, fontWeight: '600' }}>Download</Text>
       </TouchableOpacity>
+      {!!onMove && (
+        <TouchableOpacity style={styles.docActionBtn} onPress={() => onMove(doc)}>
+          <FolderInput color={colors.yellow} size={16} />
+        </TouchableOpacity>
+      )}
       <TouchableOpacity style={styles.docActionBtn} onPress={() => deleteDocument(doc)}>
         <Trash2 color="#ef4444" size={16} />
       </TouchableOpacity>

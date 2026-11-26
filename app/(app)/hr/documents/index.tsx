@@ -453,6 +453,33 @@ export default function DocumentsManager() {
         </View>
       )}
 
+      {/* Category folders — always visible; tap one to open it and see its subfolders */}
+      {!filterCategory && (
+        <View style={{ borderBottomWidth: 1, borderBottomColor: theme.border }}>
+          <Text style={{ color: theme.subtext, fontSize: 11.5, fontWeight: '700', paddingHorizontal: 12, paddingTop: 10 }}>
+            FOLDERS — tap a category to open it and use subfolders
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 12, gap: 8, alignItems: 'center' }}>
+            {CATEGORIES.map(c => {
+              const subCount = subfolders.filter(f => f.category === c.value).length;
+              return (
+                <TouchableOpacity
+                  key={c.value}
+                  onPress={() => { setFilterCategory(c.value); setFilterSubfolder(null); }}
+                  style={[styles.folderChip, { borderColor: theme.border, backgroundColor: theme.input }]}
+                >
+                  <Folder color={colors.yellow} size={14} />
+                  <Text style={{ color: theme.text, fontSize: 13, fontWeight: '600' }}>{c.label}</Text>
+                  <Text style={{ color: theme.muted, fontSize: 12 }}>
+                    {documents.filter(d => d.category === c.value).length}{subCount ? ` · ${subCount} sub` : ''}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Folder strip — appears once a category is chosen */}
       {filterCategory && (
         <View style={{ borderBottomWidth: 1, borderBottomColor: theme.border }}>
