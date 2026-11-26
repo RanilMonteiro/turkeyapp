@@ -4,7 +4,7 @@ import {
   StyleSheet, useColorScheme, ActivityIndicator, Modal, Platform, PanResponder
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, ChevronDown, MapPin, User, Tag, ChevronLeft, ChevronRight, X, FileDown } from 'lucide-react-native';
+import { ArrowLeft, ChevronDown, MapPin, User, Tag, ChevronLeft, ChevronRight, X, FileDown, FileSpreadsheet } from 'lucide-react-native';
 import { Calendar } from 'react-native-calendars';
 import { supabase } from '../../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
@@ -12,6 +12,8 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { notify } from '../../../lib/notify';
 import { downloadHtmlAsPdf } from '../../../lib/htmlToPdf';
+import { exportLeaveToExcel, MAX_EXPORT_DAYS, daysBetween } from '../../../lib/leaveExcel';
+import DatePickerField from '../../../components/DatepickerField';
 
 const colors = {
   yellow: '#fbbf24',
@@ -98,6 +100,19 @@ export default function LeaveCalendar() {
     return { year: now.getFullYear(), month: now.getMonth() }; // month is 0-indexed
   });
   const [generatingPdf, setGeneratingPdf] = useState(false);
+
+  // Excel export — pick any From / To date
+  const [excelVisible, setExcelVisible] = useState(false);
+  const [excelFrom, setExcelFrom] = useState(() => {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [excelTo, setExcelTo] = useState(() => {
+    const n = new Date();
+    const last = new Date(n.getFullYear(), n.getMonth() + 1, 0);
+    return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
+  });
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   const theme = {
     background: isDark ? colors.black : colors.gray[50],
@@ -407,6 +422,42 @@ function expandDateRange(from: string, to: string): string[] {
     setGeneratingPdf(false);
   }
 
+  // Export ALL employees (HR / superuser only). Only approved leave is shown.
+  async function handleExportExcel() {
+    if (!excelFrom || !excelTo) { notify('Dates needed', 'Choose a From and To date.'); return; }
+    if (excelTo < excelFrom) { notify('Check dates', '"To" must be on or after "From".'); return; }
+    if (daysBetween(excelFrom, excelTo).length > MAX_EXPORT_DAYS) {
+      notify('Range too long', `Please choose ${MAX_EXPORT_DAYS} days or less.`);
+      return;
+    }
+    setExportingExcel(true);
+    try {
+      const { data: profs, error } = await supabase
+        .from('profiles')
+        .select('id, full_name, employee_number')
+        .neq('role', 'superuser')
+        .eq('is_archived', false);
+      if (error) throw error;
+
+      await exportLeaveToExcel({
+        employees: (profs ?? []).map((p: any) => ({
+          id: p.id,
+          fullName: p.full_name ?? 'Unknown',
+          number: p.employee_number ?? null,
+        })),
+        leaves: entries
+          .filter(e => e.status === 'approved')
+          .map(e => ({ employeeId: e.employeeId, leaveType: e.leaveType, fromDate: e.fromDate, toDate: e.toDate })),
+        from: excelFrom,
+        to: excelTo,
+      });
+      setExcelVisible(false);
+    } catch (e: any) {
+      notify('Error', e?.message ?? 'Could not export to Excel.');
+    }
+    setExportingExcel(false);
+  }
+
   function stepViewMonth(dir: 1 | -1) {
     setViewDate(prev => {
       const d = new Date(prev.year, prev.month + dir, 1);
@@ -502,13 +553,22 @@ function expandDateRange(from: string, to: string): string[] {
 
         {/* Monthly report entry point — HR and superuser only */}
         {canViewMonthlyReport && (
-          <TouchableOpacity
-            style={[styles.reportOpenBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
-            onPress={() => setMonthReportVisible(true)}
-          >
-            <FileDown color={colors.yellow} size={16} />
-            <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>Monthly Report</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginHorizontal: 16, marginBottom: 12 }}>
+            <TouchableOpacity
+              style={[styles.reportOpenBtn, { backgroundColor: theme.card, borderColor: theme.border, marginHorizontal: 0, marginBottom: 0 }]}
+              onPress={() => setMonthReportVisible(true)}
+            >
+              <FileDown color={colors.yellow} size={16} />
+              <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>Monthly Report</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.reportOpenBtn, { backgroundColor: theme.card, borderColor: theme.border, marginHorizontal: 0, marginBottom: 0 }]}
+              onPress={() => setExcelVisible(true)}
+            >
+              <FileSpreadsheet color={colors.yellow} size={16} />
+              <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>Export to Excel</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* Legend */}
@@ -720,6 +780,34 @@ function expandDateRange(from: string, to: string): string[] {
             </ScrollView>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* Excel export — choose From / To */}
+      <Modal visible={excelVisible && canViewMonthlyReport} transparent animationType="fade" onRequestClose={() => setExcelVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: theme.card, borderRadius: 16, borderWidth: 1, borderColor: theme.border, padding: 18 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>Export Leave to Excel</Text>
+              <TouchableOpacity onPress={() => setExcelVisible(false)}><X color={theme.muted} size={22} /></TouchableOpacity>
+            </View>
+            <Text style={{ color: theme.subtext, fontSize: 12.5, lineHeight: 18, marginBottom: 14 }}>
+              All employees, one column per day, with the type of approved leave they took. Weekends are shaded grey.
+            </Text>
+
+            <Text style={{ color: theme.subtext, fontSize: 12, fontWeight: '700', marginBottom: 6 }}>FROM</Text>
+            <DatePickerField value={excelFrom} onChange={setExcelFrom} isDark={isDark} theme={theme} style={{ marginBottom: 14 }} />
+            <Text style={{ color: theme.subtext, fontSize: 12, fontWeight: '700', marginBottom: 6 }}>TO</Text>
+            <DatePickerField value={excelTo} onChange={setExcelTo} isDark={isDark} theme={theme} style={{ marginBottom: 18 }} />
+
+            <TouchableOpacity
+              style={[styles.saveBtn, { margin: 0 }, exportingExcel && { opacity: 0.6 }]}
+              onPress={handleExportExcel}
+              disabled={exportingExcel}
+            >
+              {exportingExcel ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>Download Excel</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       {/* Monthly Report modal — month picker + flat list + PDF export.
