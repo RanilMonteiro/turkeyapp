@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Plus, X, Search, ChevronDown, Upload, Trash2, GraduationCap,
-  MapPin, Pencil, Check, ListChecks,
+  MapPin, Pencil, Check, ListChecks, Users,
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -40,7 +40,7 @@ const XL = {
 
 const NO_W = 46;
 const NAME_W = 280;
-const UNIT_W = 120;
+const UNIT_W = 170;
 const GUT_W = 14;
 const DATE_W = 112;
 const STAT_W = 104;
@@ -50,7 +50,7 @@ const HEAD_SUB_H = 150;
 
 type Site = { id: string; name: string };
 type Emp = { id: string; full_name: string | null };
-type TType = { id: string; name: string; expiry_days: number | null; sort_order: number };
+type TType = { id: string; name: string; expiry_days: number | null; sort_order: number; training_site_id: string | null };
 type Col = { id: string; name: string; expiry_days: number | null; ids: string[] };
 type TDoc = {
   id: string; name: string; description: string | null; file_url: string;
@@ -162,7 +162,7 @@ function Rot({ w, h, children }: { w: number; h: number; children: React.ReactNo
 }
 
 // ── Manage training sites (add / edit / delete) ───────────────────────
-function SitesModal({ sites, counts, theme, insetsTop, onClose, onChanged }: any) {
+function SitesModal({ sites, counts, theme, insetsTop, onClose, onChanged, onAssign }: any) {
   const [newName, setNewName] = useState('');
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -188,7 +188,7 @@ function SitesModal({ sites, counts, theme, insetsTop, onClose, onChanged }: any
   }
   function remove(s: Site) {
     const n = counts[s.id] ?? 0;
-    confirm('Delete site', `Delete "${s.name}"?${n ? ` ${n} employee${n === 1 ? '' : 's'} will be left with no unit.` : ''}`, async () => {
+    confirm('Delete site', `Delete "${s.name}" and its trainings?${n ? ` ${n} employee${n === 1 ? ' is' : 's are'} assigned to it.` : ''} Saved training records for it may block this.`, async () => {
       const { error } = await supabase.from('training_sites').delete().eq('id', s.id);
       if (error) notify('Error', error.message); else onChanged();
     });
@@ -233,6 +233,7 @@ function SitesModal({ sites, counts, theme, insetsTop, onClose, onChanged }: any
                   <Text style={{ color: theme.text, fontSize: 15, fontWeight: '700' }}>{s.name}</Text>
                   <Text style={{ color: theme.muted, fontSize: 12 }}>{counts[s.id] ?? 0} employee{(counts[s.id] ?? 0) === 1 ? '' : 's'}</Text>
                 </View>
+                <TouchableOpacity onPress={() => onAssign(s)} hitSlop={8}><Users color="#3b82f6" size={18} /></TouchableOpacity>
                 <TouchableOpacity onPress={() => { setEditId(s.id); setEditName(s.name); }} hitSlop={8}><Pencil color={colors.yellow} size={18} /></TouchableOpacity>
                 <TouchableOpacity onPress={() => remove(s)} hitSlop={8}><Trash2 color="#ef4444" size={18} /></TouchableOpacity>
               </>
@@ -244,8 +245,104 @@ function SitesModal({ sites, counts, theme, insetsTop, onClose, onChanged }: any
   );
 }
 
+// ── Choose which employees are on one site ───────────────────────────
+function SiteEmployeesModal({ site, emps, memberIds, theme, insetsTop, onClose, onChanged }: any) {
+  const [members, setMembers] = useState<Set<string>>(new Set(memberIds));
+  const [q, setQ] = useState('');
+  const shown: Emp[] = emps.filter((e: Emp) => (e.full_name ?? '').toLowerCase().includes(q.trim().toLowerCase()));
+
+  async function toggle(id: string) {
+    const on = members.has(id);
+    setMembers(m => { const n = new Set(m); on ? n.delete(id) : n.add(id); return n; });
+    const { error } = on
+      ? await supabase.from('training_employee_sites').delete().eq('employee_id', id).eq('site_id', site.id)
+      : await supabase.from('training_employee_sites').insert({ employee_id: id, site_id: site.id });
+    if (error) notify('Error', error.message); else onChanged();
+  }
+  async function selectShown() {
+    const add = shown.filter(e => !members.has(e.id));
+    if (!add.length) return;
+    setMembers(m => new Set([...m, ...add.map(e => e.id)]));
+    const { error } = await supabase.from('training_employee_sites').insert(add.map(e => ({ employee_id: e.id, site_id: site.id })));
+    if (error) notify('Error', error.message); else onChanged();
+  }
+  async function clearShown() {
+    const rm = shown.filter(e => members.has(e.id)).map(e => e.id);
+    if (!rm.length) return;
+    setMembers(m => { const n = new Set(m); rm.forEach(id => n.delete(id)); return n; });
+    const { error } = await supabase.from('training_employee_sites').delete().eq('site_id', site.id).in('employee_id', rm);
+    if (error) notify('Error', error.message); else onChanged();
+  }
+
+  return (
+    <ModalShell title={`${site.name} · Employees`} onClose={onClose} theme={theme} insetsTop={insetsTop}>
+      <View style={{ padding: 16, paddingBottom: 8, gap: 10 }}>
+        <View style={[styles.search, { backgroundColor: theme.input, borderColor: theme.border }]}>
+          <Search color={theme.muted} size={16} />
+          <TextInput style={{ flex: 1, color: theme.text, fontSize: 14 }} placeholder="Search employee..." placeholderTextColor={theme.subtext} value={q} onChangeText={setQ} />
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          <TouchableOpacity onPress={selectShown} style={[styles.chip, { borderColor: theme.border, backgroundColor: theme.card }]}>
+            <Text style={{ color: theme.text, fontSize: 13, fontWeight: '600' }}>Select all{q ? ' shown' : ''}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={clearShown} style={[styles.chip, { borderColor: theme.border, backgroundColor: theme.card }]}>
+            <Text style={{ color: theme.text, fontSize: 13, fontWeight: '600' }}>Clear{q ? ' shown' : ''}</Text>
+          </TouchableOpacity>
+          <Text style={{ color: theme.muted, fontSize: 12, marginLeft: 'auto' }}>{members.size} on this site</Text>
+        </View>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 4 }}>
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border, padding: 0, overflow: 'hidden' }]}>
+          {shown.map(e => {
+            const on = members.has(e.id);
+            return (
+              <TouchableOpacity key={e.id} onPress={() => toggle(e.id)} style={[styles.ddItem, { borderBottomColor: theme.border }]}>
+                <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: on ? colors.yellow : theme.muted, backgroundColor: on ? colors.yellow : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                  {on && <Check color={colors.black} size={14} />}
+                </View>
+                <Text style={{ color: theme.text, fontSize: 15, flex: 1 }}>{e.full_name ?? 'Unnamed'}</Text>
+              </TouchableOpacity>
+            );
+          })}
+          {shown.length === 0 && <Text style={{ color: theme.muted, textAlign: 'center', padding: 20 }}>No employees found.</Text>}
+        </View>
+      </ScrollView>
+    </ModalShell>
+  );
+}
+
+// ── Choose which sites one employee is on ─────────────────────────────
+function EmployeeSitesModal({ emp, sites, selected, theme, onClose, onSave }: any) {
+  const [sel, setSel] = useState<string[]>(selected);
+  const all = sites.length > 0 && sel.length === sites.length;
+  const toggle = (id: string) => setSel(a => (a.includes(id) ? a.filter(x => x !== id) : [...a, id]));
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.backdrop}>
+        <View style={[styles.sheet, { backgroundColor: theme.card, borderColor: theme.border }]} onStartShouldSetResponder={() => true}>
+          <Text style={{ color: theme.text, fontWeight: '800', fontSize: 16, padding: 14 }}>Sites · {emp.full_name}</Text>
+          <ScrollView style={{ maxHeight: 360 }}>
+            <Opt theme={theme} text="All sites" on={all} onPress={() => setSel(all ? [] : sites.map((s: Site) => s.id))} />
+            {sites.map((s: Site) => (
+              <Opt key={s.id} theme={theme} text={s.name} on={sel.includes(s.id)} onPress={() => toggle(s.id)} />
+            ))}
+          </ScrollView>
+          <View style={{ flexDirection: 'row', gap: 8, padding: 14 }}>
+            <TouchableOpacity style={[styles.saveBtn, { flex: 1, height: 44 }]} onPress={() => onSave(sel)}>
+              <Text style={{ color: colors.black, fontWeight: '700' }}>Save</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.saveBtn, { height: 44, paddingHorizontal: 18, backgroundColor: theme.input }]} onPress={onClose}>
+              <Text style={{ color: theme.text, fontWeight: '700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
 // ── Manage trainings (the matrix columns) ─────────────────────────────
-function TrainingsModal({ cols, theme, insetsTop, onClose, onChanged }: any) {
+function TrainingsModal({ cols, siteId, siteName, theme, insetsTop, onClose, onChanged }: any) {
   const [name, setName] = useState('');
   const [days, setDays] = useState('');
   const [editId, setEditId] = useState<string | null>(null);
@@ -264,7 +361,7 @@ function TrainingsModal({ cols, theme, insetsTop, onClose, onChanged }: any) {
       const col = cols.find((c: Col) => c.id === editId) as Col;
       ({ error } = await supabase.from('training_types').update({ name: n, expiry_days: d }).in('id', col.ids));
     } else {
-      ({ error } = await supabase.from('training_types').insert({ name: n, expiry_days: d, sort_order: cols.length + 1 }));
+      ({ error } = await supabase.from('training_types').insert({ name: n, expiry_days: d, sort_order: cols.length + 1, training_site_id: siteId }));
     }
     setBusy(false);
     if (error) return notify('Error', error.message);
@@ -278,7 +375,7 @@ function TrainingsModal({ cols, theme, insetsTop, onClose, onChanged }: any) {
   }
 
   return (
-    <ModalShell title="Trainings (Columns)" onClose={onClose} theme={theme} insetsTop={insetsTop}>
+    <ModalShell title={`${siteName} · Trainings`} onClose={onClose} theme={theme} insetsTop={insetsTop}>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }} keyboardShouldPersistTaps="handled">
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.label, { color: theme.subtext }]}>{editId ? 'EDIT TRAINING' : 'ADD A TRAINING'}</Text>
@@ -529,17 +626,18 @@ export default function Training() {
   const [docs, setDocs] = useState<TDoc[]>([]);
   const [emps, setEmps] = useState<Emp[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
-  const [assign, setAssign] = useState<Record<string, string | null>>({});
+  const [assign, setAssign] = useState<Record<string, string[]>>({});
+  const [activeSite, setActiveSite] = useState<string>('');
   const [types, setTypes] = useState<TType[]>([]);
 
   const [search, setSearch] = useState('');
-  const [siteFilter, setSiteFilter] = useState<string | 'all' | 'none'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'soon' | 'expired'>('all');
 
   const [rec, setRec] = useState<Rec | null>(null);
   const [showSites, setShowSites] = useState(false);
   const [showTypes, setShowTypes] = useState(false);
   const [unitFor, setUnitFor] = useState<string | null>(null);
+  const [siteEmpsFor, setSiteEmpsFor] = useState<Site | null>(null);
 
   useFocusEffect(useCallback(() => { load(); }, []));
 
@@ -549,46 +647,42 @@ export default function Training() {
         .select('id, name, description, file_url, document_date, expiry_date, employee_id, training_type_id')
         .eq('category', 'training'),
       supabase.from('profiles').select('id, full_name').neq('role', 'superuser').eq('is_archived', false).order('full_name'),
-      supabase.from('training_sites').select('id, name').order('name'),
+      supabase.from('training_sites').select('id, name').order('created_at').order('name'),
       supabase.from('training_employee_sites').select('employee_id, site_id'),
-      supabase.from('training_types').select('id, name, expiry_days, sort_order').order('sort_order'),
+      supabase.from('training_types').select('id, name, expiry_days, sort_order, training_site_id').order('sort_order'),
     ]);
     if (d.error) notify('Error', d.error.message);
     if (s.error || a.error) notify('Setup needed', 'Run supabase/training_matrix.sql in Supabase to create the training sites tables.');
     setDocs((d.data as TDoc[]) ?? []);
     setEmps((e.data as Emp[]) ?? []);
     setSites((s.data as Site[]) ?? []);
-    setAssign(Object.fromEntries(((a.data as any[]) ?? []).map(r => [r.employee_id, r.site_id])));
+    const am: Record<string, string[]> = {};
+    for (const r of ((a.data as any[]) ?? [])) { if (r.site_id) (am[r.employee_id] ||= []).push(r.site_id); }
+    setAssign(am);
+    const siteList = (s.data as Site[]) ?? [];
+    setActiveSite(cur => (cur === 'unassigned' || siteList.some(x => x.id === cur) ? cur : siteList[0]?.id ?? 'unassigned'));
     setTypes((t.data as TType[]) ?? []);
     setLoading(false);
   }
 
-  // Trainings are shared columns: merge old per-branch duplicates by name.
-  const { cols, colOfType } = useMemo(() => {
-    const byName = new Map<string, Col>();
-    const map: Record<string, string> = {};
-    for (const t of types) {
-      const key = t.name.trim().toLowerCase();
-      let c = byName.get(key);
-      if (!c) { c = { id: t.id, name: t.name.trim(), expiry_days: t.expiry_days, ids: [] }; byName.set(key, c); }
-      c.ids.push(t.id);
-      map[t.id] = c.id;
-    }
-    return { cols: [...byName.values()], colOfType: map };
-  }, [types]);
+  // Each site has its own training columns.
+  const cols: Col[] = useMemo(() =>
+    types
+      .filter(t => t.training_site_id === activeSite)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map(t => ({ id: t.id, name: t.name.trim(), expiry_days: t.expiry_days, ids: [t.id] })),
+  [types, activeSite]);
 
   // latest record per employee + training
   const cell = useMemo(() => {
     const m: Record<string, TDoc> = {};
     for (const d of docs) {
       if (!d.employee_id || !d.training_type_id) continue;
-      const cid = colOfType[d.training_type_id];
-      if (!cid) continue;
-      const k = `${d.employee_id}|${cid}`;
+      const k = `${d.employee_id}|${d.training_type_id}`;
       if (!m[k] || (d.document_date ?? '') > (m[k].document_date ?? '')) m[k] = d;
     }
     return m;
-  }, [docs, colOfType]);
+  }, [docs]);
 
   function statusOf(d: TDoc | undefined, col: Col) {
     if (!d || !d.document_date) return null;
@@ -601,30 +695,40 @@ export default function Training() {
   const siteById = useMemo(() => Object.fromEntries(sites.map(s => [s.id, s])), [sites]);
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const e of emps) { const sid = assign[e.id]; if (sid) c[sid] = (c[sid] ?? 0) + 1; }
+    for (const e of emps) for (const sid of assign[e.id] ?? []) c[sid] = (c[sid] ?? 0) + 1;
     return c;
   }, [emps, assign]);
+  const unassignedCount = useMemo(() => emps.filter(e => !(assign[e.id]?.length)).length, [emps, assign]);
+  const activeSiteObj = siteById[activeSite] as Site | undefined;
+
+  // everyone on the current tab
+  const baseEmps = useMemo(
+    () => emps.filter(e => (activeSite === 'unassigned' ? !(assign[e.id]?.length) : (assign[e.id] ?? []).includes(activeSite))),
+    [emps, assign, activeSite],
+  );
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return emps.filter(e => {
+    return baseEmps.filter(e => {
       if (q && !(e.full_name ?? '').toLowerCase().includes(q)) return false;
-      const sid = assign[e.id] ?? null;
-      if (siteFilter === 'none' && sid) return false;
-      if (siteFilter !== 'all' && siteFilter !== 'none' && sid !== siteFilter) return false;
       if (statusFilter !== 'all') {
         const hit = cols.some(c => statusOf(cell[`${e.id}|${c.id}`], c)?.kind === statusFilter);
         if (!hit) return false;
       }
       return true;
     });
-  }, [emps, assign, search, siteFilter, statusFilter, cols, cell]);
+  }, [baseEmps, search, statusFilter, cols, cell]);
 
-  async function setUnit(employeeId: string, siteId: string | null) {
+  async function saveEmployeeSites(employeeId: string, ids: string[]) {
     setUnitFor(null);
-    setAssign(a => ({ ...a, [employeeId]: siteId }));
-    const { error } = await supabase.from('training_employee_sites').upsert({ employee_id: employeeId, site_id: siteId }, { onConflict: 'employee_id' });
-    if (error) { notify('Error', error.message); load(); }
+    setAssign(a => ({ ...a, [employeeId]: ids }));
+    const del = await supabase.from('training_employee_sites').delete().eq('employee_id', employeeId);
+    if (del.error) { notify('Error', del.error.message); load(); return; }
+    if (ids.length) {
+      const ins = await supabase.from('training_employee_sites').insert(ids.map(site_id => ({ employee_id: employeeId, site_id })));
+      if (ins.error) notify('Error', ins.error.message);
+    }
+    load();
   }
 
   function openCell(employeeId: string, col: Col) {
@@ -658,7 +762,7 @@ export default function Training() {
           <Text style={{ color: theme.text, fontSize: 18, fontWeight: '700' }}>Training</Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity style={[styles.addBtn, { backgroundColor: theme.input }]} onPress={() => setShowTypes(true)}>
+          <TouchableOpacity style={[styles.addBtn, { backgroundColor: theme.input }]} onPress={() => (activeSiteObj ? setShowTypes(true) : notify('Pick a site', 'Choose a site tab first, then manage its trainings.'))}>
             <ListChecks color={colors.yellow} size={18} />
           </TouchableOpacity>
           <TouchableOpacity style={[styles.addBtn, { backgroundColor: theme.input }]} onPress={() => setShowSites(true)}>
@@ -666,7 +770,7 @@ export default function Training() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.addBtn}
-            onPress={() => setRec({ mode: 'add', employeeId: '', colId: cols[0]?.id ?? '', locked: false })}
+            onPress={() => (activeSiteObj ? setRec({ mode: 'add', employeeId: '', colId: cols[0]?.id ?? '', locked: false }) : notify('Pick a site', 'Choose a site tab first.'))}
           >
             <Plus color={colors.black} size={20} />
           </TouchableOpacity>
@@ -683,9 +787,9 @@ export default function Training() {
           />
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-          {([['all', 'All sites'], ...sites.map(s => [s.id, s.name]), ['none', 'No unit']] as [string, string][]).map(([k, l]) => (
-            <TouchableOpacity key={k} onPress={() => setSiteFilter(k)} style={chip(siteFilter === k)}>
-              <Text style={chipText(siteFilter === k)}>{l}</Text>
+          {([...sites.map(s => [s.id, `${s.name} (${counts[s.id] ?? 0})`]), ['unassigned', `Unassigned (${unassignedCount})`]] as [string, string][]).map(([k, l]) => (
+            <TouchableOpacity key={k} onPress={() => setActiveSite(k)} style={chip(activeSite === k)}>
+              <Text style={chipText(activeSite === k)}>{l}</Text>
             </TouchableOpacity>
           ))}
           <View style={{ width: 12 }} />
@@ -779,10 +883,11 @@ export default function Training() {
           {/* 3.. · employees */}
           {rows.length === 0 ? (
             <View style={{ height: 80, justifyContent: 'center', paddingLeft: 20 }}>
-              <Text style={{ color: '#aaa' }}>{emps.length === 0 ? 'No employees found.' : 'No employees match these filters.'}</Text>
+              <Text style={{ color: '#aaa' }}>{sites.length === 0 ? 'No sites yet. Tap the pin button to add your sites.' : baseEmps.length === 0 ? 'Nobody is on this site yet. Tap the pin button, then the people icon next to the site.' : 'No employees match these filters.'}</Text>
             </View>
           ) : rows.map((e, i) => {
-            const site = assign[e.id] ? siteById[assign[e.id] as string] : undefined;
+            const mine = assign[e.id] ?? [];
+            const unitText = mine.length === 0 ? '' : sites.length > 1 && mine.length === sites.length ? 'All sites' : mine.map(id => siteById[id]?.name).filter(Boolean).join(', ');
             return (
               <View key={e.id} style={{ flexDirection: 'row', height: ROW_H, backgroundColor: '#000', marginBottom: 1 }}>
                 <View style={[{ flexDirection: 'row', height: ROW_H, backgroundColor: '#000' }, sticky(0, null, 10)]}>
@@ -798,7 +903,7 @@ export default function Training() {
                   onPress={() => setUnitFor(e.id)}
                   style={[styles.rCell, { width: UNIT_W, backgroundColor: XL.cellGrey }]}
                 >
-                  <Text style={styles.rText} numberOfLines={1}>{site?.name ?? ''}</Text>
+                  <Text style={[styles.rText, { fontSize: 13 }]} numberOfLines={1}>{unitText}</Text>
                 </TouchableOpacity>
                 {cols.map(c => {
                   const d = cell[`${e.id}|${c.id}`];
@@ -828,42 +933,34 @@ export default function Training() {
         </MatrixScroller>
       )}
 
-      {/* Unit picker */}
       {unitFor && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setUnitFor(null)}>
-          <TouchableOpacity activeOpacity={1} onPress={() => setUnitFor(null)} style={styles.backdrop}>
-            <View style={[styles.sheet, { backgroundColor: theme.card, borderColor: theme.border }]} onStartShouldSetResponder={() => true}>
-              <Text style={{ color: theme.text, fontWeight: '800', fontSize: 16, padding: 14 }}>
-                Unit · {emps.find(e => e.id === unitFor)?.full_name}
-              </Text>
-              <ScrollView style={{ maxHeight: 360 }}>
-                <Opt theme={theme} text="— No unit —" on={!assign[unitFor]} onPress={() => setUnit(unitFor, null)} />
-                {sites.map(s => (
-                  <Opt key={s.id} theme={theme} text={s.name} on={assign[unitFor] === s.id} onPress={() => setUnit(unitFor, s.id)} />
-                ))}
-              </ScrollView>
-              <TouchableOpacity onPress={() => { setUnitFor(null); setShowSites(true); }} style={{ padding: 14 }}>
-                <Text style={{ color: colors.yellow, fontWeight: '700' }}>Manage sites…</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
+        <EmployeeSitesModal
+          emp={emps.find(e => e.id === unitFor)} sites={sites} selected={assign[unitFor] ?? []} theme={theme}
+          onClose={() => setUnitFor(null)} onSave={(ids: string[]) => saveEmployeeSites(unitFor, ids)}
+        />
       )}
 
       {rec && (
         <RecordModal
           key={`${rec.mode}-${rec.doc?.id ?? rec.employeeId}-${rec.colId}`}
-          rec={rec} emps={emps} cols={cols} theme={theme} isDark={isDark} insetsTop={insets.top}
+          rec={rec} emps={baseEmps} cols={cols} theme={theme} isDark={isDark} insetsTop={insets.top}
           onClose={() => setRec(null)}
           onSaved={() => { setRec(null); load(); }}
         />
       )}
       {showSites && (
         <SitesModal sites={sites} counts={counts} theme={theme} insetsTop={insets.top}
-          onClose={() => setShowSites(false)} onChanged={load} />
+          onClose={() => setShowSites(false)} onChanged={load} onAssign={(site: Site) => setSiteEmpsFor(site)} />
+      )}
+      {siteEmpsFor && (
+        <SiteEmployeesModal
+          site={siteEmpsFor} emps={emps} theme={theme} insetsTop={insets.top}
+          memberIds={emps.filter(e => (assign[e.id] ?? []).includes(siteEmpsFor.id)).map(e => e.id)}
+          onClose={() => setSiteEmpsFor(null)} onChanged={load}
+        />
       )}
       {showTypes && (
-        <TrainingsModal cols={cols} theme={theme} insetsTop={insets.top}
+        <TrainingsModal cols={cols} siteId={activeSite} siteName={activeSiteObj?.name ?? ''} theme={theme} insetsTop={insets.top}
           onClose={() => setShowTypes(false)} onChanged={load} />
       )}
     </View>
