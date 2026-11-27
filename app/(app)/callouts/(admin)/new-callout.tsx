@@ -5,7 +5,7 @@ import {
   ActivityIndicator, Linking, Platform
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Navigation, MapPin, CheckCircle, AlertCircle } from 'lucide-react-native';
+import { ArrowLeft, Navigation, MapPin, CheckCircle, AlertCircle, Check } from 'lucide-react-native';
 import { supabase } from '../../../../lib/supabase';
 import DatePickerField from '../../../../components/DatepickerField';
 import TimePickerField from '../../../../components/TimePickerField';
@@ -53,6 +53,26 @@ export default function NewCallout() {
   const [loading, setLoading] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [status, setStatus] = useState<Status>(null);
+
+  // Branches this callout is sent to (technicians in other branches never see it)
+  const [branches, setBranches] = useState<{ id: string; name: string; techCount: number }[]>([]);
+  const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      const [{ data: b }, { data: techs }] = await Promise.all([
+        supabase.from('branches').select('id, name').order('name'),
+        supabase.from('profiles').select('branch_id').eq('role', 'technician'),
+      ]);
+      const counts: Record<string, number> = {};
+      (techs ?? []).forEach((t: any) => { if (t.branch_id) counts[t.branch_id] = (counts[t.branch_id] ?? 0) + 1; });
+      setBranches((b ?? []).map((x: any) => ({ id: x.id, name: x.name, techCount: counts[x.id] ?? 0 })));
+    })();
+  }, []);
+
+  function toggleBranch(id: string) {
+    setSelectedBranches(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  }
 
   const [dateStr, setDateStr] = useState(todayDateString());
   const [timeStr, setTimeStr] = useState(nowTimeString());
@@ -129,6 +149,7 @@ export default function NewCallout() {
     setLatitude('');
     setLongitude('');
     setInvoiceNumber('');
+    setSelectedBranches([]);
     setDateStr(todayDateString());
     setTimeStr(nowTimeString());
   }
@@ -139,6 +160,11 @@ export default function NewCallout() {
 
     if (!title.trim() || !siteName.trim() || !address.trim()) {
       setStatus({ type: 'error', message: 'Please fill in title, site name and address.' });
+      return;
+    }
+
+    if (selectedBranches.length === 0) {
+      setStatus({ type: 'error', message: 'Please select at least one branch to send this callout to.' });
       return;
     }
 
@@ -158,6 +184,7 @@ export default function NewCallout() {
         status: 'pending',
         created_by: userData.user?.id,
         invoice_number: invoiceNumber.trim() || null,
+        branch_ids: selectedBranches,
       });
 
       if (error) {
@@ -166,7 +193,11 @@ export default function NewCallout() {
       }
 
       // Technicians are notified by the database webhook / edge function on insert.
-      setStatus({ type: 'success', message: 'Callout created. Technicians will be notified.' });
+      const notifiedCount = branches.filter(b => selectedBranches.includes(b.id)).reduce((n, b) => n + b.techCount, 0);
+      setStatus({
+        type: 'success',
+        message: `Callout created. ${notifiedCount} technician${notifiedCount !== 1 ? 's' : ''} in ${selectedBranches.length} branch${selectedBranches.length !== 1 ? 'es' : ''} will be notified.`,
+      });
       resetForm();
       redirectTimer.current = setTimeout(() => {
         router.replace('/(app)/callouts/(admin)/dashboard' as any);
@@ -215,6 +246,44 @@ export default function NewCallout() {
             value={siteName}
             onChangeText={setSiteName}
           />
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Label text="SEND TO BRANCHES" required />
+          <Text style={{ color: theme.muted, fontSize: 12, marginBottom: 10 }}>
+            Only technicians in the selected branches are notified and can see this callout.
+          </Text>
+          {branches.length === 0 ? (
+            <Text style={{ color: theme.muted, fontSize: 13 }}>No branches yet — create them under HR → Branches.</Text>
+          ) : (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => setSelectedBranches(selectedBranches.length === branches.length ? [] : branches.map(b => b.id))}
+                style={[styles.branchChip, { borderColor: colors.yellow, borderStyle: 'dashed' }]}
+              >
+                <Text style={{ color: colors.yellow, fontWeight: '700', fontSize: 13 }}>
+                  {selectedBranches.length === branches.length ? 'Clear all' : 'Select all'}
+                </Text>
+              </TouchableOpacity>
+              {branches.map(b => {
+                const on = selectedBranches.includes(b.id);
+                return (
+                  <TouchableOpacity
+                    key={b.id}
+                    onPress={() => toggleBranch(b.id)}
+                    style={[
+                      styles.branchChip,
+                      { borderColor: on ? colors.yellow : theme.border, backgroundColor: on ? colors.yellow : theme.input },
+                    ]}
+                  >
+                    {on && <Check color={colors.black} size={14} />}
+                    <Text style={{ color: on ? colors.black : theme.text, fontWeight: '600', fontSize: 13 }}>{b.name}</Text>
+                    <Text style={{ color: on ? colors.black : theme.muted, fontSize: 12 }}>{b.techCount}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
         </View>
 
         <View style={styles.fieldGroup}>
@@ -362,6 +431,10 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   fieldGroup: { marginBottom: 20 },
+  branchChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9,
+  },
   row: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   rowItem: { flex: 1 },
   label: {

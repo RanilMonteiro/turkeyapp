@@ -93,12 +93,17 @@ const [slipImage, setSlipImage] = useState<{ uri: string; mimeType?: string } | 
     const uid = userData.user?.id;
     setUserId(uid ?? null);
 
-    const { data: available } = await supabase
+    // Only callouts sent to my branch (callouts with no branch picked are still open to everyone)
+    const { data: me } = await supabase.from('profiles').select('branch_id').eq('id', uid).single();
+    let availableQuery = supabase
       .from('callouts')
       .select('*')
       .eq('status', 'pending')
-      .is('assigned_to', null)
-      .order('date', { ascending: true });
+      .is('assigned_to', null);
+    availableQuery = me?.branch_id
+      ? availableQuery.or(`branch_ids.eq.{},branch_ids.cs.{${me.branch_id}}`)
+      : availableQuery.eq('branch_ids', '{}');
+    const { data: available } = await availableQuery.order('date', { ascending: true });
 
     const { data: mine } = await supabase
       .from('callouts')
