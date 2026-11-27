@@ -38,6 +38,7 @@ export type PermissionKey =
   | 'manage_team'
   | 'can_approve'
   | 'view_employees'
+  | 'manage_training'
   | 'view_sites'
   | 'can_manage_sites';
 
@@ -146,6 +147,14 @@ export const PERMISSIONS: PermissionDef[] = [
     group: 'people',
     grantableTo: ['admin'],
     alwaysOnFor: [],
+  },
+  {
+    key: 'manage_training',
+    label: 'Training',
+    description: 'Open Training and add / view training documents (medicals, inductions, certificates) for employees.',
+    group: 'people',
+    grantableTo: ['admin'],
+    alwaysOnFor: ['hr'],
   },
   {
     key: 'can_approve',

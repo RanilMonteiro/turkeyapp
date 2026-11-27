@@ -50,6 +50,7 @@ export default function AppLayout() {
       <Stack.Screen name="hr/approval-chains" />
       <Stack.Screen name="hr/documents" />
 <Stack.Screen name="shared/my-documents" />
+      <Stack.Screen name="shared/training" />
       <Stack.Screen name="shared/granted-employees" />
       <Stack.Screen name="shared/granted-employee/[id]" />
       <Stack.Screen name="dashboard" />

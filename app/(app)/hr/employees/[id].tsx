@@ -1895,7 +1895,7 @@ export default function EmployeeProfile() {
               </TouchableOpacity>
               {showDocCategoryDropdown && (
                 <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                  {DOC_CATEGORIES.map(cat => (
+                  {DOC_CATEGORIES.filter(c => c.value !== 'training').map(cat => (
                     <TouchableOpacity
                       key={cat.value}
                       style={[styles.dropdownItem, { borderBottomColor: theme.border }, docCategory === cat.value && { backgroundColor: `${colors.yellow}20` }]}

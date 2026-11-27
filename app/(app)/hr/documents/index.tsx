@@ -668,7 +668,7 @@ export default function DocumentsManager() {
               </TouchableOpacity>
               {showCategoryDropdown && (
                 <View style={[styles.dropdown, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                  {CATEGORIES.map(cat => (
+                  {CATEGORIES.filter(c => c.value !== 'training').map(cat => (
                     <TouchableOpacity
                       key={cat.value}
                       style={[styles.dropdownItem, { borderBottomColor: theme.border }, docCategory === cat.value && { backgroundColor: `${colors.yellow}20` }]}

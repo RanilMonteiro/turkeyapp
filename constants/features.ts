@@ -2,7 +2,7 @@ import type { ComponentType } from 'react';
 import {
   LayoutDashboard, Users, UserCog, FileText, ClipboardList, MapPin,
   CheckCircle, Calendar, CalendarDays, CalendarCheck, Wrench, HardHat,
-  FolderOpen, Eye, ShieldCheck, Building2, CircleUser,
+  FolderOpen, Eye, ShieldCheck, Building2, CircleUser, GraduationCap,
 } from 'lucide-react-native';
 import { PermissionKey, Role, hasPermission } from './permissions';
 
@@ -157,6 +157,16 @@ export const FEATURES: Feature[] = [
     roles: ['admin'],
     permission: 'view_employees',
     alsoMatches: ['/shared/granted-employee'],
+  },
+  {
+    id: 'training',
+    title: 'Training',
+    description: 'Add and track employee training documents',
+    icon: GraduationCap,
+    route: '/(app)/shared/training',
+    group: 'people',
+    roles: ['superuser', 'hr', 'admin'],
+    permission: 'manage_training',
   },
   {
     id: 'branches',
